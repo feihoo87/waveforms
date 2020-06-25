@@ -1,0 +1,21 @@
+language: python
+install:
+- pip3 install pytest-cov
+- pip3 install coveralls
+- pip3 install -e .
+script:
+- pytest --cov=qulab --verbose
+after_success:
+- coveralls
+deploy:
+  provider: pypi
+  user: feihoo87
+  password:
+    secure: JUXdc2o7DZ9253mm2EX6sDQzNG5TyVQm7al1HWji/I2jrbPlfCP6qtzZuzriTs0zOhW3BtyC5E5UjrV1t8V0pGMsAbg0YK2vdDVzD54GWixSAnbZU+AtwFi+3Piwd9YkUitOfvyPg0EtDQzvdZg5kCzs3lsVE1PFpLULH6V2gf/lPxClA4JkJhgaXD6jIZwjYJwLDIQs1RaWrjkM87s5uraRG5Kw+wHMRPWO4lQpq3jxkN6Fez8+u0vO60Zah83MAWBnpg1TqkAJ2tMpcht2gp2+4W5NmBMoS8K+De26+xUtlp4QUPQVj2Sy2DtpbSf/Lkgl+BAtggYT7CD3gSuojjSyyuua0h+23bjgMn749pG6Z/6zv1bQ2Ytg66NJhLrv1+7/wSl/dXZC2AyDz9gJWWAr/a14ixmRcTCWXj3ZrBNCuW7DSaqZKvB8bWVZpR/r9CN4fPPnlZcOh/Fa4FlndTc40GjxnIk2oP42kkijgvm0W7XnfkJSQS9P39vu/UeSRTncerNXHp32S0FRPLy7m5Ww7iCSW7jzA0NFQiU3m7l9lOhPZk0Ylw+riFq+l7OObmAgcUvzZ/4duIzumZuXWGEhnBzbagdtEeawpE5O3zOXXRdzp21SWH92Wyn3VK4nCBhEQ6yiGDgIXvuYMf+aICTQRQV4KHZ+TIBrPcHxdpE=
+  on:
+    branch: master
+    tags: true
+    condition: "$DEPLOY = yes"
+  skip_existing: true
+  skip_cleanup: true
+  distributions: sdist bdist_wheel
