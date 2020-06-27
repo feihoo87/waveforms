@@ -346,11 +346,21 @@ def convolve(a, b):
     pass
 
 
-def step(edge):
-    std_sq2 = edge / 5
-    # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
-    rise = ((((), ()), (((3, 0, std_sq2), ), (1, ))), (0.5, 0.5))
-    return Waveform(bounds=(-edge, edge, +np.inf), seq=(_zero, rise, _one))
+def step(edge, type='erf'):
+    """
+    type: "erf", "cos", "linear"
+    """
+    if type == 'cos':
+        rise = _add(_half, _mul(_half, _basic_wave(SIN, np.pi / edge)))
+        return Waveform(bounds=(-edge/2, edge/2, +np.inf), seq=(_zero, rise, _one))
+    elif type == 'linear':
+        rise = _add(_half, _mul(_const(1/edge), _basic_wave(LINEAR)))
+        return Waveform(bounds=(-edge/2, edge/2, +np.inf), seq=(_zero, rise, _one))
+    else:
+        std_sq2 = edge / 5
+        # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
+        rise = ((((), ()), (((ERF, 0, std_sq2), ), (1, ))), (0.5, 0.5))
+        return Waveform(bounds=(-edge, edge, +np.inf), seq=(_zero, rise, _one))
 
 
 def square(width):
