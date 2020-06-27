@@ -20,6 +20,7 @@ def test_waveform():
 
 
 def test_shift():
+    t = np.linspace(-10, 10, 1001)
     width = 2
     wav = gaussian(width) >> 3
     std_sq2 = width / (4 * np.sqrt(np.log(2)))
