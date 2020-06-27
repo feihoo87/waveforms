@@ -19,7 +19,7 @@ def test_waveform():
     assert np.allclose(wav(t), np.exp(-(t / std_sq2)**2), atol=5e-03)
 
 
-def test_shift()
+def test_shift():
     width = 2
     wav = gaussian(width) >> 3
     std_sq2 = width / (4 * np.sqrt(np.log(2)))
