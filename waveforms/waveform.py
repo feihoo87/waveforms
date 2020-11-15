@@ -14,6 +14,10 @@ def _const(c):
 
 _one = _const(1)
 _half = _const(1 / 2)
+_two = _const(2)
+_pi = _const(np.pi)
+_two_pi = _const(2*np.pi)
+_half_pi = _const(np.pi/2)
 
 
 def _is_const(x):
@@ -117,7 +121,7 @@ def _pow(x, n):
 #     return tuple(t_list), tuple(v_list)
 
 
-#@functools.lru_cache(maxsize=128)
+# @functools.lru_cache(maxsize=128)
 def _apply(x, Type, shift, *args):
     return _baseFunc[Type](x - shift, *args)
 
@@ -285,6 +289,7 @@ ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2))
 COS = registerBaseFunc(lambda t, w: np.cos(w * t))
 SIN = registerBaseFunc(lambda t, w: np.sin(w * t))
 SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
+EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
 
 # register derivative
 registerDerivative(LINEAR, lambda shift, *args: _one_waveform)
@@ -308,6 +313,10 @@ registerDerivative(
     SINC, lambda shift, *args:
     (((((LINEAR, shift), (COS, shift, *args)), (-1, 1)),
       (((LINEAR, shift), (SIN, shift, *args)), (-2, 1))), (1, -1 / args[0])))
+
+registerDerivative(
+    EXP, lambda shift, *args: (((((EXP, shift, *args), ), (1, )), ),
+                               (args[0], )))
 
 
 def _D_base(m):
@@ -346,6 +355,10 @@ def convolve(a, b):
     pass
 
 
+def sig():
+    return Waveform(bounds=(0, +np.inf), seq=(_const(-1), _one))
+
+
 def step(edge, type='erf'):
     """
     type: "erf", "cos", "linear"
@@ -363,14 +376,18 @@ def step(edge, type='erf'):
         return Waveform(bounds=(-edge, edge, +np.inf), seq=(_zero, rise, _one))
 
 
-def square(width):
-    return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
-                    seq=(_zero, _one, _zero))
+def square(width, edge=0, type='erf'):
+    if edge == 0:
+        return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
+                        seq=(_zero, _one, _zero))
+    else:
+        return (step(edge, type=type) << width/2) - (step(edge, type=type) >> width/2)
 
 
 def gaussian(width):
     # width is two times FWHM
-    std_sq2 = width / 3.3302184446307908  #std_sq2 = width / (4 * np.sqrt(np.log(2)))
+    # std_sq2 = width / (4 * np.sqrt(np.log(2)))
+    std_sq2 = width / 3.3302184446307908
     # std is set to give total pulse area same as a square
     #std_sq2 = width/np.sqrt(np.pi)
     return Waveform(bounds=(-0.75 * width, 0.75 * width, +np.inf),
@@ -389,6 +406,10 @@ def sin(w, phi=0):
         return const(np.sin(phi))
     else:
         return Waveform(seq=(_basic_wave(SIN, w, shift=-phi / w), ))
+
+
+def exp(alpha):
+    return Waveform(seq=(_basic_wave(EXP, alpha), ))
 
 
 def sinc(bw):
