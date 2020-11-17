@@ -479,6 +479,6 @@ def mixing(I,
 
 __all__ = [
     'Waveform', 'D', 'zero', 'one', 'const', 'step', 'square', 'gaussian',
-    'cos', 'sin', 'cosPulse', 'poly', 'mixing', 'registerBaseFunc',
+    'cos', 'sin', 'exp', 'cosPulse', 'poly', 'mixing', 'registerBaseFunc',
     'registerDerivative'
 ]
