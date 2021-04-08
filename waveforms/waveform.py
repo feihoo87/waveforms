@@ -132,7 +132,8 @@ def _calc(wav, x):
     def _calc_m(t, x):
         ret = 1
         for mt, n in zip(*t):
-            lru_cache[mt] = lru_cache.get(mt, _apply(x, *mt))
+            if mt not in lru_cache:
+                lru_cache[mt] = _apply(x, *mt)
             ret = ret * lru_cache[mt]**n
         return ret
 
