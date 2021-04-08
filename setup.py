@@ -11,7 +11,8 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 # This reads the __version__ variable from lab/_version.py
-exec(open('waveforms/_version.py').read())
+__version__ = ""
+exec(open('waveforms/version.py').read())
 
 requirements = [
     'numpy>=1.13.3',
