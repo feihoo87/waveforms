@@ -155,9 +155,15 @@ class Waveform:
         i1, i2 = 0, 0
         h1, h2 = len(self.bounds), len(other.bounds)
         while i1 < h1 or i2 < h2:
-            seq.append(oper(self.seq[i1], other.seq[i2]))
+            s = oper(self.seq[i1], other.seq[i2])
             b = min(self.bounds[i1], other.bounds[i2])
+            # if s == seq[-1]:
+            #     bounds[-1] = b
+            # else:
+            #     bounds.append(b)
+            #     seq.append(s)
             bounds.append(b)
+            seq.append(s)
             if b == self.bounds[i1]:
                 i1 += 1
             if b == other.bounds[i2]:
