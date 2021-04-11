@@ -34,15 +34,15 @@ pulse = cosPulse(20e-9)
 x_wav = zero()
 y_wav = zero()
 
-I, Q = mixing(0.5*pulse, freq=-20e6, DRAGScale=0.2)
+I, Q = mixing(0.5*pulse, freq=-20e6, DRAGScaling=0.2)
 x_wav += I
 y_wav += Q
 
-I, Q = mixing(pulse >> 1e-6, freq=-20e6, phase=np.pi/2, DRAGScale=0.2)
+I, Q = mixing(pulse >> 1e-6, freq=-20e6, phase=np.pi/2, DRAGScaling=0.2)
 x_wav += I
 y_wav += Q
 
-I, Q = mixing((0.5 * pulse) >> 2e-6, freq=-20e6, DRAGScale=0.2)
+I, Q = mixing((0.5 * pulse) >> 2e-6, freq=-20e6, DRAGScaling=0.2)
 x_wav += I
 y_wav += Q
 
