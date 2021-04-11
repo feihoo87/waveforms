@@ -362,7 +362,7 @@ def convolve(a, b):
     pass
 
 
-def sig():
+def sign():
     return Waveform(bounds=(0, +np.inf), seq=(_const(-1), _one))
 
 
@@ -485,7 +485,7 @@ def mixing(I,
 
 
 __all__ = [
-    'Waveform', 'D', 'zero', 'one', 'const', 'step', 'square', 'gaussian',
+    'Waveform', 'D', 'zero', 'one', 'const', 'step', 'sign', 'square', 'gaussian',
     'cos', 'sin', 'exp', 'cosPulse', 'poly', 'mixing', 'registerBaseFunc',
     'registerDerivative'
 ]
