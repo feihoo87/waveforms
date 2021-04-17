@@ -15,6 +15,7 @@ __version__ = ""
 exec(open('waveforms/version.py').read())
 
 requirements = [
+    'GitPython>=3.1.14',
     'numpy>=1.13.3',
     'scipy>=1.0.0',
 ]
