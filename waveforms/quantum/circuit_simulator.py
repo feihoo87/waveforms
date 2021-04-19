@@ -1,5 +1,5 @@
 import itertools
-from functools import reduce
+from functools import partial, reduce
 
 import numpy as np
 
@@ -140,6 +140,8 @@ def fSimMat(theta, phi):
 
 
 regesterGateMatrix('U', UMat, 1)
+regesterGateMatrix('Rx', partial(UMat, phi=0), 1)
+regesterGateMatrix('Ry', partial(UMat, phi=np.pi/2), 1)
 regesterGateMatrix('Rz', RzMat, 1)
 regesterGateMatrix('fSim', fSimMat, 2)
 
