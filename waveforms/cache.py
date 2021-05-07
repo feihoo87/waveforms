@@ -8,7 +8,7 @@ from typing import Any, Callable, Hashable, KeysView, Optional, Union
 import portalocker
 
 cache_dir = pathlib.Path.home() / '.waveforms' / 'cache'
-cache_dir.mkdir(exist_ok=True)
+cache_dir.mkdir(parents=True, exist_ok=True)
 
 MAXVALUESIZE = 1024
 Decorator = Callable[[Callable], Callable]
