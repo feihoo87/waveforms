@@ -240,15 +240,23 @@ class Waveform:
     def __lshift__(self, time):
         return self >> (-time)
 
-    def __call__(self, x):
+    def __call__(self, x, frag=False):
         range_list = np.searchsorted(x, self.bounds)
-        ret = np.zeros_like(x)
+        #ret = np.zeros_like(x)
+        ret = []
         start, stop = 0, 0
         for i, stop in enumerate(range_list):
             if start < stop and self.seq[i] != _zero:
-                ret[start:stop] = _calc(self.seq[i], x[start:stop])
+                #ret[start:stop] = _calc(self.seq[i], x[start:stop])
+                ret.append((start, stop, _calc(self.seq[i], x[start:stop])))
             start = stop
-        return ret
+        if not frag:
+            y = np.zeros_like(x)
+            for start, stop, part in ret:
+                y[start:stop] = part
+            return y
+        else:
+            return ret
 
     def __hash__(self):
         return hash((self.bounds, self.seq))
