@@ -380,10 +380,12 @@ def step(edge, type='erf'):
     """
     if type == 'cos':
         rise = _add(_half, _mul(_half, _basic_wave(SIN, np.pi / edge)))
-        return Waveform(bounds=(-edge/2, edge/2, +np.inf), seq=(_zero, rise, _one))
+        return Waveform(bounds=(-edge / 2, edge / 2, +np.inf),
+                        seq=(_zero, rise, _one))
     elif type == 'linear':
-        rise = _add(_half, _mul(_const(1/edge), _basic_wave(LINEAR)))
-        return Waveform(bounds=(-edge/2, edge/2, +np.inf), seq=(_zero, rise, _one))
+        rise = _add(_half, _mul(_const(1 / edge), _basic_wave(LINEAR)))
+        return Waveform(bounds=(-edge / 2, edge / 2, +np.inf),
+                        seq=(_zero, rise, _one))
     else:
         std_sq2 = edge / 5
         # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
@@ -396,7 +398,8 @@ def square(width, edge=0, type='erf'):
         return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
                         seq=(_zero, _one, _zero))
     else:
-        return (step(edge, type=type) << width/2) - (step(edge, type=type) >> width/2)
+        return ((step(edge, type=type) << width / 2) -
+                (step(edge, type=type) >> width / 2))
 
 
 def gaussian(width):
@@ -493,7 +496,7 @@ def mixing(I,
 
 
 __all__ = [
-    'Waveform', 'D', 'zero', 'one', 'const', 'step', 'sign', 'square', 'gaussian',
-    'cos', 'sin', 'exp', 'cosPulse', 'poly', 'mixing', 'registerBaseFunc',
-    'registerDerivative'
+    'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing',
+    'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'sign', 'sin',
+    'square', 'step', 'zero'
 ]
