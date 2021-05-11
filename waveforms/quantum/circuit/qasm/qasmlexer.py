@@ -91,8 +91,6 @@ class QasmLexer:
     tokens = [
         'NNINTEGER',
         'REAL',
-        #'CX',
-        #'U',
         'FORMAT',
         'ASSIGN',
         'MATCHES',
@@ -162,14 +160,6 @@ class QasmLexer:
     def t_COMMENT(self, _):
         r'//.*'
         pass
-
-    # def t_CX(self, t):
-    #     'CX'
-    #     return t
-
-    # def t_U(self, t):
-    #     'U'
-    #     return t
 
     def t_ID(self, t):
         r'[a-zA-Z_][a-zA-Z0-9_]*'

@@ -1,4 +1,4 @@
-import weakref
+from collections import defaultdict
 from functools import wraps
 
 from numpy import pi
@@ -130,14 +130,18 @@ def crz(qubits, lambda_):
             (('u1', -lambda_ / 2), t), ('Cnot', (c, t))]
 
 
-from collections import defaultdict
-
-
 def commuteWithRz(st):
-    if st[0] in ['CZ', 'I', 'Barrier']:
+    if gateName(st) in ['CZ', 'I', 'Barrier']:
         return True
     else:
         return False
+
+
+def exchangeRzWithGate(st, phaseList):
+    if gateName(st) in ['iSWAP', 'SWAP']:
+        return [st], phaseList[::-1]
+    else:
+        raise Exception
 
 
 def reduceVirtualZ(qlisp):
@@ -156,15 +160,21 @@ def reduceVirtualZ(qlisp):
                 target = (st[1], )
             else:
                 target = st[1]
-            for q in target:
-                if hold[q] != 0:
-                    if gateName(st) != 'Measure':
-                        ret.append((('Rz', hold[q]), q))
-                    hold[q] = 0
-            ret.append(st)
+            try:
+                stList, phaseList = exchangeRzWithGate(
+                    st, [hold[q] for q in target])
+                ret.extend(stList)
+                for q, p in zip(target, phaseList):
+                    hold[q] = p
+            except:
+                for q in target:
+                    if hold[q] != 0:
+                        if gateName(st) != 'Measure':
+                            ret.append((('Rz', hold[q]), q))
+                        hold[q] = 0
+                ret.append(st)
 
     for q in hold:
         if hold[q] != 0:
             ret.append((('Rz', hold[q]), q))
     return ret
-    

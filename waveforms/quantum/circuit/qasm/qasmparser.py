@@ -602,33 +602,13 @@ class QasmParser:
     # These are for use outside of gate_bodies and allow
     # indexed ids everywhere.
     #
-    # unitary_op : U '(' exp_list ')'  primary
-    #            | CX                  primary ',' primary
-    #            | id                  primary_list
+    # unitary_op : id                  primary_list
     #            | id '(' ')'          primary_list
     #            | id '(' exp_list ')' primary_list
     #
     # Note that it might not be unitary - this is the mechanism that
     # is also used to invoke calls to 'opaque'
     # ----------------------------------------
-    # def p_unitary_op_0(self, program):
-    #     """
-    #       unitary_op : U '(' exp_list ')' primary
-    #     """
-    #     program[0] = node.UniversalUnitary([program[3], program[5]])
-    #     self.verify_reg(program[5], 'qreg')
-    #     self.verify_exp_list(program[3])
-
-    # def p_unitary_op_1(self, program):
-    #     """
-    #     unitary_op : CX primary ',' primary
-    #     """
-    #     program[0] = node.Cnot([program[2], program[4]])
-    #     self.verify_reg(program[2], 'qreg')
-    #     self.verify_reg(program[4], 'qreg')
-    #     self.verify_distinct([program[2], program[4]])
-    #     # TODO: check that if both primary are id, same size
-    #     # TODO: this needs to be checked in other cases too
 
     def p_unitary_op_2(self, program):
         """
@@ -662,58 +642,11 @@ class QasmParser:
     # This is a restricted set of "quantum_op" which also
     # prohibits indexed ids, for use in a gate_body
     #
-    # gate_op : U '(' exp_list ')'  id         ';'
-    #         | CX                  id ',' id  ';'
-    #         | id                  id_list    ';'
+    # gate_op : id                  id_list    ';'
     #         | id '(' ')'          id_list    ';'
     #         | id '(' exp_list ')' id_list    ';'
     #         | BARRIER id_list                ';'
     # ----------------------------------------
-    # def p_gate_op_0(self, program):
-    #     """
-    #     gate_op : U '(' exp_list ')' id ';'
-    #     """
-    #     program[0] = node.UniversalUnitary([program[3], program[5]])
-    #     self.verify_declared_bit(program[5])
-    #     self.verify_exp_list(program[3])
-
-    # def p_gate_op_0e1(self, p):
-    #     """
-    #     gate_op : U '(' exp_list ')' error
-    #     """
-    #     raise QasmError("Invalid U inside gate definition. "
-    #                     + "Missing bit id or ';'")
-
-    # def p_gate_op_0e2(self, _):
-    #     """
-    #     gate_op : U '(' exp_list error
-    #     """
-    #     raise QasmError("Missing ')' in U invocation in gate definition.")
-
-    # def p_gate_op_1(self, program):
-    #     """
-    #     gate_op : CX id ',' id ';'
-    #     """
-    #     program[0] = node.Cnot([program[2], program[4]])
-    #     self.verify_declared_bit(program[2])
-    #     self.verify_declared_bit(program[4])
-    #     self.verify_distinct([program[2], program[4]])
-
-    # def p_gate_op_1e1(self, program):
-    #     """
-    #     gate_op : CX error
-    #     """
-    #     raise QasmError("Invalid CX inside gate definition. "
-    #                     + "Expected an ID or ',', received '"
-    #                     + str(program[2].value) + "'")
-
-    # def p_gate_op_1e2(self, program):
-    #     """
-    #     gate_op : CX id ',' error
-    #     """
-    #     raise QasmError("Invalid CX inside gate definition. "
-    #                     + "Expected an ID or ';', received '"
-    #                     + str(program[4].value) + "'")
 
     def p_gate_op_2(self, program):
         """

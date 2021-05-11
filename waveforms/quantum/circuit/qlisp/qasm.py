@@ -67,7 +67,7 @@ def qasm_eval_single_opaque(st, opaque, scope):
                 for qubits in zip(*bitlist)]
 
 
-def qasm_eval_single(st, scope):
+def qasm_eval_single_command(st, scope):
     if isinstance(st, Measure):
         q = get_sym(st.children[0], scope)
         c = get_sym(st.children[1], scope)
@@ -76,21 +76,6 @@ def qasm_eval_single(st, scope):
             return [(('Measure', c_), q_) for c_, q_ in zip(c, q)]
         else:
             return [(('Measure', c), q)]
-    elif isinstance(st, UniversalUnitary):
-        args = [a.real(scope) for a in st.children[0].children]
-        q = get_sym(st.children[1], scope)
-        if isinstance(q, tuple):
-            return [(('U', *args), q_) for q_ in q]
-        else:
-            return [(('U', *args), q)]
-    elif isinstance(st, Cnot):
-        c = get_sym(st.children[0], scope)
-        t = get_sym(st.children[1], scope)
-        if isinstance(c, tuple):
-            assert len(c) == len(t)
-            return [('Cnot', (c_, t_)) for c_, t_ in zip(c, t)]
-        else:
-            return [('Cnot', (c, t))]
     elif isinstance(st, Barrier):
         q = tuple(chain(*[get_sym(_, scope) for _ in st.children[0].children]))
         return [('Barrier', q)]
@@ -134,14 +119,13 @@ def qasm_eval_prog(prog, scope=None):
             if isinstance(gate, Opaque):
                 qlisp.extend(qasm_eval_single_opaque(st, gate, scope))
             elif isinstance(gate, Gate):
-                qlisp.extend(qasm_eval_prog(gate.body,
-                                            [*scope, sub_scope]))
+                qlisp.extend(qasm_eval_prog(gate.body, [*scope, sub_scope]))
             else:
                 raise Exception(f"{st.name:r} is not gate nor opaque")
         elif isinstance(st, Format):
             pass
         else:
-            qlisp.extend(qasm_eval_single(st, scope))
+            qlisp.extend(qasm_eval_single_command(st, scope))
 
     return qlisp
 

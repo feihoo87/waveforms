@@ -4,7 +4,7 @@
 // --- QE Hardware primitives ---
 opaque U(theta,phi,lambda) q;
 opaque CZ c,t;
-opaque Wait(time) q;
+opaque DELAY(time) q;
 
 // 3-parameter 2-pulse single qubit gate
 gate u3(theta,phi,lambda) q { U(theta,phi,lambda) q; }
@@ -16,7 +16,8 @@ gate u1(lambda) q { U(0,0,lambda) q; }
 // idle gate (identity)
 gate id a { U(0,0,0) a; }
 // idle gate (identity) with length gamma
-gate u0(gamma) q { Wait(gamma) q }
+gate u0(gamma) q { DELAY(gamma) q; }
+gate delay(time) q { DELAY(time) q; }
 
 // --- QE Standard Gates ---
 
