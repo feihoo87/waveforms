@@ -394,6 +394,8 @@ def step(edge, type='erf'):
 
 
 def square(width, edge=0, type='erf'):
+    if width <= 0:
+        return zero()
     if edge == 0:
         return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
                         seq=(_zero, _one, _zero))
@@ -403,6 +405,8 @@ def square(width, edge=0, type='erf'):
 
 
 def gaussian(width):
+    if width <= 0:
+        return zero()
     # width is two times FWHM
     # std_sq2 = width / (4 * np.sqrt(np.log(2)))
     std_sq2 = width / 3.3302184446307908
@@ -431,6 +435,8 @@ def exp(alpha):
 
 
 def sinc(bw):
+    if bw <= 0:
+        return zero()
     width = 100 / bw
     return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
                     seq=(_zero, _basic_wave(SINC, bw), _zero))
@@ -439,6 +445,8 @@ def sinc(bw):
 def cosPulse(width):
     # cos = _basic_wave(COS, 2*np.pi/width)
     # pulse = _mul(_add(cos, _one), _half)
+    if width <= 0:
+        return zero()
     pulse = ((((), ()), (((COS, 0, 6.283185307179586 / width), ), (1, ))),
              (0.5, 0.5))
     return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
