@@ -1,5 +1,6 @@
 from collections import defaultdict
 from functools import wraps
+from inspect import signature
 
 from numpy import pi
 
@@ -31,13 +32,22 @@ class Scope():
 nested_scope = Scope()
 
 
-def macro(name, qnum=1, anum=0, scope=None):
+def gate(qnum=1, name=None, scope=None):
     if scope is None:
         scope = nested_scope
 
-    def decorator(func):
+    def decorator(func, name=name):
+        if name is None:
+            name = func.__name__
+        sig = signature(func)
+        anum = len(sig.parameters) - 1
+        if 'scope' in sig.parameters:
+            anum -= 1
+
         @wraps(func)
         def wrapper(qubits, *args, scope=scope, **kwds):
+            if 'scope' in sig.parameters:
+                kwds['scope'] = scope
             if isinstance(qubits, int):
                 assert qnum == 1, f"gate {name} should be {qnum}-qubit gate, but 1 were given."
             else:
@@ -72,12 +82,28 @@ def call_macro(st, scope):
     return func(qubits, *args)
 
 
+def extend_control_gate(st, scope):
+    # TODO
+    gate, qubits = st
+    if isinstance(gate[1], str):
+        if gate[1] == 'Z':
+            return [('CZ', qubits)]
+        elif gate[1] == 'X':
+            return [('Cnot', qubits)]
+        else:
+            return [st]
+    else:
+        return [st]
+
+
 def extend_macro(qlisp, scope=None):
     if scope is None:
         scope = nested_scope
 
     ret = []
     for st in qlisp:
+        if gateName(st) == 'C':
+            ret.extend(extend_control_gate(st, scope))
         if gateName(st) in scope:
             for st in call_macro(st, scope):
                 ret.extend(extend_macro([st], scope))
@@ -86,43 +112,42 @@ def extend_macro(qlisp, scope=None):
     return ret
 
 
-@macro('u3', 1, 3)
+@gate()
 def u3(qubit, theta, phi, lambda_):
     return [(('U', theta, phi, lambda_), qubit)]
 
 
-@macro('u2', 1, 2)
+@gate()
 def u2(qubit, phi, lambda_):
     return [(('U', pi / 2, phi, lambda_), qubit)]
 
 
-@macro('u1', 1, 1)
+@gate()
 def u1(qubit, lambda_):
     return [(('U', 0, 0, lambda_), qubit)]
 
 
-@macro('H')
+@gate()
 def H(qubit):
     return [(('u2', 0, pi), qubit)]
 
 
-@macro('U', 1, 3)
+@gate()
 def U(q, theta, phi, lambda_):
     if theta == 0:
-        return [(('Rz', phi + lambda_), q)]
+        return [(('P', phi + lambda_), q)]
     else:
-        return [(('Rz', lambda_), q), (('XYPulse', theta, pi / 2), q),
-                (('Rz', phi), q)]
+        return [(('P', lambda_), q), (('rfUnitary', theta, -pi / 2), q),
+                (('P', phi), q)]
 
 
-@macro('Cnot', 2)
-def cnot(qubits):
+@gate(2)
+def Cnot(qubits):
     c, t = qubits
-    return [('H', t), ('CZ', (c, t)), (('Rz', 0.213), c), (('Rz', -1.819), t),
-            ('H', t)]
+    return [('H', t), ('CZ', (c, t)), ('H', t)]
 
 
-@macro('crz', 2, 1)
+@gate(2)
 def crz(qubits, lambda_):
     c, t = qubits
 
@@ -149,10 +174,11 @@ def reduceVirtualZ(qlisp):
     hold = defaultdict(lambda: 0)
 
     for st in qlisp:
-        if gateName(st) == 'Rz':
+        if gateName(st) == 'P':
             hold[st[1]] = (hold[st[1]] + st[0][1]) % pi
-        elif gateName(st) == 'XYPulse':
-            ret.append((('XYPulse', st[0][1], st[0][2] - hold[st[1]]), st[1]))
+        elif gateName(st) == 'rfUnitary':
+            ret.append(
+                (('rfUnitary', st[0][1], st[0][2] + hold[st[1]]), st[1]))
         elif commuteWithRz(st):
             ret.append(st)
         else:
@@ -170,11 +196,11 @@ def reduceVirtualZ(qlisp):
                 for q in target:
                     if hold[q] != 0:
                         if gateName(st) != 'Measure':
-                            ret.append((('Rz', hold[q]), q))
+                            ret.append((('P', hold[q]), q))
                         hold[q] = 0
                 ret.append(st)
 
     for q in hold:
         if hold[q] != 0:
-            ret.append((('Rz', hold[q]), q))
+            ret.append((('P', hold[q]), q))
     return ret

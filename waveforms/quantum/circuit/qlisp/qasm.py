@@ -89,6 +89,11 @@ def qasm_eval_single_command(st, scope):
         return []
 
 
+def qasm_eval_if(st, scope):
+    # TODO
+    return [st]
+
+
 def qasm_eval_prog(prog, scope=None):
     current_scope = {}
     if scope is None:
@@ -122,6 +127,8 @@ def qasm_eval_prog(prog, scope=None):
                 qlisp.extend(qasm_eval_prog(gate.body, [*scope, sub_scope]))
             else:
                 raise Exception(f"{st.name:r} is not gate nor opaque")
+        elif isinstance(st, If):
+            qlisp.extend(qasm_eval_if(st, scope))
         elif isinstance(st, Format):
             pass
         else:
