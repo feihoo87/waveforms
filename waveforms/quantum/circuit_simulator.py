@@ -2,6 +2,7 @@ import itertools
 from functools import partial, reduce
 
 import numpy as np
+from waveforms.quantum.math import U, fSim, rfUnitary
 
 __matrix_of_gates = {}
 
@@ -118,32 +119,13 @@ def seq2mat(seq):
     return applySeq(seq, np.eye(2, dtype=complex))
 
 
-def UMat(theta, phi):
-    c, s = np.cos(theta / 2), np.sin(theta / 2)
-    return np.array([[c, -1j * s * np.exp(-1j * phi)],
-                     [-1j * s * np.exp(1j * phi), c]])
-
-
-def RzMat(phi):
-    return np.array([[np.exp(-0.5j * phi), 0], [0, np.exp(0.5j * phi)]])
-
-
-def fSimMat(theta, phi):
-    c, s = np.cos(theta), np.sin(theta)
-    p = np.exp(-1j * phi)
-    return np.array([
-        [1,     0,     0,     0],
-        [0,     c, -1j*s,     0],
-        [0, -1j*s,     c,     0],
-        [0,     0,     0,     p]
-    ]) #yapf: disable
-
-
-regesterGateMatrix('U', UMat, 1)
-regesterGateMatrix('Rx', partial(UMat, phi=0), 1)
-regesterGateMatrix('Ry', partial(UMat, phi=np.pi/2), 1)
-regesterGateMatrix('Rz', RzMat, 1)
-regesterGateMatrix('fSim', fSimMat, 2)
+regesterGateMatrix('U', U, 1)
+regesterGateMatrix('P', partial(U, theta=0, phi=0), 1)
+regesterGateMatrix('rfUnitary', rfUnitary, 1)
+regesterGateMatrix('Rx', partial(rfUnitary, phi=0), 1)
+regesterGateMatrix('Ry', partial(rfUnitary, phi=np.pi / 2), 1)
+regesterGateMatrix('Rz', partial(U, theta=0, phi=0), 1)
+regesterGateMatrix('fSim', fSim, 2)
 
 # one qubit
 regesterGateMatrix('I', np.array([[1, 0], [0, 1]]))
@@ -168,7 +150,7 @@ regesterGateMatrix('-T',
 regesterGateMatrix(
     'CZ', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]]))
 regesterGateMatrix(
-    'CNot', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]))
+    'Cnot', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]))
 regesterGateMatrix(
     'iSWAP',
     np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]]))
@@ -185,19 +167,18 @@ regesterGateMatrix(
     np.array([[1, 0, 0, 0], [0, 1 / np.sqrt(2), 1j / np.sqrt(2), 0],
               [0, 1j / np.sqrt(2), 1 / np.sqrt(2), 0], [0, 0, 0, 1]]))
 
-
 if __name__ == '__main__':
     # Porter-Thomas distribution
 
-    regesterGateMatrix('W', UMat(np.pi/2, np.pi/4))
+    regesterGateMatrix('W', rfUnitary(np.pi / 2, np.pi / 4))
 
     def randomSeq(depth, N):
         seq = []
         for i in range(depth):
             for j in range(N):
                 seq.append((np.random.choice(['X/2', 'Y/2', 'W']), j))
-            for j in range(i%2, N, 2):
-                seq.append(('SQiSWAP', (j, (j+1)%N)))
+            for j in range(i % 2, N, 2):
+                seq.append(('SQiSWAP', (j, (j + 1) % N)))
         return seq
 
     p = []
@@ -209,10 +190,10 @@ if __name__ == '__main__':
     p = np.asarray(p)
 
     # plot distribution of probabilities
-    N = 2 ** 6
+    N = 2**6
     y, x = np.histogram(N * p, bins=50, density=True)
 
     import matplotlib.pyplot as plt
 
-    plt.semilogy((x[:-1]+x[1:])/2, y)
+    plt.semilogy((x[:-1] + x[1:]) / 2, y)
     plt.show()
