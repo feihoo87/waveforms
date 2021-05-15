@@ -233,6 +233,19 @@ def U(theta, phi, lambda_, delta=0):
                          [s * np.exp(1j * b), c * np.exp(1j * a)]])
 
 
+def Unitary2Angles(U: np.ndarray) -> np.ndarray:
+    if U[0, 0] == 0:
+        theta, phi, lambda_, delta = np.pi, 0, np.angle(U[1, 0]), 0
+    else:
+        delta = np.angle(U[0, 0])
+        U = U / np.exp(1j * delta)
+        theta = 2 * np.arccos(U[0, 0])
+        phi = np.angle(U[1, 0])
+        lambda_ = np.angle(-U[0, 1])
+        delta += (phi + lambda_) / 2
+    return np.array([theta, phi, lambda_, delta])
+
+
 def rfUnitary(theta, phi):
     """
     Gives the unitary operator for an ideal microwave gate.
