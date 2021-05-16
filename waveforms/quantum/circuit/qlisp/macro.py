@@ -137,7 +137,7 @@ def U(q, theta, phi, lambda_):
     if theta == 0:
         return [(('P', phi + lambda_), q)]
     else:
-        return [(('P', lambda_), q), (('rfUnitary', theta, -pi / 2), q),
+        return [(('P', lambda_), q), (('rfUnitary', theta, pi / 2), q),
                 (('P', phi), q)]
 
 
@@ -178,7 +178,7 @@ def reduceVirtualZ(qlisp):
             hold[st[1]] = (hold[st[1]] + st[0][1]) % pi
         elif gateName(st) == 'rfUnitary':
             ret.append(
-                (('rfUnitary', st[0][1], st[0][2] + hold[st[1]]), st[1]))
+                (('rfUnitary', st[0][1], st[0][2] - hold[st[1]]), st[1]))
         elif commuteWithRz(st):
             ret.append(st)
         else:
