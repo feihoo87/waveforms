@@ -120,11 +120,11 @@ def seq2mat(seq):
 
 
 regesterGateMatrix('U', U, 1)
-regesterGateMatrix('P', partial(U, theta=0, phi=0), 1)
+regesterGateMatrix('P', lambda p: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('rfUnitary', rfUnitary, 1)
 regesterGateMatrix('Rx', partial(rfUnitary, phi=0), 1)
 regesterGateMatrix('Ry', partial(rfUnitary, phi=np.pi / 2), 1)
-regesterGateMatrix('Rz', partial(U, theta=0, phi=0), 1)
+regesterGateMatrix('Rz', lambda p: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('fSim', fSim, 2)
 
 # one qubit
