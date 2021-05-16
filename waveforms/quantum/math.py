@@ -1,6 +1,6 @@
 #%%
 from functools import reduce
-from itertools import cycle, product
+from itertools import chain, cycle, product
 from typing import Generator, Optional, Sequence, Union
 
 import numpy as np
@@ -34,14 +34,6 @@ def sigma(j: int, N: int = 1) -> np.ndarray:
     dims = [4] * N
     idx = np.unravel_index(j, dims)
     return tensor(s[x] for x in idx)
-
-
-def sigma_all(N: int = 1) -> Generator[np.ndarray, None, None]:
-    '''
-    Return the pauli basis for N qubits
-    '''
-    for x in product([s0, s1, s2, s3], repeat=N):
-        yield reduce(np.kron, x)
 
 
 def basis(x: Union[int, str], dim: int = 2) -> np.ndarray:
@@ -123,22 +115,61 @@ def psi2rho(psi: np.ndarray) -> np.ndarray:
         return normalize(psi)
 
 
-def bloch2rho(S: np.ndarray) -> np.ndarray:
-    '''
-    Convert a generalized bloch vector S to a denisty matrix.  Currently only works for
-    N-qubits
-    '''
-    N = int(np.log2(len(S)) / 2)
-    x = sigma_all(N)
-    rho = reduce(np.add, (a * b for (a, b) in zip(S, x)))
-    return rho / rho.shape[0]
+def rho2v(rho):
+    """密度矩阵转相干矢
+    """
+    N = rho.shape[0]
+    indices = np.tril_indices(N, -1)
+    z = np.diag(rho).real
+    Z = np.cumsum(z[:-1]) - z[1:] * np.arange(1, N)
+    return np.hstack((rho[indices].real, rho[indices].imag, Z))
 
 
-def rho2bloch(rho: np.ndarray) -> np.ndarray:
-    rho = psi2rho(rho)
+def v2rho(V):
+    """相干矢转密度矩阵"""
+    N = int(np.sqrt(len(V) + 1))
+    assert N**2 - 1 == len(V)
+
+    X = V[:(N**2 - N) // 2]
+    Y = V[(N**2 - N) // 2:(N**2 - N)]
+    Z = V[(N**2 - N):]
+
+    A = np.hstack([Z[:0:-1] - Z[-2::-1], Z[0]])
+    zn = (1 - A.sum()) / N
+    A = A / np.arange(N - 1, 0, -1)
+    z = np.cumsum(np.hstack([zn, A]))[::-1]
+
+    rho = np.diag(z / 2).astype(complex)
+
+    rho[np.tril_indices(N, -1)] = X + 1j * Y
+    rho += dagger(rho)
+
+    return normalize(rho)
+
+
+def rho2bloch(rho):
+    """
+    与 rho2v 类似，只不过是选择以 sigma_i \otimes sigma_j ... 为基底来展开,
+    只适用于N比特态,即 rho 的形状只能是 (2 ** N, 2 ** N)
+    """
+    bases = [s0, s1, s2, s3]
     N = int(np.log2(rho.shape[0]))
-    S = np.array([np.trace(np.dot(rho, x)).real for x in sigma_all(N)])
-    return S
+    return np.asarray([
+        np.sum(rho * reduce(np.kron, s).T).real
+        for s in product(bases, repeat=N)
+    ][1:])
+
+
+def bloch2rho(V):
+    """
+    rho2bloch 的逆函数
+    """
+    bases = [s0, s1, s2, s3]
+    N = int(np.log2(len(V) + 1) / 2)
+    rho = reduce(np.add,
+                 (a * reduce(np.kron, s)
+                  for (a, s) in zip(chain([1], V), product(bases, repeat=N))))
+    return rho / rho.shape[0]
 
 
 def traceDistance(rho: np.ndarray, sigma: np.ndarray) -> float:
@@ -225,7 +256,25 @@ def randomDensity(N: int, rank: Optional[int] = None) -> np.ndarray:
 
 
 def U(theta, phi, lambda_, delta=0):
-    """general unitary"""
+    """general unitary
+    
+    Any general unitary could be implemented in 2 pi/2-pulses on hardware
+
+    U(theta, phi, lambda_, delta) = \
+        np.exp(1j * delta) * \
+        U(0, 0, theta + phi + lambda_) @ \
+        U(np.pi / 2, p2, -p2) @ \
+        U(np.pi / 2, p1, -p1))
+
+    or  = \
+        np.exp(1j * delta) * \
+        U(0, 0, theta + phi + lambda_) @ \
+        rfUnitary(np.pi / 2, p2 + pi / 2) @ \
+        rfUnitary(np.pi / 2, p1 + pi / 2)
+    
+    where p1 = -lambda_ - pi / 2
+          p2 = pi / 2 - theta - lambda_
+    """
     c, s = np.cos(theta / 2), np.sin(theta / 2)
     a, b = (phi + lambda_) / 2, (phi - lambda_) / 2
     d = np.exp(1j * delta)
@@ -251,6 +300,11 @@ def rfUnitary(theta, phi):
     Gives the unitary operator for an ideal microwave gate.
     phi gives the rotation axis on the plane of the bloch sphere (RF drive phase)
     theta is the rotation angle of the gate (pulse area)
+
+    rfUnitary(theta, phi) := expm(-1j * theta / 2 * \
+        (sigmaX() * cos(phi) + sigmaY() * sin(phi)))
+
+    rfUnitary(theta, phi + pi/2) == U(theta, phi, -phi)
     """
     c, s = np.cos(theta / 2), np.sin(theta / 2)
     return np.array([[c, -1j * s * np.exp(-1j * phi)],
@@ -422,7 +476,7 @@ def getFTMatrix(f_list: Sequence[float],
         weight = np.full(numOfPoints, 2 / numOfPoints)
     if phase_list is None or len(phase_list) == 0:
         phase_list = np.zeros_like(f_list)
-    if len(weight.shape) == 1:
+    if weight.ndim == 1:
         weightList = cycle(weight)
     else:
         weightList = weight
