@@ -1,4 +1,5 @@
 import json
+from itertools import count
 from pathlib import Path
 
 
@@ -56,7 +57,8 @@ def setKey(q, value, dct, prefix=None):
     keys = q.split('.', maxsplit=1)
 
     if len(keys) == 1:
-        if keys[0] in dct and isinstance(dct[keys[0]], dict) and not isinstance(value, dict):
+        if keys[0] in dct and isinstance(dct[keys[0]],
+                                         dict) and not isinstance(value, dict):
             k = '.'.join([*prefix, keys[0]])
             raise ValueError(f'try to set a dict {k} to {type(value)}')
         else:
@@ -74,8 +76,9 @@ def setKey(q, value, dct, prefix=None):
 
 
 class Config(dict):
-    def __init__(self, path):
+    def __init__(self, path, backup=True):
         self.path = Path(path)
+        self.backup = backup
         if self.path.exists():
             self.reload()
         else:
@@ -89,6 +92,13 @@ class Config(dict):
             self.update(dct)
 
     def commit(self):
+        if self.backup and self.path.exists():
+            for i in count():
+                bk = self.path.parent / (self.path.stem + f"_{i}" +
+                                         self.path.suffix)
+                if not bk.exists():
+                    break
+            self.path.rename(bk)
         with self.path.open('w') as f:
             json.dump(self, f, indent=4)
 
