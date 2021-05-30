@@ -47,10 +47,11 @@ class QasmLexer:
                 self.data = ifile.read()
             self.lexer.input(self.data)
 
-    def __init__(self, filename):
+    def __init__(self, filename, lib=None):
         """Create the OPENQASM lexer."""
         self.__mklexer__(filename)
         self.stack = []
+        self.lib = lib
 
     def input(self, data):
         """Set the input text data."""
@@ -139,7 +140,9 @@ class QasmLexer:
         else:
             raise QasmError("Invalid include: must be a quoted string.")
 
-        if incfile in CORE_LIBS:
+        if self.lib is not None and incfile in self.lib:
+            incfile = self.lib[incfile]
+        elif incfile in CORE_LIBS:
             incfile = os.path.join(CORE_LIBS_PATH, incfile)
 
         next_token = self.lexer.token()

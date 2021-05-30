@@ -20,7 +20,7 @@ from .qasmparser import QasmParser
 class Qasm:
     """OPENQASM circuit object."""
 
-    def __init__(self, filename=None, data=None):
+    def __init__(self, filename=None, data=None, lib=None):
         """Create an OPENQASM circuit object."""
         if filename is None and data is None:
             raise QasmError("Missing input file and/or data")
@@ -29,6 +29,7 @@ class Qasm:
                             "initializing qasm")
         self._filename = filename
         self._data = data
+        self._lib = lib
 
     def return_filename(self):
         """Return the filename."""
@@ -49,6 +50,6 @@ class Qasm:
             with open(self._filename) as ifile:
                 self._data = ifile.read()
 
-        with QasmParser(self._filename) as qasm_p:
+        with QasmParser(self._filename, self._lib) as qasm_p:
             qasm_p.parse_debug(False)
             return qasm_p.parse(self._data)
