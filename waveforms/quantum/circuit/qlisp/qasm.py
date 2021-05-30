@@ -137,8 +137,8 @@ def qasm_eval_prog(prog, scope=None):
     return qlisp
 
 
-def qasm_eval(data):
-    qasm = Qasm(data=data)
+def qasm_eval(data, lib=None):
+    qasm = Qasm(data=data, lib=lib)
     prog = qasm.parse()
     qlisp = qasm_eval_prog(prog)
     return qlisp
