@@ -1,2 +1,2 @@
-from .macro import extend_macro, gate, reduceVirtualZ
+from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
