@@ -41,6 +41,6 @@ def Fxeb(Pm_lst: Iterable[np.array],
     return (np.mean(Si) - np.mean(Sm)) / (np.mean(Si) - np.mean(Se))
 
 
-def specklePurity(Pm_lst: Iterable[np.array]):
+def specklePurity(Pm_lst: Iterable[np.array]) -> float:
     D = Pm_lst[0].size
-    return np.asarray(Pm_lst).var()*D**2*(D+1)/(D-1)
+    return np.asarray(Pm_lst).var() * D**2 * (D + 1) / (D - 1)
