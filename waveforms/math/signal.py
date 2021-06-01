@@ -52,3 +52,8 @@ def getFTMatrix(f_list: Sequence[float],
     for f, phase, weight in zip(f_list, phase_list, weightList):
         e.append(weight * np.exp(-1j * (2 * np.pi * f * t + phase)))
     return np.asarray(e).T
+
+
+if __name__ == "__main__":
+    import doctest
+    doctest.testmod()
