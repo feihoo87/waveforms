@@ -1,10 +1,12 @@
 #%%
 from functools import reduce
-from itertools import chain, cycle, product
-from typing import Generator, Optional, Sequence, Union
+from itertools import chain, product
+from typing import Optional, Union
 
 import numpy as np
 from scipy.linalg import eigh, expm, sqrtm
+from waveforms.math import (fitCircle, fitCrossPoint, fitPole, getFTMatrix,
+                            linFit)
 
 # Paulis
 sigmaI = lambda: np.eye(2, dtype=complex)
@@ -397,92 +399,6 @@ def cpmg(t, T1, Tphi, Delta, A, offset, phi=0):
 
 def relaxation(t, T1, A, offset):
     return A * decay(t, [T1]) + offset
-
-
-def linFit(x, y):
-    """use less memory than np.polyfit"""
-    x, y = np.asarray(x), np.asarray(y)
-    xm, ym = x.mean(), y.mean()
-    N = len(x)
-    a = (np.sum(x * y) - N * xm * ym) / ((x**2).sum() - N * xm * xm)
-    b = ym - a * xm
-    return np.array([a, b])
-
-
-def fitCircle(x, y):
-    u, v = x - x.mean(), y - y.mean()
-    Suuu, Svvv = np.sum(u**3), np.sum(v**3)
-    Suu, Svv = np.sum(u**2), np.sum(v**2)
-    Suv = np.sum(u * v)
-    Suuv, Suvv = np.sum(u**2 * v), np.sum(u * v**2)
-    uc = (Suuv * Suv - Suuu * Svv - Suvv * Svv + Suv * Svvv)
-    vc = (-Suu * Suuv + Suuu * Suv + Suv * Suvv - Suu * Svvv)
-    uc /= 2 * (Suv**2 - Suu * Svv)
-    vc /= 2 * (Suv**2 - Suu * Svv)
-    xc, yc = uc + x.mean(), vc + y.mean()
-    R = np.sqrt(np.mean((x - xc)**2 + (y - yc)**2))
-    return xc, yc, R
-
-
-def fitCrossPoint(x1, y1, x2, y2):
-    a1, b1 = linFit(x1, y1)
-    a2, b2 = linFit(x2, y2)
-    return (b2 - b1) / (a1 - a2), (a1 * b2 - a2 * b1) / (a1 - a2)
-
-
-def fitPole(x, y):
-    a, b, c = np.polyfit(x, y, 2)
-    return -0.5 * b / a, c - 0.25 * b**2 / a
-
-
-def getFTMatrix(f_list: Sequence[float],
-                numOfPoints: int,
-                phase_list: Optional[Sequence[float]] = None,
-                weight: Optional[np.ndarray] = None,
-                sampleRate: float = 1e9) -> np.ndarray:
-    """
-    get a matrix for Fourier transform
-
-    Args:
-        f_list (Sequence[float]): list of frequencies
-        numOfPoints (int): size of signal frame
-        phase_list (Optional[Sequence[float]], optional): list of phase. Defaults to None.
-        weight (Optional[np.ndarray], optional): weight or list of weight. Defaults to None.
-        sampleRate (float, optional): sample rate of signal. Defaults to 1e9.
-
-    Returns:
-        numpy.ndarray: exp matrix
-    
-    >>> shots, numOfPoints, sampleRate = 100, 1000, 1e9
-    >>> f1, f2 = -12.7e6, 32.8e6
-    >>> signal = np.random.randn(shots, numOfPoints)
-    >>> e = getFTMatrix([f1, f2], numOfPoints, sampleRate=sampleRate)
-    >>> ret = signal @ e
-    >>> ret.shape
-    (100, 2)
-    >>> t = np.arange(numOfPoints) / sampleRate
-    >>> signal = 0.8 * np.sin(2 * np.pi * f1 * t) + 0.2 * np.cos(2 * np.pi * f2 * t)
-    >>> signal @ e
-    array([-0.00766509-0.79518987j,  0.19531432+0.00207068j])
-    >>> spec = 2 * np.fft.fft(signal) / numOfPoints
-    >>> freq = np.fft.fftfreq(numOfPoints)
-    >>> e = getFTMatrix(freq, numOfPoints, sampleRate=1)
-    >>> np.allclose(spec, signal @ e)
-    True
-    """
-    e = []
-    t = np.linspace(0, numOfPoints / sampleRate, numOfPoints, endpoint=False)
-    if weight is None or len(weight) == 0:
-        weight = np.full(numOfPoints, 2 / numOfPoints)
-    if phase_list is None or len(phase_list) == 0:
-        phase_list = np.zeros_like(f_list)
-    if weight.ndim == 1:
-        weightList = cycle(weight)
-    else:
-        weightList = weight
-    for f, phase, weight in zip(f_list, phase_list, weightList):
-        e.append(weight * np.exp(-1j * (2 * np.pi * f * t + phase)))
-    return np.asarray(e).T
 
 
 # %%
