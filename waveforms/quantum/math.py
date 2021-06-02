@@ -7,6 +7,7 @@ import numpy as np
 from scipy.linalg import eigh, expm, sqrtm
 from waveforms.math import (fitCircle, fitCrossPoint, fitPole, getFTMatrix,
                             linFit)
+from waveforms.math.signal import decay, oscillation
 
 # Paulis
 sigmaI = lambda: np.eye(2, dtype=complex)
@@ -322,70 +323,6 @@ def fSim(theta, phi):
         [0, -1j*s,     c,     0],
         [0,     0,     0,     p]
     ]) #yapf: disable
-
-
-def lorentz(x, x0, gamma):
-    """lorentz peak"""
-    return 1 / (1 + ((x - x0) / gamma)**2)
-
-
-def lorentzComplex(x, x0, gamma):
-    """complex lorentz peak
-    
-    lorentz(x, x0, gamma) = lorentzComplex(x, x0, gamma) * conj(lorentzComplex(x, x0, gamma))
-    """
-    return 1 / (1 + 1j * (x - x0) / gamma)
-
-
-def gaussian(x, x0, sigma):
-    """gaussian peak"""
-    return np.exp(-0.5 * ((x - x0) / sigma)**2)
-
-
-def peaks(x, peaks, background=0):
-    """
-    peaks: list of (center, width, amp, shape)
-           shape should be either 'gaussian' or 'lorentz'
-    background: a float, complex or ndarray with the same shape of `x`
-    """
-    ret = np.zeros_like(x)
-    for center, width, amp, shape in peaks:
-        if shape == 'gaussian':
-            ret += amp * gaussian(x, center, width)
-        else:
-            ret += amp * lorentz(x, center, width)
-
-    return ret + background
-
-
-def complexPeaks(x, peaks, background=0):
-    """
-    peaks: list of (center, width, amp)
-    background: a float, complex or ndarray with the same shape of `x`
-    """
-    ret = np.zeros_like(x, dtype=np.complex)
-    for x0, gamma, A, *_ in peaks:
-        ret += A * lorentzComplex(x, x0, gamma)
-    return ret + background
-
-
-def decay(t, tau):
-    """
-    exponential decay
-    """
-    a = -(1 / np.asarray(tau))**(np.arange(len(tau)) + 1)
-    a = np.hstack([a[::-1], [0]])
-    return np.exp(np.poly1d(a)(t))
-
-
-def oscillation(t, spec=((1, 1), ), amplitude=1, offset=0):
-    """
-    oscillation
-    """
-    ret = np.zeros_like(t, dtype=np.complex)
-    for A, f in spec:
-        ret += A * np.exp(2j * np.pi * f * t)
-    return amplitude * np.real(ret) + offset
 
 
 def rabi(t, TR, Omega, A, offset):
