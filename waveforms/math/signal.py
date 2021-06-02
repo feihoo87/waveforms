@@ -2,7 +2,8 @@ from itertools import cycle
 from typing import Optional, Sequence
 
 import numpy as np
-from scipy.fftpack import fft, ifft, ifftshift
+from scipy.fftpack import fft, fftfreq, ifft, ifftshift
+from scipy.signal import fftconvolve
 
 
 def getFTMatrix(f_list: Sequence[float],
@@ -122,21 +123,60 @@ def S21(w, l, ZL, Z0=50, v=1e8):
     return np.cos(phi) - 1j / z * np.sin(phi)
 
 
-def kernel(sig_in, sig_out, sample_rate, bw=None, skip=0):
-    #b, a = signal.butter(3, bw / (0.5*sample_rate), 'low')
-    #sig_out = signal.filtfilt(b, a, sig_out)
+def extractKernel(sig_in, sig_out, sample_rate, bw=None, skip=0):
     corr = fft(sig_in) / fft(sig_out)
     ker = np.real(ifftshift(ifft(corr)))
     if bw is not None and bw < 0.5 * sample_rate:
-        #b, a = signal.butter(3, bw / (0.5*sample_rate), 'low')
-        #ker = signal.filtfilt(b, a, ker)
         k = np.exp(-0.5 * np.linspace(-3.0, 3.0, int(2 * sample_rate / bw))**2)
         ker = np.convolve(ker, k / k.sum(), mode='same')
     return ker[int(skip):len(ker) - int(skip)]
 
 
-def predistort(sig, ker):
-    return np.convolve(sig, ker, mode='same')
+def zDistortKernel(dt: float, params: Sequence[tuple]) -> np.ndarray:
+    t = 3 * np.asarray(params)[:, 0].max()
+    omega = 2 * np.pi * fftfreq(int(t / dt) + 1, dt)
+
+    H = 1
+    for tau, A in params:
+        H += (1j * A * omega * tau) / (1j * omega * tau + 1)
+
+    ker = ifftshift(ifft(1 / H)).real
+    return ker
+
+
+def predistort(sig: np.ndarray, ker: np.ndarray) -> np.ndarray:
+    if len(sig) >= len(ker):
+        return np.convolve(sig, ker, mode='same')
+    else:
+        start = (len(ker) - len(sig)) // 2
+        stop = start + len(sig)
+        return fftconvolve(sig, ker, mode='same')[start:stop]
+
+
+def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
+    """
+    delay a signal
+
+    Args:
+        signal (np.ndarray): input signal
+        delay (float): delayed time
+        dt (float): time step of signal samples
+
+    Returns:
+        np.ndarray: delayed signal
+    """
+    ret = np.zeros_like(signal)
+    points = int(delay // dt)
+    delta = delay / dt - points
+    ker = np.array([0, 1 - delta, delta])
+    signal = np.convolve(signal, ker, mode='same')
+    if points == 0:
+        return signal
+    elif points < 0:
+        ret[:points] = signal[-points:]
+    else:
+        ret[points:] = signal[:-points]
+    return ret
 
 
 if __name__ == "__main__":
