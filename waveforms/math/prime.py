@@ -3,7 +3,7 @@ import functools
 import itertools
 import random
 from math import ceil, floor, log, sqrt
-from typing import Iterator, List, Optional, Set
+from typing import Generator, Iterator, List, Optional, Set
 
 
 def __sieve(lst: List[int], p_lst: List[int]) -> None:
@@ -94,6 +94,8 @@ def millerRabinTest(q: int) -> bool:
 
 
 def is_prime(q: int) -> bool:
+    if q < 2:
+        return False
     if q in __primes_set:
         return True
     if q % 2 == 0 or q % 3 == 0:
@@ -105,7 +107,7 @@ def is_prime(q: int) -> bool:
         return False
 
 
-class Primes:
+class _Primes:
     @staticmethod
     def greater_than(x: int) -> Iterator[int]:
         """
@@ -165,11 +167,30 @@ class Primes:
         for _, q in zip(range(count), Primes.greater_than(1)):
             yield q
 
+    @staticmethod
+    def pi(x):
+        """gives the number of primes less than or equal to x."""
+        return primePi(x)
+
     def __iter__(self) -> Iterator[int]:
         yield from self.greater_than(1)
 
     def __contains__(self, num: int) -> bool:
         return is_prime(num)
+
+    def __getitem__(self, n: int) -> int:
+        return prime(n)
+
+    def __call__(self):
+        return self
+
+    def __and__(self, other):
+        if isinstance(other, (Generator, range)):
+            return filter(is_prime, other)
+        return {x for x in set(other) if is_prime(x)}
+
+    def __rand__(self, other):
+        return self.__and__(other)
 
 
 def next_prime(x: int) -> int:
@@ -272,5 +293,7 @@ def primePi(m: int) -> int:
 
     return _primePi(floor(m))
 
+
+Primes = _Primes()
 
 __all__ = ['Primes', 'prime', 'is_prime', 'next_prime', 'primePi']
