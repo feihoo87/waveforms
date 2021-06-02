@@ -174,7 +174,7 @@ def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
 
     if points == 0:
         return signal
-    
+
     ret = np.zeros_like(signal)
     if points < 0:
         ret[:points] = signal[-points:]
