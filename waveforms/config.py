@@ -76,7 +76,7 @@ def setKey(q, value, dct, prefix=None):
 
 
 class Config(dict):
-    def __init__(self, path, backup=True):
+    def __init__(self, path, backup=False):
         self.path = Path(path)
         self.backup = backup
         if self.path.exists():
