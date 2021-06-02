@@ -54,6 +54,73 @@ def getFTMatrix(f_list: Sequence[float],
     return np.asarray(e).T
 
 
+def Svv(f, T, Z=lambda f: 50 * np.ones_like(f)):
+    """
+    power spectral density of the series noise voltage
+    
+    f : list of frequency
+    T : temperature
+    Z : frequency-dependent complex electrical impedance
+        (default 50 Ohm)
+    """
+    from scipy.constants import h, k
+    eta = h * f / (k * T) / (np.exp(h * f / (k * T)) - 1)
+    return 4 * k * T * np.real(Z(f)) * eta
+
+
+def atts(f, atts=[], input=None):
+    """
+    power spectral density at MXC
+    
+    f : list of frequency
+    atts: list of tuples (temperature, attenuator)    
+    """
+    if input is not None:
+        spec = input
+    else:
+        spec = Svv(f, 300)
+    for T, att in atts:
+        A = 10**(-att / 10)
+        spec = spec / A + Svv(f, T) * (A - 1) / A
+    return spec
+
+
+def atts_and_heat(f, atts=[], input=None):
+    """
+    power spectral density at MXC
+    
+    f : list of frequency
+    atts: list of tuples (temperature, attenuator)    
+    """
+    heat = np.zeros_like(f)
+    if input is not None:
+        spec = input
+    else:
+        spec = Svv(f, 300)
+    for T, att in atts:
+        A = 10**(-att / 10)
+        heat += 300 / T * (A - 1) / A * spec
+        spec = spec / A + Svv(f, T) * (A - 1) / A
+    return spec, heat
+
+
+def Z_in(w, ZL, l, Z0=50, v=1e8):
+    """Impedance of the transmission line
+    """
+    a = 1j * np.tan(w * l / v)
+    #return Z0*(np.tanh(1j*w*l/v)+np.arctanh(ZL/Z0))
+    return Z0 * (ZL + Z0 * a) / (Z0 + ZL * a)
+
+
+def S21(w, l, ZL, Z0=50, v=1e8):
+    """S21 of the transmission line
+    """
+    z = Z_in(w, ZL, l, Z0, v) / Z0
+    phi = w * l / v
+    #return (1+Z0/z)*np.exp(-1j*w*l/v)/2+(1-Z0/z)*np.exp(1j*w*l/v)/2
+    return np.cos(phi) - 1j / z * np.sin(phi)
+
+
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
