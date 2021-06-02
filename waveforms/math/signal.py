@@ -2,6 +2,7 @@ from itertools import cycle
 from typing import Optional, Sequence
 
 import numpy as np
+from scipy.fftpack import fft, ifft, ifftshift
 
 
 def getFTMatrix(f_list: Sequence[float],
@@ -119,6 +120,23 @@ def S21(w, l, ZL, Z0=50, v=1e8):
     phi = w * l / v
     #return (1+Z0/z)*np.exp(-1j*w*l/v)/2+(1-Z0/z)*np.exp(1j*w*l/v)/2
     return np.cos(phi) - 1j / z * np.sin(phi)
+
+
+def kernel(sig_in, sig_out, sample_rate, bw=None, skip=0):
+    #b, a = signal.butter(3, bw / (0.5*sample_rate), 'low')
+    #sig_out = signal.filtfilt(b, a, sig_out)
+    corr = fft(sig_in) / fft(sig_out)
+    ker = np.real(ifftshift(ifft(corr)))
+    if bw is not None and bw < 0.5 * sample_rate:
+        #b, a = signal.butter(3, bw / (0.5*sample_rate), 'low')
+        #ker = signal.filtfilt(b, a, ker)
+        k = np.exp(-0.5 * np.linspace(-3.0, 3.0, int(2 * sample_rate / bw))**2)
+        ker = np.convolve(ker, k / k.sum(), mode='same')
+    return ker[int(skip):len(ker) - int(skip)]
+
+
+def predistort(sig, ker):
+    return np.convolve(sig, ker, mode='same')
 
 
 if __name__ == "__main__":
