@@ -165,14 +165,18 @@ def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
     Returns:
         np.ndarray: delayed signal
     """
-    ret = np.zeros_like(signal)
     points = int(delay // dt)
     delta = delay / dt - points
-    ker = np.array([0, 1 - delta, delta])
-    signal = np.convolve(signal, ker, mode='same')
+
+    if delta > 0:
+        ker = np.array([0, 1 - delta, delta])
+        signal = np.convolve(signal, ker, mode='same')
+
     if points == 0:
         return signal
-    elif points < 0:
+    
+    ret = np.zeros_like(signal)
+    if points < 0:
         ret[:points] = signal[-points:]
     else:
         ret[points:] = signal[:-points]
