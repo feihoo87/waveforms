@@ -1,2 +1,2 @@
 from . import xeb
-from .circuit_simulator import applySeq, regesterGateMatrix, seq2mat
+from .circuit.simulator import applySeq, regesterGateMatrix, seq2mat
