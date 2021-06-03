@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import json
+import random
 import weakref
 from pathlib import Path
-from types import FunctionType, MethodType
 from typing import Any, Union
 
 
-def mixin(o: object, trait: type, overwrite: bool = False) -> object:
-    for name, func in trait.__dict__.items():
-        if isinstance(func, FunctionType) and (overwrite
-                                               or name not in o.__dict__):
-            setattr(o, name, MethodType(func, o))
+def randomStr(n):
+    s = ('abcdefghijklmnopqrstuvwxyz'
+         'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+         '0123456789')
+    return ''.join(random.choices(s, k=n))
+
+
+def mixin(o: object, *traits: type) -> object:
+    bases = (o.__class__, *traits)
+    name = '_'.join([cls.__name__ for cls in bases])
+    name = '_'.join([name, randomStr(6)])
+    cls = type(name, bases, {})
+    o.__class__ = cls
     return o
 
 
 class TraitMeta(type):
     _traits = {}
+
     def __new__(cls, name, bases, namespace):
         cls = super().__new__(cls, name, bases, namespace)
         if name != 'Trait':
@@ -119,11 +128,10 @@ class ConfigSection(dict):
                 cfg = self._cfg_
                 k = '.'.join([self._key_, key])
             d = ConfigSection(cfg, k)
-            for trait in traits:
-                if trait in TraitMeta._traits:
-                    mixin(d, TraitMeta._traits[trait])
             d.update(value)
             value = d
+        elif isinstance(value, ConfigSection):
+            value.__class__ = ConfigSection
         super().__setitem__(key, value)
 
     def __getitem__(self, key: str) -> ValueType:
@@ -133,10 +141,11 @@ class ConfigSection(dict):
             if self is not d:
                 self.update(d)
         ret = super().__getitem__(key)
-        if isinstance(ret, ConfigSection):
-            for trait in traits:
-                if trait in TraitMeta._traits:
-                    mixin(ret, TraitMeta._traits[trait])
+        if isinstance(ret, ConfigSection) and len(traits) > 0:
+            traits = [
+                TraitMeta._traits[n] for n in traits if n in TraitMeta._traits
+            ]
+            mixin(ret, *traits)
         return ret
 
     def __delitem__(self, key: str) -> None:
