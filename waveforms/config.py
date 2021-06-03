@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import json
-from itertools import count
+import weakref
 from pathlib import Path
+from typing import Any, Union
 
 
 def queryKey(q, dct, prefix=None):
@@ -75,43 +78,82 @@ def setKey(q, value, dct, prefix=None):
         setKey(keys[1], sub, [*prefix, keys[0]])
 
 
-class Config(dict):
-    def __init__(self, path, backup=False):
-        self.path = Path(path)
-        self.backup = backup
-        if self.path.exists():
-            self.reload()
+class ConfigSection(dict):
+    def __init__(self, cfg: Config, key: str):
+        self._cfg_ = cfg
+        self._key_ = key
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if self._cfg_ is None:
+            self._modified_ = True
         else:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.commit()
+            self._cfg_._modified_ = True
+        if isinstance(value, dict) and not isinstance(value, ConfigSection):
+            if self._cfg_ is None:
+                cfg = weakref.proxy(self)
+                k = key
+            else:
+                cfg = self._cfg_
+                k = '.'.join([self._key_, key])
+            d = ConfigSection(cfg, k)
+            d.update(value)
+            value = d
+        super().__setitem__(key, value)
 
-    def reload(self):
-        with self.path.open('r') as f:
-            dct = json.load(f)
-            self.clear()
-            self.update(dct)
+    def __getitem__(self, key: str) -> ValueType:
+        if self._cfg_ is not None:
+            d = self._cfg_.query(self._key_)
+            if self is not d:
+                self.update(d)
+        return super().__getitem__(key)
 
-    def commit(self):
-        if self.backup and self.path.exists():
-            for i in count():
-                bk = self.path.parent / (self.path.stem + f"_{i}" +
-                                         self.path.suffix)
-                if not bk.exists():
-                    break
-            self.path.rename(bk)
-        with self.path.open('w') as f:
-            json.dump(self, f, indent=4)
+    def __delitem__(self, key: str) -> None:
+        if self._cfg_ is None:
+            self._modified_ = True
+        else:
+            self._cfg_._modified_ = True
+        return super().__delitem__(key)
 
-    def rollback(self):
-        self.reload()
+    def __delattr__(self, name: str) -> None:
+        if name in self:
+            return self.__delitem__(name)
+        else:
+            return super().__delattr__(name)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self.__getattribute__(name)
+        except:
+            return self.__getitem__(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self:
+            self.__setitem__(name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def query(self, q: Union[str, set, tuple, list,
+                             dict]) -> Union[dict, ValueType]:
+        if self._key_ is None:
+            prefix = []
+        else:
+            prefix = self._key_.split('.')
+        return query(q, self, prefix=prefix)
+
+    def set(self, q, value):
+        if self._key_ is None:
+            prefix = []
+        else:
+            prefix = self._key_.split('.')
+        setKey(q, value, self, prefix=prefix)
 
     def update(self, other):
         def update(d, u):
             for k in u:
                 if isinstance(u[k], dict):
                     if k not in d:
-                        d[k] = u[k]
-                    elif isinstance(d[k], dict):
+                        d[k] = {}
+                    if isinstance(d[k], dict):
                         update(d[k], u[k])
                     else:
                         raise TypeError()
@@ -120,8 +162,46 @@ class Config(dict):
 
         update(self, other)
 
-    def query(self, q):
-        return query(q, self)
 
-    def set(self, q, value):
-        setKey(q, value, self, prefix=None)
+ValueType = Union[str, int, float, list, ConfigSection]
+
+
+class Config(ConfigSection):
+    def __init__(self, path: Union[str, Path], backup: bool = False):
+        super().__init__(None, None)
+        self._path_ = Path(path)
+        self._backup_ = backup
+        self._modified_ = False
+        if self._path_.exists():
+            self.rollback()
+            if '__version__' not in self:
+                self['__version__'] = 1
+        else:
+            self._path_.parent.mkdir(parents=True, exist_ok=True)
+            self['__version__'] = 1
+            self._modified_ = True
+            self.commit()
+
+    def commit(self):
+        if not self._modified_:
+            return
+        if self._backup_ and self._path_.exists():
+            v = self['__version__']
+            bk = self.path.parent / (self.path.stem + f"_{v}" +
+                                     self.path.suffix)
+            self._path_.rename(bk)
+        with self._path_.open('w') as f:
+            self['__version__'] = self['__version__'] + 1
+            json.dump(self, f, indent=4)
+            self._modified_ = False
+
+    def rollback(self):
+        with self._path_.open('r') as f:
+            dct = json.load(f)
+            self.clear()
+            self.update(dct)
+            self._modified_ = False
+
+    def reload(self):
+        self.rollback()
+
