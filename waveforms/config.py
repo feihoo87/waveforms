@@ -3,7 +3,29 @@ from __future__ import annotations
 import json
 import weakref
 from pathlib import Path
+from types import FunctionType, MethodType
 from typing import Any, Union
+
+
+def mixin(o: object, trait: type, overwrite: bool = False) -> object:
+    for name, func in trait.__dict__.items():
+        if isinstance(func, FunctionType) and (overwrite
+                                               or name not in o.__dict__):
+            setattr(o, name, MethodType(func, o))
+    return o
+
+
+class TraitMeta(type):
+    _traits = {}
+    def __new__(cls, name, bases, namespace):
+        cls = super().__new__(cls, name, bases, namespace)
+        if name != 'Trait':
+            TraitMeta._traits[name] = cls
+        return cls
+
+
+class Trait(metaclass=TraitMeta):
+    pass
 
 
 def queryKey(q, dct, prefix=None):
@@ -89,6 +111,7 @@ class ConfigSection(dict):
         else:
             self._cfg_._modified_ = True
         if isinstance(value, dict) and not isinstance(value, ConfigSection):
+            key, *traits = key.split(':')
             if self._cfg_ is None:
                 cfg = weakref.proxy(self)
                 k = key
@@ -96,16 +119,25 @@ class ConfigSection(dict):
                 cfg = self._cfg_
                 k = '.'.join([self._key_, key])
             d = ConfigSection(cfg, k)
+            for trait in traits:
+                if trait in TraitMeta._traits:
+                    mixin(d, TraitMeta._traits[trait])
             d.update(value)
             value = d
         super().__setitem__(key, value)
 
     def __getitem__(self, key: str) -> ValueType:
+        key, *traits = key.split(':')
         if self._cfg_ is not None:
             d = self._cfg_.query(self._key_)
             if self is not d:
                 self.update(d)
-        return super().__getitem__(key)
+        ret = super().__getitem__(key)
+        if isinstance(ret, ConfigSection):
+            for trait in traits:
+                if trait in TraitMeta._traits:
+                    mixin(ret, TraitMeta._traits[trait])
+        return ret
 
     def __delitem__(self, key: str) -> None:
         if self._cfg_ is None:
@@ -204,4 +236,3 @@ class Config(ConfigSection):
 
     def reload(self):
         self.rollback()
-
