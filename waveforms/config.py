@@ -228,8 +228,7 @@ class Config(ConfigSection):
             return
         if self._backup_ and self._path_.exists():
             v = self['__version__']
-            bk = self.path.parent / (self.path.stem + f"_{v}" +
-                                     self.path.suffix)
+            bk = self._path_.with_stem(self._path_.stem + f"_{v}")
             self._path_.rename(bk)
         with self._path_.open('w') as f:
             self['__version__'] = self['__version__'] + 1
