@@ -1,6 +1,6 @@
-import functools
+import math
 from bisect import bisect_left
-from itertools import product
+from itertools import chain, product
 
 import numpy as np
 import scipy.special as special
@@ -16,8 +16,8 @@ _one = _const(1)
 _half = _const(1 / 2)
 _two = _const(2)
 _pi = _const(np.pi)
-_two_pi = _const(2*np.pi)
-_half_pi = _const(np.pi/2)
+_two_pi = _const(2 * np.pi)
+_half_pi = _const(np.pi / 2)
 
 
 def _is_const(x):
@@ -105,23 +105,100 @@ def _pow(x, n):
     return tuple(t_list), tuple(v_list)
 
 
-# def _reciprocal(x):
-#     if x == _zero:
-#         raise ZeroDivisionError('division by waveform contained zero')
-#     if _is_const(x):
-#         return _const(1/x[1][0])
-#     t_list, v_list = [], []
-
-#     for (mtlist, pre_nlist), v in zip(*x):
-#         nlist = []
-#         for n in n_mtlist:
-#             ntlist.append(-n)
-#         t_list.append((mtlist, tuple(nlist)))
-#         v_list.append(1/v)
-#     return tuple(t_list), tuple(v_list)
+def _cos_power_n(x, n):
+    _, shift, w = x
+    ret = _zero
+    for k in range(0, n // 2 + 1):
+        if n == 2 * k:
+            a = _const(math.comb(n, k) / 2**n)
+            ret = _add(ret, a)
+        else:
+            expr = (((((COS, shift, (n - 2 * k) * w), ), (1, )), ),
+                    (math.comb(n, k) / 2**(n - 1), ))
+            ret = _add(ret, expr)
+    return ret
 
 
-# @functools.lru_cache(maxsize=128)
+def _trigMul_t(x, y, v):
+    """cos(a)cos(b) = 0.5*cos(a+b)+0.5*cos(a-b)"""
+    _, t1, w1 = x
+    _, t2, w2 = y
+    if w2 > w1:
+        t1, t2 = t2, t1
+        w1, w2 = w2, w1
+    exp1 = (COS, (w1 * t1 + w2 * t2) / (w1 + w2), w1 + w2)
+    if w1 == w2:
+        return (((exp1, ), (1, )), ), (0.5 * v, )
+    else:
+        exp2 = (COS, (w1 * t1 - w2 * t2) / (w1 - w2), w1 - w2)
+        return (((exp2, ), (1, )), ((exp1, ), (1, ))), (0.5 * v, 0.5 * v)
+
+
+def _trigMul(x, y):
+    if _is_const(x) or _is_const(y):
+        return _mul(x, y)
+    ret = _zero
+    for (t1, t2), (v1, v2) in zip(product(x[0], y[0]), product(x[1], y[1])):
+        v = v1 * v2
+        tmp = _one
+        trig = []
+        for mt, n in zip(chain(t1[0], t2[0]), chain(t1[1], t2[1])):
+            if mt[0] == COS:
+                trig.append(mt)
+            else:
+                tmp = _mul(tmp, ((((mt, ), (n, )), ), (1, )))
+        if len(trig) == 1:
+            expr = _mul(tmp, (((trig[0], ), (1, )), (v, )))
+        elif len(trig) == 2:
+            expr = _trigMul_t(trig[0], trig[1], v)
+            expr = _mul(tmp, expr)
+        else:
+            expr = _mul(tmp, _const(v))
+        ret = _add(ret, expr)
+    return ret
+
+
+def _trigReduce(mtlist, v):
+    trig = _one
+    ml, nl = [], []
+    for mt, n in zip(*mtlist):
+        if mt[0] == COS:
+            trig = _trigMul(trig, _cos_power_n(mt, n))
+        else:
+            ml.append(mt)
+            nl.append(n)
+    ret = (((tuple(ml), tuple(nl)), ), (v, ))
+
+    return _mul(ret, trig)
+
+
+def _simplify(expr):
+    ret = _zero
+    for t, v in zip(*expr):
+        y = _trigReduce(t, v)
+        ret = _add(ret, y)
+    return ret
+
+
+def _filter(expr, low, high):
+    expr = _simplify(expr)
+    ret = _zero
+    for t, v in zip(*expr):
+        for i, (mt, n) in enumerate(zip(*t)):
+            if mt[0] == COS:
+                if low <= mt[2] < high:
+                    ret = _add(ret, ((t, ), (v, )))
+                break
+            elif mt[0] == SINC and n == 1:
+                pass
+            elif mt[0] == GAUSSIAN and n == 1:
+                pass
+        else:
+            if low <= 0:
+                ret = _add(ret, ((t, ), (v, )))
+    return ret
+
+
 def _apply(x, Type, shift, *args):
     return _baseFunc[Type](x - shift, *args)
 
@@ -149,6 +226,18 @@ class Waveform:
     def __init__(self, bounds=(+np.inf, ), seq=(_zero, )):
         self.bounds = bounds
         self.seq = seq
+
+    def simplify(self):
+        seq = []
+        for expr in self.seq:
+            seq.append(_simplify(expr))
+        return Waveform(self.bounds, tuple(seq))
+
+    def filter(self, low=0, high=np.inf):
+        seq = []
+        for expr in self.seq:
+            seq.append(_filter(expr, low, high))
+        return Waveform(self.bounds, tuple(seq))
 
     def _comb(self, other, oper):
         bounds = []
@@ -302,7 +391,6 @@ LINEAR = registerBaseFunc(lambda t: t)
 GAUSSIAN = registerBaseFunc(lambda t, std_sq2: np.exp(-(t / std_sq2)**2))
 ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2))
 COS = registerBaseFunc(lambda t, w: np.cos(w * t))
-SIN = registerBaseFunc(lambda t, w: np.sin(w * t))
 SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
 EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
 
@@ -319,15 +407,15 @@ registerDerivative(
                                (2 / args[0] / np.sqrt(np.pi), )))
 
 registerDerivative(
-    COS, lambda shift, *args: (((((SIN, shift, *args), ), (1, )), ),
-                               (-args[0], )))
-registerDerivative(
-    SIN, lambda shift, *args: (((((COS, shift, *args), ), (1, )), ),
-                               (args[0], )))
+    COS, lambda shift, *args:
+    (((((COS, shift - np.pi / args[0] / 2, args[0]), ), (1, )), ),
+     (args[0], )))
+
 registerDerivative(
     SINC, lambda shift, *args:
     (((((LINEAR, shift), (COS, shift, *args)), (-1, 1)),
-      (((LINEAR, shift), (SIN, shift, *args)), (-2, 1))), (1, -1 / args[0])))
+      (((LINEAR, shift), (COS, shift, args[0], args[1] - np.pi / 2)),
+       (-2, 1))), (1, -1 / args[0])))
 
 registerDerivative(
     EXP, lambda shift, *args: (((((EXP, shift, *args), ), (1, )), ),
@@ -427,7 +515,8 @@ def sin(w, phi=0):
     if w == 0:
         return const(np.sin(phi))
     else:
-        return Waveform(seq=(_basic_wave(SIN, w, shift=-phi / w), ))
+        return Waveform(seq=(_basic_wave(COS, w, shift=(np.pi / 2 - phi) /
+                                         w), ))
 
 
 def exp(alpha):
