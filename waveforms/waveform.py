@@ -395,7 +395,7 @@ SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
 EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
 
 # register derivative
-registerDerivative(LINEAR, lambda shift, *args: _one_waveform)
+registerDerivative(LINEAR, lambda shift, *args: _one)
 
 registerDerivative(
     GAUSSIAN, lambda shift, *args: (((((LINEAR, shift),
@@ -546,8 +546,9 @@ def _poly(*a):
     """
     a[0] + a[1] * t + a[2] * t**2 + ...
     """
-    return (((), ()), ) + tuple([((LINEAR, 0), (n, ))
-                                 for n, _ in enumerate(a[:1], start=1)]), a
+    t = (((), ()), *[(((LINEAR, 0), ), (n, ))
+                     for n, _ in enumerate(a[1:], start=1)])
+    return t, a
 
 
 def poly(a):
