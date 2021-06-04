@@ -467,7 +467,9 @@ def step(edge, type='erf'):
     type: "erf", "cos", "linear"
     """
     if type == 'cos':
-        rise = _add(_half, _mul(_half, _basic_wave(SIN, np.pi / edge)))
+        rise = _add(
+            _half, _mul(_half, _basic_wave(COS, np.pi / edge,
+                                           shift=0.5 * edge)))
         return Waveform(bounds=(-edge / 2, edge / 2, +np.inf),
                         seq=(_zero, rise, _one))
     elif type == 'linear':
