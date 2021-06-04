@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from numpy import pi
+from numpy import pi, mod
 
 from .qlisp import gateName
 
@@ -43,6 +43,9 @@ def extend_macro(qlisp, scope):
 def exchangeRzWithGate(st, phaseList, scope):
     if gateName(st) == 'P':
         return [], [(phaseList[0] + st[0][1]) % pi]
+    elif gateName(st) == 'rfUnitary':
+        (_, theta, phi), qubit = st
+        return [(('rfUnitary', theta, phi - phaseList[0]), qubit)], phaseList
     elif gateName(st) in ['Reset', 'Measure']:
         return [st], [0] * len(phaseList)
     elif gateName(st) in ['CZ', 'I', 'Barrier', 'Delay']:
@@ -66,7 +69,7 @@ def reduceVirtualZ(qlisp, scope):
                                                    scope)
             yield from stList
             for q, p in zip(target, phaseList):
-                hold[q] = p
+                hold[q] = mod(p, 2 * pi)
         except:
             for q in target:
                 if hold[q] != 0:
