@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from numpy import pi, mod
+from numpy import mod, pi
 
 from .qlisp import gateName
 
