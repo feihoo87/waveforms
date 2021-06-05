@@ -45,11 +45,13 @@ def _getChannel(ctx, key):
     qubits = [ctx.cfg.getQubit(q) for q in qubits]
 
     if name.startswith('readoutLine.'):
-        name = name.removeprefix('readoutLine.')
+        #name = name.removeprefix('readoutLine.')
+        name = name[len('readoutLine.'):]
         rl = ctx.cfg.getReadoutLine(qubits[0]['readoutLine'])
         chInfo = rl.query('channels.' + name)
     elif name.startswith('coupler.'):
-        name = name.removeprefix('coupler.')
+        #name = name.removeprefix('coupler.')
+        name = name[len('coupler.'):]
         c = _getSharedCoupler(qubits).pop()
         c = ctx.cfg.getCoupler(c)
         chInfo = c.query('channels.' + name)
