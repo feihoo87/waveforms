@@ -4,7 +4,7 @@ import copy
 import json
 import random
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 
 def randomStr(n):
@@ -215,13 +215,20 @@ ValueType = Union[str, int, float, list, ConfigSection]
 
 
 class Config(ConfigSection):
-    def __init__(self, path: Union[str, Path], backup: bool = False):
+    def __init__(self,
+                 path: Optional[Union[str, Path]] = None,
+                 backup: bool = False):
         super().__init__(None, None)
-        self._path_ = Path(path)
+        if isinstance(path, str):
+            path = Path(path)
+        self._path_ = path
         self._backup_ = backup
         self._modified_ = False
+
+        if self._path_ is None:
+            return
         if self._path_.exists():
-            self.rollback()
+            self.reload()
             if '__version__' not in self:
                 self['__version__'] = 1
         else:
@@ -231,7 +238,7 @@ class Config(ConfigSection):
             self.commit()
 
     def commit(self):
-        if not self._modified_:
+        if not self._modified_ or self._path_ is None:
             return
         if self._backup_ and self._path_.exists():
             v = self['__version__']
@@ -243,11 +250,19 @@ class Config(ConfigSection):
             self._modified_ = False
 
     def rollback(self):
+        if not self._modified_ or self._path_ is None:
+            return
+        self.reload()
+
+    def reload(self):
         with self._path_.open('r') as f:
             dct = json.load(f)
             self.clear()
             self.update(dct)
             self._modified_ = False
 
-    def reload(self):
-        self.rollback()
+    @classmethod
+    def fromdict(cls, d: dict) -> Config:
+        ret = cls()
+        ret.update(d)
+        return ret

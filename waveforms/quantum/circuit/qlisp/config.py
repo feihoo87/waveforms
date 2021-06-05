@@ -1,7 +1,7 @@
 import warnings
 from itertools import chain, permutations
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from waveforms.config import Config as BaseConfig
@@ -9,7 +9,7 @@ from waveforms.config import Trait
 
 
 class Config(BaseConfig):
-    def __init__(self, path):
+    def __init__(self, path: Optional[Union[str, Path]] = None):
         super().__init__(path)
         if 'station' not in self:
             self.update({
