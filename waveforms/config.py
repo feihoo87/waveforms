@@ -4,6 +4,7 @@ import json
 import random
 from pathlib import Path
 from typing import Any, Union
+import copy
 
 
 def randomStr(n):
@@ -174,6 +175,10 @@ class ConfigSection(dict):
             self.__setitem__(name, value)
         else:
             super().__setattr__(name, value)
+
+    def __deepcopy__(self, memo):
+        dct = {k: copy.deepcopy(v) for k, v in self.items()}
+        return dct
 
     def query(self, q: Union[str, set, tuple, list,
                              dict]) -> Union[dict, ValueType]:
