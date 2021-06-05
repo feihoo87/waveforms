@@ -33,11 +33,14 @@ class Config(BaseConfig):
                     }
                 },
                 'gates': {
-                    'measure': {},
-                    'reset': {},
+                    'Measure': {},
+                    'Reset': {},
                     'rfUnitary': {},
                     'CZ': {},
-                    'iSWAP': {}
+                    'iSWAP': {},
+                    'CR': {
+                        '__order_senstive__': True
+                    }
                 }
             })
 
@@ -45,10 +48,7 @@ class Config(BaseConfig):
                   section,
                   key,
                   template=None,
-                  cls=None,
                   properties=('params', 'status', 'calibrations')):
-        if cls is None:
-            cls = ConfigObject
         try:
             d = self.query('.'.join([section, key]))
             return d
@@ -64,7 +64,7 @@ class Config(BaseConfig):
         for k in properties:
             if k not in d:
                 d[k] = {}
-        return cls(self, d, '.'.join([section, key]))
+        return d
 
     def newInstrument(self, name, driver, address, **params):
         d = self.newObject('station.instruments', name, {
@@ -142,23 +142,21 @@ class Config(BaseConfig):
     def newGate(self, name, *qubits, type='default', **params):
         for qubit in qubits:
             try:
-                q = self.getQubit(qubit)
+                self.getQubit(qubit)
             except:
-                q = self.newQubit(qubit)
-        k = ','.join(qubits)
+                self.newQubit(qubit)
+        key = ','.join(qubits)
+        template = {'type': type, 'params': params}
         g = self.newObject(f'gates.{name}',
-                           k, {
-                               'type': type,
-                               'params': params
-                           },
-                           cls=Gate,
+                           key,
+                           template,
                            properties=('type', 'params'))
         return g
 
     def getObject(self, q, cls=None):
         if cls is None:
             cls = 'ConfigObject'
-        return self.query(q+':'+cls)
+        return self.query(q + ':' + cls)
 
     def getQubit(self, name):
         return self.getObject(f"chip.qubits.{name}")
