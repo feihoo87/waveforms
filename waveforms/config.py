@@ -164,7 +164,10 @@ class ConfigSection(dict):
         try:
             return self.__getattribute__(name)
         except:
-            return self.__getitem__(name)
+            try:
+                return self.__getitem__(name)
+            except:
+                raise AttributeError(f'Not Find Attr: {name}')
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in self:
