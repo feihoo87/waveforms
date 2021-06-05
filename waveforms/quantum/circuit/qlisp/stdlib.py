@@ -147,7 +147,7 @@ def rfUnitary(ctx, qubits, theta, phi):
     gate = ctx.cfg.getGate('rfUnitary', qubit)
     shape = gate.shape(theta, phi)
     pulse = {
-        'CosPulse': gaussian,#cosPulse,
+        'CosPulse': cosPulse,
         'Gaussian': gaussian,
         'square': square,
         'DC': square,
