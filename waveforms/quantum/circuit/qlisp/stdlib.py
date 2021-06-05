@@ -1,8 +1,13 @@
-from numpy import pi
+from pathlib import Path
+
+from numpy import mod, pi
 
 from .library import Library
 
 std = Library()
+std.qasmLib = {
+    'qelib1.inc': Path(__file__).parent.parent / 'qasm' / 'libs' / 'qelib1.inc'
+}
 
 
 @std.gate()
@@ -35,6 +40,82 @@ def U(q, theta, phi, lambda_):
         yield (('P', phi), q)
 
 
+@std.gate()
+def X(q):
+    yield (('u3', pi, 0, pi), q)
+
+
+@std.gate()
+def Y(q):
+    yield (('u3', pi, pi / 2, pi / 2), q)
+
+
+@std.gate()
+def Z(q):
+    yield (('u1', pi), q)
+
+
+@std.gate()
+def S(q):
+    yield (('u1', pi / 2), q)
+
+
+@std.gate(name='-S')
+def Sdg(q):
+    yield (('u1', -pi / 2), q)
+
+
+@std.gate()
+def T(q):
+    yield (('u1', pi / 4), q)
+
+
+@std.gate(name='-T')
+def Tdg(q):
+    yield (('u1', -pi / 4), q)
+
+
+@std.gate(name='X/2')
+def sx(q):
+    yield ('-S', q)
+    yield ('H', q)
+    yield ('-S', q)
+
+
+@std.gate(name='-X/2')
+def sxdg(q):
+    yield ('S', q)
+    yield ('H', q)
+    yield ('S', q)
+
+
+@std.gate(name='Y/2')
+def sy(q):
+    yield ('Z', q)
+    yield ('H', q)
+
+
+@std.gate(name='-Y/2')
+def sydg(q):
+    yield ('H', q)
+    yield ('Z', q)
+
+
+@std.gate()
+def Rx(q, theta):
+    yield (('u3', theta, -pi / 2, pi / 2), q)
+
+
+@std.gate()
+def Ry(q, theta):
+    yield (('u3', theta, 0, 0), q)
+
+
+@std.gate()
+def Rz(q, phi):
+    yield (('u1', phi), q)
+
+
 @std.gate(2)
 def Cnot(qubits):
     c, t = qubits
@@ -53,9 +134,71 @@ def crz(qubits, lambda_):
     yield ('Cnot', (c, t))
 
 
-def channel(*args):
-    pass
-
 @std.opaque('rfUnitary')
-def rfUnitary(ctx, qubit, theta, phi):
-    channel(qubit, 'RF')
+def rfUnitary(ctx, qubits, theta, phi):
+    qubit, = qubits
+
+    from waveforms import cosPulse, gaussian, mixing, square
+
+    phi = mod(phi - ctx.phases[qubit], 2 * pi)
+    if phi > pi:
+        phi -= pi
+
+    gate = ctx.cfg.getGate('rfUnitary', qubit)
+    shape = gate.shape(theta, phi)
+    pulse = {
+        'CosPulse': gaussian,#cosPulse,
+        'Gaussian': gaussian,
+        'square': square,
+        'DC': square,
+    }[shape['shape']](
+        shape['duration']) >> (shape['duration'] / 2 + ctx.time[qubit])
+
+    pulse, _ = mixing(pulse,
+                      phase=shape['phase'],
+                      freq=shape['frequency'],
+                      DRAGScaling=shape['DRAGScaling'])
+    ctx.channel['RF', qubit] += pulse
+    ctx.time[qubit] += shape['duration']
+
+
+@std.opaque('Delay')
+def delay(ctx, qubits, time):
+    qubit, = qubits
+    ctx.time[qubit] += time
+
+
+@std.opaque('P')
+def P(ctx, qubits, phi):
+    qubit, = qubits
+    ctx.phases[qubit] += phi
+
+
+@std.opaque('Barrier')
+def barrier(ctx, qubits):
+    time = max(ctx.time[qubit] for qubit in qubits)
+    for qubit in qubits:
+        ctx.time[qubit] = time
+
+
+@std.opaque('Measure')
+def mesure(ctx, qubits, cbit):
+    qubit, = qubits
+    from waveforms.waveform import cos, square
+
+    gate = ctx.cfg.getGate('Measure', qubit)
+    amp = gate.params.amp
+    duration = gate.params.duration
+    frequency = gate.params.frequency
+    t = ctx.time[qubit]
+
+    pulse = square(duration) >> duration / 2
+    ctx.channel['readoutLine.RF',
+                qubit] += amp * pulse * cos(2 * pi * frequency) >> t
+    ctx.channel['readoutLine.AD.trigger', qubit] += pulse >> t
+
+    params = {k: v for k, v in gate.params.items()}
+    ctx.measures[qubit].append(
+        (cbit, ctx.time[qubit], gate.get('signal', 'state'), params))
+    ctx.time[qubit] += duration
+    ctx.phases[qubit] = 0

@@ -9,7 +9,6 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-
 """
 OPENQASM Lexer.
 This is a wrapper around the PLY lexer to support the "include" statement
@@ -24,15 +23,13 @@ import ply.lex as lex
 from . import node
 from .exceptions import QasmError
 
-CORE_LIBS_PATH = os.path.join(os.path.dirname(__file__), 'libs')
-CORE_LIBS = os.listdir(CORE_LIBS_PATH)
-
 
 class QasmLexer:
     """OPENQASM Lexer.
     This is a wrapper around the PLY lexer to support the "include" statement
     by creating a stack of lexers.
     """
+
     # pylint: disable=invalid-name,missing-docstring
     # pylint: disable=attribute-defined-outside-init,bad-docstring-quotes
 
@@ -142,8 +139,6 @@ class QasmLexer:
 
         if self.lib is not None and incfile in self.lib:
             incfile = self.lib[incfile]
-        elif incfile in CORE_LIBS:
-            incfile = os.path.join(CORE_LIBS_PATH, incfile)
 
         next_token = self.lexer.token()
         if next_token is None or next_token.value != ';':
@@ -186,5 +181,7 @@ class QasmLexer:
     t_ignore = ' \t\r'
 
     def t_error(self, t):
-        raise QasmError("Unable to match any token rule, got -->%s<-- "
-                        "Check your OPENQASM source and any include statements." % t.value[0])
+        raise QasmError(
+            "Unable to match any token rule, got -->%s<-- "
+            "Check your OPENQASM source and any include statements." %
+            t.value[0])

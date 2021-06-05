@@ -1,4 +1,5 @@
 from itertools import chain
+from typing import Optional
 
 from ..qasm import Qasm
 from ..qasm.node import *
@@ -137,7 +138,7 @@ def qasm_eval_prog(prog, scope=None):
     return qlisp
 
 
-def qasm_eval(data, lib=None):
+def qasm_eval(data: str, lib: Optional[dict] = None):
     qasm = Qasm(data=data, lib=lib)
     prog = qasm.parse()
     qlisp = qasm_eval_prog(prog)

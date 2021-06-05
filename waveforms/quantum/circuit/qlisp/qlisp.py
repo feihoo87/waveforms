@@ -1,6 +1,3 @@
-from collections import deque
-
-
 def gateName(st):
     if isinstance(st[0], str):
         return st[0]
@@ -11,17 +8,20 @@ def gateName(st):
 class QLisp():
     def __init__(self, qlisp):
         self.prog = qlisp
-        self.stack = deque()
+        self.stack = list()
 
     def send(self, st):
         if st is not None:
-            self.stack.append(st)
+            if isinstance(st, tuple):
+                self.stack.append(st)
+            elif isinstance(st, list):
+                self.stack.extend(reversed(st))
 
     def __iter__(self):
         prog = iter(self.prog)
         while True:
             try:
-                yield self.stack.popleft()
+                yield self.stack.pop()
                 continue
             except IndexError:
                 pass
