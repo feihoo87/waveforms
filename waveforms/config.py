@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
 import random
 from pathlib import Path
 from typing import Any, Union
-import copy
 
 
 def randomStr(n):

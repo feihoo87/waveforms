@@ -268,12 +268,12 @@ class rfUnitary(Gate):
 
     def shape(self, theta, phi=0):
         return {
-            'shape': self['params']['shape'],
+            'shape': self['params'].get('shape', 'Gaussian'),
             'amp': self.amp(theta),
             'duration': self.duration(theta),
             'phase': self.phase(phi),
             'frequency': self['params']['frequency'],
-            'DRAGScaling': self['params']['DRAGScaling']
+            'DRAGScaling': self['params'].get('DRAGScaling', 0)
         }
 
 
