@@ -350,6 +350,16 @@ class Waveform:
     def __hash__(self):
         return hash((self.bounds, self.seq))
 
+    def __eq__(self, o: object) -> bool:
+        if isinstance(o, (int, float, complex)):
+            return self == const(o)
+        elif isinstance(o, Waveform):
+            a = self.simplify()
+            b = o.simplify()
+            return a.seq == b.seq and a.bounds == b.bounds
+        else:
+            return False
+
 
 _zero_waveform = Waveform()
 _one_waveform = Waveform(seq=(_one, ))
