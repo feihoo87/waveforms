@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import random
-import weakref
 from pathlib import Path
 from typing import Any, Union
 
@@ -122,7 +121,7 @@ class ConfigSection(dict):
         if isinstance(value, dict) and not isinstance(value, ConfigSection):
             key, *traits = key.split(':')
             if self._cfg_ is None:
-                cfg = weakref.proxy(self)
+                cfg = self
                 k = key
             else:
                 cfg = self._cfg_
