@@ -1,9 +1,10 @@
-import math
 from bisect import bisect_left
 from itertools import chain, product
 
 import numpy as np
 import scipy.special as special
+
+from .math import comb
 
 _zero = ((), ())
 
@@ -110,11 +111,11 @@ def _cos_power_n(x, n):
     ret = _zero
     for k in range(0, n // 2 + 1):
         if n == 2 * k:
-            a = _const(math.comb(n, k) / 2**n)
+            a = _const(comb(n, k) / 2**n)
             ret = _add(ret, a)
         else:
             expr = (((((COS, shift, (n - 2 * k) * w), ), (1, )), ),
-                    (math.comb(n, k) / 2**(n - 1), ))
+                    (comb(n, k) / 2**(n - 1), ))
             ret = _add(ret, expr)
     return ret
 
