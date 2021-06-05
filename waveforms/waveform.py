@@ -509,16 +509,19 @@ def gaussian(width):
 def cos(w, phi=0):
     if w == 0:
         return const(np.cos(phi))
-    else:
-        return Waveform(seq=(_basic_wave(COS, w, shift=-phi / w), ))
+    if w < 0:
+        phi -= np.pi
+        w = -w
+    return Waveform(seq=(_basic_wave(COS, w, shift=-phi / w), ))
 
 
 def sin(w, phi=0):
     if w == 0:
         return const(np.sin(phi))
-    else:
-        return Waveform(seq=(_basic_wave(COS, w, shift=(np.pi / 2 - phi) /
-                                         w), ))
+    if w < 0:
+        phi -= np.pi
+        w = -w
+    return Waveform(seq=(_basic_wave(COS, w, shift=(np.pi / 2 - phi) / w), ))
 
 
 def exp(alpha):
