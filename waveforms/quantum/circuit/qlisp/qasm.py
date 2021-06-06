@@ -62,10 +62,10 @@ def qasm_eval_single_opaque(st, opaque, scope):
     else:
         gate = st.name
     if isinstance(bitlist[0], int):
-        return [(gate, tuple(bitlist) if len(bitlist) > 1 else bitlist[0])]
+        yield (gate, tuple(bitlist) if len(bitlist) > 1 else bitlist[0])
     else:
-        return [(gate, qubits if len(qubits) > 1 else qubits[0])
-                for qubits in zip(*bitlist)]
+        yield from ((gate, qubits if len(qubits) > 1 else qubits[0])
+                    for qubits in zip(*bitlist))
 
 
 def qasm_eval_single_command(st, scope):
@@ -74,25 +74,23 @@ def qasm_eval_single_command(st, scope):
         c = get_sym(st.children[1], scope)
         if isinstance(q, tuple):
             assert len(q) == len(c)
-            return [(('Measure', c_), q_) for c_, q_ in zip(c, q)]
+            yield from ((('Measure', c_), q_) for c_, q_ in zip(c, q))
         else:
-            return [(('Measure', c), q)]
+            yield (('Measure', c), q)
     elif isinstance(st, Barrier):
         q = tuple(chain(*[get_sym(_, scope) for _ in st.children[0].children]))
-        return [('Barrier', q)]
+        yield ('Barrier', q)
     elif isinstance(st, Reset):
         q = get_sym(st.children[0], scope)
         if isinstance(q, tuple):
-            return [('Reset', q_) for q_ in q]
+            yield from (('Reset', q_) for q_ in q)
         else:
-            return [('Reset', q)]
-    else:
-        return []
+            yield ('Reset', q)
 
 
 def qasm_eval_if(st, scope):
     # TODO
-    return [st]
+    yield st
 
 
 def qasm_eval_prog(prog, scope=None):
@@ -100,8 +98,6 @@ def qasm_eval_prog(prog, scope=None):
     if scope is None:
         allocaInit()
         scope = [current_scope]
-
-    qlisp = []
 
     for st in prog.children:
         if isinstance(st, (Gate, Opaque)):
@@ -123,23 +119,20 @@ def qasm_eval_prog(prog, scope=None):
                                    st.arguments.children):
                     sub_scope[name.name] = a
             if isinstance(gate, Opaque):
-                qlisp.extend(qasm_eval_single_opaque(st, gate, scope))
+                yield from qasm_eval_single_opaque(st, gate, scope)
             elif isinstance(gate, Gate):
-                qlisp.extend(qasm_eval_prog(gate.body, [*scope, sub_scope]))
+                yield from qasm_eval_prog(gate.body, [*scope, sub_scope])
             else:
                 raise Exception(f"{st.name:r} is not gate nor opaque")
         elif isinstance(st, If):
-            qlisp.extend(qasm_eval_if(st, scope))
+            yield from qasm_eval_if(st, scope)
         elif isinstance(st, Format):
             pass
         else:
-            qlisp.extend(qasm_eval_single_command(st, scope))
-
-    return qlisp
+            yield from qasm_eval_single_command(st, scope)
 
 
 def qasm_eval(data: str, lib: Optional[dict] = None):
     qasm = Qasm(data=data, lib=lib)
     prog = qasm.parse()
-    qlisp = qasm_eval_prog(prog)
-    return qlisp
+    yield from qasm_eval_prog(prog)
