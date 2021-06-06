@@ -145,14 +145,26 @@ def assembly(qlisp,
     return ctx
 
 
-def compile(prog, cfg: Optional[Config] = None, lib: Library = std):
+def compile(prog, cfg: Optional[Config] = None, lib: Library = std, **options):
+    """
+    options: 
+        qasm_only = True: only compile qasm to qlisp
+        no_virtual_z = True: keep P gates as original form.
+        no_assembly = True: return simplified qlisp.
+    """
     if cfg is None:
         cfg = getConfig()
 
     if isinstance(prog, str):
         prog = qasm_eval(prog, lib.qasmLib)
+    if 'qasm_only' in options:
+        return list(prog)
     prog = extend_macro(prog, lib.gates)
+    if 'no_virtual_z' in options:
+        return list(prog)
     prog = reduceVirtualZ(prog, lib.gates)
+    if 'no_assembly' in options:
+        return list(prog)
     ctx = assembly(prog, cfg, lib)
     waveforms = dict(ctx.waveforms)
     measures = dict(ctx.measures)
