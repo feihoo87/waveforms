@@ -2,7 +2,7 @@ from collections import defaultdict
 
 from numpy import mod, pi
 
-from .qlisp import gateName
+from .qlisp import QLispError, gateName
 
 
 def call_macro(st, scope):
@@ -12,7 +12,10 @@ def call_macro(st, scope):
         args = ()
     else:
         args = st[0][1:]
-    return func(qubits, *args)
+    try:
+        yield from func(qubits, *args)
+    except:
+        raise QLispError(f'extend macro {st} error.')
 
 
 def extend_control_gate(st, scope):
@@ -31,9 +34,11 @@ def extend_control_gate(st, scope):
 
 def extend_macro(qlisp, scope):
     for st in qlisp:
-        if gateName(st) == 'C':
+        if gateName(st) == 'I':
+            continue
+        elif gateName(st) == 'C':
             yield from extend_control_gate(st, scope)
-        if gateName(st) in scope:
+        elif gateName(st) in scope:
             for st in call_macro(st, scope):
                 yield from extend_macro([st], scope)
         else:

@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from functools import wraps
 from inspect import signature
-from typing import Optional
+from typing import Callable, NamedTuple, Optional
 
-from waveforms.waveform import zero
+from waveforms.waveform import Waveform, zero
 
 from .config import Config
 
 
 def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
-    def decorator(func: callable, name: str = name):
+    def decorator(func: Callable, name: str = name):
         if name is None:
             name = func.__name__
         sig = signature(func)
@@ -42,6 +44,15 @@ def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
     return decorator
 
 
+class MeasurementTask(NamedTuple):
+    qubit: str
+    cbit: int
+    time: float
+    signal: str = "state"
+    params: dict = {}
+    hardware: dict = {'channel': {}, 'params': {}}
+
+
 class _ChannelGetter():
     def __init__(self, ctx):
         self.ctx = ctx
@@ -55,20 +66,22 @@ class _ChannelGetter():
 
 class Context():
     def __init__(self, cfg: Config):
-        self.cfg = cfg
-        self.time = defaultdict(lambda: 0)
-        self.waveforms = defaultdict(zero)
-        self.raw_waveforms = defaultdict(zero)
-        self.measures = defaultdict(list)
-        self.phases = defaultdict(lambda: 0)
+        self.cfg: Config = cfg
+        self.time: dict[str, float] = defaultdict(lambda: 0)
+        self.waveforms: dict[str, Waveform] = defaultdict(zero)
+        self.raw_waveforms: dict[tuple[str, ...], Waveform] = defaultdict(zero)
+        self.measures: dict[int, list[MeasurementTask]] = defaultdict(list)
+        self.phases: dict[str, float] = defaultdict(lambda: 0)
 
     @property
     def channel(self):
         return _ChannelGetter(self)
 
 
-def opaque(name: str, type: str = 'default', scope: dict = None):
-    def decorator(func: callable, name: str = name):
+def opaque(name: str,
+           type: str = 'default',
+           scope: dict[str, dict[str, Callable]] = None):
+    def decorator(func: Callable, name: str = name):
         sig = signature(func)
 
         @wraps(func)

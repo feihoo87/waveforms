@@ -5,6 +5,10 @@ def gateName(st):
         return st[0][0]
 
 
+class QLispError(Exception):
+    pass
+
+
 class QLisp():
     def __init__(self, qlisp):
         self.prog = qlisp

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from numpy import mod, pi
 
-from .library import Library
+from .library import Library, MeasurementTask
 
 std = Library()
 std.qasmLib = {
@@ -170,8 +170,12 @@ def delay(ctx, qubits, time):
 
 @std.opaque('P')
 def P(ctx, qubits, phi):
-    qubit, = qubits
-    ctx.phases[qubit] += phi
+    phi += ctx.phases[qubits[0]]
+    ctx.phases[qubits[0]] = 0
+
+    rfUnitary(ctx, qubits, pi / 2, pi / 2)
+    rfUnitary(ctx, qubits, phi, 0)
+    rfUnitary(ctx, qubits, pi / 2, -pi / 2)
 
 
 @std.opaque('Barrier')
@@ -198,7 +202,8 @@ def mesure(ctx, qubits, cbit):
     ctx.channel['readoutLine.AD.trigger', qubit] += pulse >> t
 
     params = {k: v for k, v in gate.params.items()}
-    ctx.measures[qubit].append(
-        (cbit, ctx.time[qubit], gate.get('signal', 'state'), params))
+    ctx.measures[cbit].append(
+        MeasurementTask(qubit, cbit, ctx.time[qubit],
+                        gate.get('signal', 'state'), params))
     ctx.time[qubit] += duration
     ctx.phases[qubit] = 0

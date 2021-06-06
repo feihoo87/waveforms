@@ -4,10 +4,10 @@ from numpy import pi
 from waveforms.waveform import cos, sin
 
 from .config import Config, getConfig
-from .library import Context, Library
+from .library import Context, Library, MeasurementTask
 from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
-from .qlisp import gateName
+from .qlisp import QLispError, gateName
 from .stdlib import std
 
 
@@ -29,7 +29,21 @@ def call_opaque(st: tuple, ctx: Context, scope: dict):
         args = ()
     else:
         args = st[0][1:]
-    func(ctx, qubits, *args)
+    sub_ctx = Context(ctx.cfg)
+    sub_ctx.time.update(ctx.time)
+    sub_ctx.phases.update(ctx.phases)
+
+    func(sub_ctx, qubits, *args)
+
+    ctx.time.update(sub_ctx.time)
+    ctx.phases.update(sub_ctx.phases)
+
+    for k, wav in sub_ctx.raw_waveforms.items():
+        _addWaveforms(ctx, k, wav)
+    for k, taskList in sub_ctx.measures.items():
+        for task in taskList:
+            _addMeasurementInfo(ctx, task)
+            ctx.measures[k].append(task)
 
 
 def _getSharedCoupler(qubits):
@@ -79,6 +93,27 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
         ctx.waveforms[chInfo['Q']] += Q
 
 
+def _addMeasurementInfo(ctx: Context, task: MeasurementTask):
+    rl = ctx.cfg.getQubit(task.qubit).readoutLine
+    rl = ctx.cfg.getReadoutLine(rl)
+    if isinstance(rl.channels.AD, dict):
+        if 'LO' in rl.channels.AD:
+            lo = ctx.cfg.getChannel(rl.channels.AD.LO)
+            loFreq = lo.status.frequency
+            task.hardware['channel']['LO'] = rl.channels.AD.LO
+            task.hardware['params']['LOFrequency'] = loFreq
+
+        task.hardware['params']['sampleRate'] = {}
+        for ch in ['I', 'Q', 'IQ', 'Ref']:
+            if ch in rl.channels.AD:
+                task.hardware['channel'][ch] = rl.channels.AD[ch]
+                sampleRate = ctx.cfg.getChannel(
+                    rl.channels.AD[ch]).params.sampleRate
+                task.hardware['params']['sampleRate'][ch] = sampleRate
+    elif isinstance(rl.channels.AD, str):
+        task.hardware['channel'] = ctx.cfg.getChannel(rl.channels.AD)
+
+
 def assembly(qlisp,
              cfg: Optional[Config] = None,
              lib: Library = std,
@@ -98,10 +133,15 @@ def assembly(qlisp,
         else:
             qubits = tuple([allQubits[q] for q in qubits])
 
-        call_opaque((gate, qubits), ctx, scope=lib.opaques)
+        try:
+            call_opaque((gate, qubits), ctx, scope=lib.opaques)
+        except:
+            raise QLispError(f'assembly statement {(gate, qubits)} error.')
 
-    for k, wav in ctx.raw_waveforms.items():
-        _addWaveforms(ctx, k, wav)
+    end = max(ctx.time.values())
+    for q in ctx.time:
+        ctx.time[q] = end
+    ctx.end = end
     return ctx
 
 
