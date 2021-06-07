@@ -337,10 +337,12 @@ def genSeqForGate(db, gate=('CZ', 'CZ')):
                 index2seq[i].add(seq)
             else:
                 s = index2seq[i].pop()
-                if len(s[0]) == len(seq[0]):
+                if (len(s[0]) == len(seq[0])
+                        and s[0].count(gate[0]) == seq[0].count(gate[0])):
                     index2seq[i].add(seq)
                     index2seq[i].add(s)
-                elif len(s[0]) > len(seq[0]):
+                elif (len(s[0]) > len(seq[0])
+                      or s[0].count(gate[0]) > seq[0].count(gate[0])):
                     index2seq[i] = {seq}
                 else:
                     index2seq[i].add(s)
