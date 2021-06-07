@@ -296,65 +296,58 @@ def mul(i1: int, i2: int) -> int:
     return ret
 
 
-# def _genSeq(i, gate=('CZ', 'CZ')):
-#     pulses = ['I', 'X', 'Y', 'X/2', 'Y/2', '-X/2', '-Y/2']
-#     phases = ['I', 'Z', 'S', '-S']
+def _genSeq(i, gate=('CZ', 'CZ')):
+    pulses = ['I', 'X', 'Y', 'X/2', 'Y/2', '-X/2', '-Y/2']
+    phases = ['I', 'Z', 'S', '-S']
 
-#     for k in [2, 4, 6, 8]:
-#         num = len(pulses)**k * len(phases)**2
-#         if i >= num:
-#             i -= num
-#             continue
-#         index = np.unravel_index(i, (len(pulses), ) * k + (len(phases), ) * 2)
-#         a = [pulses[n] for n in index[:-2]]
-#         p = [phases[n] for n in index[-2:]]
-#         return _short_seq_pair(
-#             tuple(
-#                 chain(*[[a[j], gate[0]] for j in range(0, k - 3, 2)],
-#                       [a[-2], p[0]])),
-#             tuple(
-#                 chain(*[[a[j], gate[0]] for j in range(1, k - 2, 2)],
-#                       [a[-1], p[1]])))
-#     else:
-#         raise IndexError(f'i={i} is too large.')
+    for k in [2, 4, 6, 8]:
+        num = len(pulses)**k * len(phases)**2
+        if i >= num:
+            i -= num
+            continue
+        index = np.unravel_index(i, (len(pulses), ) * k + (len(phases), ) * 2)
+        a = [pulses[n] for n in index[:-2]]
+        p = [phases[n] for n in index[-2:]]
+        return _short_seq_pair(
+            tuple(
+                chain(*[[a[j], gate[0]] for j in range(0, k - 3, 2)],
+                      [a[-2], p[0]])),
+            tuple(
+                chain(*[[a[j], gate[0]] for j in range(1, k - 2, 2)],
+                      [a[-1], p[1]])))
+    else:
+        raise IndexError(f'i={i} should be less than 94158400.')
 
 
-# def genSeqForGate(db, gate=('CZ', 'CZ')):
-#     db = Path(db)
-#     if db.exists():
-#         with open(db, 'rb') as f:
-#             start, index2seq = pickle.load(f)
-#     else:
-#         start, index2seq = 0, {i:set() for i in range(NUMBEROFELEMENTS)}
-#     print(start)
-#     try:
-#         while True:
-#             try:
-#                 seq = _genSeq(start, gate)
-#                 if seq == (('I', ), ('X', )):
-#                     print(start, seq, seq2index(seq), index2seq[seq2index(seq)])
-#             except IndexError:
-#                 break
-#             i = seq2index(seq)
-#             if seq == (('I', ), ('X', )):
-#                 print(start, seq, i, index2seq[i])
-#             if len(index2seq[i]) == 0:
-#                 index2seq[i].add(seq)
-#                 if seq == (('I', ), ('X', )):
-#                     print(start, seq, i, index2seq[i])
-#             else:
-#                 s = index2seq[i].pop()
-#                 if seq == (('I', ), ('X', )):
-#                     print(start, seq, s, i, index2seq[i])
-#                 if len(s[0]) == len(seq[0]):
-#                     index2seq[i].add(seq)
-#                     index2seq[i].add(s)
-#                 elif len(s[0]) > len(seq[0]):
-#                     index2seq[i] = {seq}
-#             start += 1
-#     finally:
-#         with open(db, 'wb') as f:
-#             pickle.dump((start, index2seq), f)
+def genSeqForGate(db, gate=('CZ', 'CZ')):
+    db = Path(db)
+    if db.exists():
+        with open(db, 'rb') as f:
+            start, index2seq = pickle.load(f)
+    else:
+        start, index2seq = 0, [set() for i in range(NUMBEROFELEMENTS)]
+    try:
+        while True:
+            try:
+                seq = _genSeq(start, gate)
+            except IndexError:
+                break
+            i = seq2index(seq)
+            if len(index2seq[i]) == 0:
+                index2seq[i].add(seq)
+            else:
+                s = index2seq[i].pop()
+                if len(s[0]) == len(seq[0]):
+                    index2seq[i].add(seq)
+                    index2seq[i].add(s)
+                elif len(s[0]) > len(seq[0]):
+                    index2seq[i] = {seq}
+                else:
+                    index2seq[i].add(s)
+            start += 1
+    finally:
+        with open(db, 'wb') as f:
+            pickle.dump((start, index2seq), f)
 
 
 # def build():
