@@ -204,6 +204,9 @@ def mesure(ctx, qubits, cbit):
     params = {k: v for k, v in gate.params.items()}
     ctx.measures[cbit].append(
         MeasurementTask(qubit, cbit, ctx.time[qubit],
-                        gate.get('signal', 'state'), params))
+                        gate.get('signal', 'state'), params, {
+                            'channel': {},
+                            'params': {}
+                        }))
     ctx.time[qubit] += duration
     ctx.phases[qubit] = 0

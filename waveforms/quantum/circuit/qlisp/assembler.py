@@ -111,7 +111,7 @@ def _addMeasurementInfo(ctx: Context, task: MeasurementTask):
                     rl.channels.AD[ch]).params.sampleRate
                 task.hardware['params']['sampleRate'][ch] = sampleRate
     elif isinstance(rl.channels.AD, str):
-        task.hardware['channel'] = ctx.cfg.getChannel(rl.channels.AD)
+        task.hardware['channel'] = rl.channels.AD
 
 
 def assembly(qlisp,

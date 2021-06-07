@@ -48,9 +48,9 @@ class MeasurementTask(NamedTuple):
     qubit: str
     cbit: int
     time: float
-    signal: str = "state"
-    params: dict = {}
-    hardware: dict = {'channel': {}, 'params': {}}
+    signal: str
+    params: dict
+    hardware: dict
 
 
 class _ChannelGetter():
