@@ -6,18 +6,18 @@ from scipy.fftpack import fft, fftfreq, ifft, ifftshift
 from scipy.signal import fftconvolve
 
 
-def getFTMatrix(f_list: Sequence[float],
+def getFTMatrix(fList: Sequence[float],
                 numOfPoints: int,
-                phase_list: Optional[Sequence[float]] = None,
+                phaseList: Optional[Sequence[float]] = None,
                 weight: Optional[np.ndarray] = None,
                 sampleRate: float = 1e9) -> np.ndarray:
     """
     get a matrix for Fourier transform
 
     Args:
-        f_list (Sequence[float]): list of frequencies
+        fList (Sequence[float]): list of frequencies
         numOfPoints (int): size of signal frame
-        phase_list (Optional[Sequence[float]], optional): list of phase. Defaults to None.
+        phaseList (Optional[Sequence[float]], optional): list of phase. Defaults to None.
         weight (Optional[np.ndarray], optional): weight or list of weight. Defaults to None.
         sampleRate (float, optional): sample rate of signal. Defaults to 1e9.
 
@@ -45,13 +45,13 @@ def getFTMatrix(f_list: Sequence[float],
     t = np.linspace(0, numOfPoints / sampleRate, numOfPoints, endpoint=False)
     if weight is None or len(weight) == 0:
         weight = np.full(numOfPoints, 2 / numOfPoints)
-    if phase_list is None or len(phase_list) == 0:
-        phase_list = np.zeros_like(f_list)
+    if phaseList is None or len(phaseList) == 0:
+        phaseList = np.zeros_like(fList)
     if weight.ndim == 1:
         weightList = cycle(weight)
     else:
         weightList = weight
-    for f, phase, weight in zip(f_list, phase_list, weightList):
+    for f, phase, weight in zip(fList, phaseList, weightList):
         e.append(weight * np.exp(-1j * (2 * np.pi * f * t + phase)))
     return np.asarray(e).T
 
