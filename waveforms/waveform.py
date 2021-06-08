@@ -521,7 +521,7 @@ def cos(w, phi=0):
     if w == 0:
         return const(np.cos(phi))
     if w < 0:
-        phi -= np.pi
+        phi = -phi
         w = -w
     return Waveform(seq=(_basic_wave(COS, w, shift=-phi / w), ))
 
@@ -530,7 +530,7 @@ def sin(w, phi=0):
     if w == 0:
         return const(np.sin(phi))
     if w < 0:
-        phi -= np.pi
+        phi = -phi + np.pi
         w = -w
     return Waveform(seq=(_basic_wave(COS, w, shift=(np.pi / 2 - phi) / w), ))
 
