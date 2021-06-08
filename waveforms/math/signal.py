@@ -1,4 +1,4 @@
-from itertools import cycle
+from itertools import repeat
 from typing import Optional, Sequence
 
 import numpy as np
@@ -48,7 +48,7 @@ def getFTMatrix(fList: Sequence[float],
     if phaseList is None or len(phaseList) == 0:
         phaseList = np.zeros_like(fList)
     if weight.ndim == 1:
-        weightList = cycle(weight)
+        weightList = repeat(weight)
     else:
         weightList = weight
     for f, phase, weight in zip(fList, phaseList, weightList):
