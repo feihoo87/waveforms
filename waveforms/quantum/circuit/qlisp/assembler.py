@@ -86,10 +86,10 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
     lo = ctx.cfg.getChannel(chInfo['LO'])
     lofreq = lo.status.frequency
     if 'I' in chInfo:
-        I = (2 * wav * cos(2 * pi * lofreq)).filter(high=2 * pi * lofreq)
+        I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
         ctx.waveforms[chInfo['I']] += I
     if 'Q' in chInfo:
-        Q = (2 * wav * sin(2 * pi * lofreq)).filter(high=2 * pi * lofreq)
+        Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
         ctx.waveforms[chInfo['Q']] += Q
 
 
