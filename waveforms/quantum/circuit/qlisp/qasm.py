@@ -3,6 +3,7 @@ from typing import Optional
 
 from ..qasm import Qasm
 from ..qasm.node import *
+from .library import Library
 
 __qindex = 0
 __cindex = 0
@@ -132,7 +133,7 @@ def qasm_eval_prog(prog, scope=None):
             yield from qasm_eval_single_command(st, scope)
 
 
-def qasm_eval(data: str, lib: Optional[dict] = None):
+def qasm_eval(data: str, lib: Optional[Library] = None):
     qasm = Qasm(data=data, lib=lib)
     prog = qasm.parse()
     yield from qasm_eval_prog(prog)

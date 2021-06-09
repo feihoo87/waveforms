@@ -5,15 +5,14 @@ from numpy import mod, pi
 from .qlisp import QLispError, gateName
 
 
-def call_macro(st, scope):
-    func = scope.get(gateName(st))
+def call_macro(gate, st):
     qubits = st[1]
     if isinstance(st[0], str):
         args = ()
     else:
         args = st[0][1:]
     try:
-        yield from func(qubits, *args)
+        yield from gate(qubits, *args)
     except:
         raise QLispError(f'extend macro {st} error.')
 
@@ -32,20 +31,22 @@ def extend_control_gate(st, scope):
         return [st]
 
 
-def extend_macro(qlisp, scope):
+def extend_macro(qlisp, lib):
     for st in qlisp:
         if gateName(st) == 'I':
             continue
         elif gateName(st) == 'C':
-            yield from extend_control_gate(st, scope)
-        elif gateName(st) in scope:
-            for st in call_macro(st, scope):
-                yield from extend_macro([st], scope)
+            yield from extend_control_gate(st, lib)
         else:
-            yield st
+            gate = lib.getGate(gateName(st))
+            if gate is None:
+                yield st
+            else:
+                for st in call_macro(gate, st):
+                    yield from extend_macro([st], lib)
 
 
-def exchangeRzWithGate(st, phaseList, scope):
+def exchangeRzWithGate(st, phaseList, lib):
     if gateName(st) == 'P':
         return [], [mod(phaseList[0] + st[0][1], 2 * pi)]
     elif gateName(st) == 'rfUnitary':
@@ -61,7 +62,7 @@ def exchangeRzWithGate(st, phaseList, scope):
         raise Exception
 
 
-def reduceVirtualZ(qlisp, scope):
+def reduceVirtualZ(qlisp, lib):
     hold = defaultdict(lambda: 0)
 
     for st in qlisp:
@@ -71,7 +72,7 @@ def reduceVirtualZ(qlisp, scope):
         try:
             stList, phaseList = exchangeRzWithGate(st,
                                                    [hold[q] for q in target],
-                                                   scope)
+                                                   lib)
             yield from stList
             for q, p in zip(target, phaseList):
                 hold[q] = mod(p, 2 * pi)

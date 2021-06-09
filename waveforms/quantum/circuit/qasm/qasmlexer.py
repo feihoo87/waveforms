@@ -137,8 +137,10 @@ class QasmLexer:
         else:
             raise QasmError("Invalid include: must be a quoted string.")
 
-        if self.lib is not None and incfile in self.lib:
-            incfile = self.lib[incfile]
+        if self.lib is not None:
+            fullpath = self.lib.getQasmLib(incfile)
+            if fullpath is not None:
+                incfile = fullpath
 
         next_token = self.lexer.token()
         if next_token is None or next_token.value != ';':

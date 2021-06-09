@@ -3,7 +3,8 @@ from pathlib import Path
 from numpy import mod, pi
 from waveforms.waveform import cos, cosPulse, gaussian, mixing, square, zero
 
-from .library import Library, MeasurementTask
+from .library import Library
+from .qlisp import MeasurementTask
 
 std = Library()
 std.qasmLib = {

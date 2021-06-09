@@ -4,14 +4,14 @@ from numpy import pi
 from waveforms.waveform import cos, sin
 
 from .config import Config, getConfig
-from .library import Context, Library, MeasurementTask
+from .library import Library
 from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
-from .qlisp import QLispError, gateName
+from .qlisp import Context, MeasurementTask, QLispCode, QLispError, gateName
 from .stdlib import std
 
 
-def call_opaque(st: tuple, ctx: Context, scope: dict):
+def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
     try:
@@ -19,11 +19,10 @@ def call_opaque(st: tuple, ctx: Context, scope: dict):
         type = g.type
     except:
         type = 'default'
-    if name not in scope:
-        raise KeyError('Undefined opaque {name}')
-    elif type not in scope[name]:
+
+    func = lib.getOpaque(name, type)
+    if func is None:
         raise KeyError('Undefined {type} type of {name} opaque.')
-    func = scope[name][type]
     qubits = st[1]
     if isinstance(st[0], str):
         args = ()
@@ -128,13 +127,14 @@ def assembly(qlisp,
     allQubits = sorted(cfg['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
 
     for gate, qubits in qlisp:
+        ctx.qlisp.append((gate, qubits))
         if isinstance(qubits, int):
             qubits = (allQubits[qubits], )
         else:
             qubits = tuple([allQubits[q] for q in qubits])
 
         try:
-            call_opaque((gate, qubits), ctx, scope=lib.opaques)
+            call_opaque((gate, qubits), ctx, lib=lib)
         except:
             raise QLispError(f'assembly statement {(gate, qubits)} error.')
 
@@ -156,16 +156,20 @@ def compile(prog, cfg: Optional[Config] = None, lib: Library = std, **options):
         cfg = getConfig()
 
     if isinstance(prog, str):
-        prog = qasm_eval(prog, lib.qasmLib)
+        prog = qasm_eval(prog, lib)
     if 'qasm_only' in options:
         return list(prog)
-    prog = extend_macro(prog, lib.gates)
+    prog = extend_macro(prog, lib)
     if 'no_virtual_z' in options:
         return list(prog)
-    prog = reduceVirtualZ(prog, lib.gates)
+    prog = reduceVirtualZ(prog, lib)
     if 'no_assembly' in options:
         return list(prog)
     ctx = assembly(prog, cfg, lib)
-    waveforms = dict(ctx.waveforms)
-    measures = dict(ctx.measures)
-    return waveforms, measures, ctx
+
+    code = QLispCode(cfg=ctx.cfg,
+                     qlisp=ctx.qlisp,
+                     waveforms=dict(ctx.waveforms),
+                     measures=dict(ctx.measures),
+                     end=ctx.end)
+    return code
