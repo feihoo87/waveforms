@@ -139,9 +139,13 @@ def crz(qubits, lambda_):
 def rfUnitary(ctx, qubits, theta, phi):
     qubit, = qubits
 
+    if theta < 0:
+        theta = -theta
+        phi += pi
+
     phi = mod(phi - ctx.phases[qubit], 2 * pi)
     if phi > pi:
-        phi -= pi
+        phi -= 2 * pi
 
     gate = ctx.cfg.getGate('rfUnitary', qubit)
     shape = gate.shape(theta, phi)
