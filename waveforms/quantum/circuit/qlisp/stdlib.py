@@ -145,15 +145,16 @@ def rfUnitary(ctx, qubits, theta, phi):
 
     gate = ctx.cfg.getGate('rfUnitary', qubit)
     shape = gate.shape(theta, phi)
-    pulse = {
+    pulseLib = {
         'CosPulse': cosPulse,
         'Gaussian': gaussian,
         'square': square,
         'DC': square,
-    }[shape['shape']](
-        shape['duration']) >> (shape['duration'] / 2 + ctx.time[qubit])
+    }
 
     if shape['duration'] > 0 and shape['amp'] != 0:
+        pulse = pulseLib[shape['shape']](
+            shape['duration']) >> (shape['duration'] / 2 + ctx.time[qubit])
         pulse, _ = mixing(pulse,
                           phase=shape['phase'],
                           freq=shape['frequency'],
