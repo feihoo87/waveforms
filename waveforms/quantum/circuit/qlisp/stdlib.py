@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from numpy import mod, pi
+from waveforms.waveform import cos, cosPulse, gaussian, mixing, square, zero
 
 from .library import Library, MeasurementTask
 
@@ -138,8 +139,6 @@ def crz(qubits, lambda_):
 def rfUnitary(ctx, qubits, theta, phi):
     qubit, = qubits
 
-    from waveforms import cosPulse, gaussian, mixing, square
-
     phi = mod(phi - ctx.phases[qubit], 2 * pi)
     if phi > pi:
         phi -= pi
@@ -154,11 +153,14 @@ def rfUnitary(ctx, qubits, theta, phi):
     }[shape['shape']](
         shape['duration']) >> (shape['duration'] / 2 + ctx.time[qubit])
 
-    pulse, _ = mixing(pulse,
-                      phase=shape['phase'],
-                      freq=shape['frequency'],
-                      DRAGScaling=shape['DRAGScaling'])
-    ctx.channel['RF', qubit] += pulse
+    if shape['duration'] > 0 and shape['amp'] != 0:
+        pulse, _ = mixing(pulse,
+                          phase=shape['phase'],
+                          freq=shape['frequency'],
+                          DRAGScaling=shape['DRAGScaling'])
+        ctx.channel['RF', qubit] += shape['amp'] * pulse
+    else:
+        ctx.channel['RF', qubit] += zero()
     ctx.time[qubit] += shape['duration']
 
 
@@ -188,7 +190,6 @@ def barrier(ctx, qubits):
 @std.opaque('Measure')
 def mesure(ctx, qubits, cbit):
     qubit, = qubits
-    from waveforms.waveform import cos, square
 
     gate = ctx.cfg.getGate('Measure', qubit)
     amp = gate.params.amp
