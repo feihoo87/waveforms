@@ -214,7 +214,7 @@ class ConfigSection(dict):
 ValueType = Union[str, int, float, list, ConfigSection]
 
 
-class Config(ConfigSection):
+class BaseConfig(ConfigSection):
     def __init__(self,
                  path: Optional[Union[str, Path]] = None,
                  backup: bool = False):
@@ -262,7 +262,7 @@ class Config(ConfigSection):
             self._modified_ = False
 
     @classmethod
-    def fromdict(cls, d: dict) -> Config:
+    def fromdict(cls, d: dict) -> BaseConfig:
         ret = cls()
         ret.update(d)
         return ret

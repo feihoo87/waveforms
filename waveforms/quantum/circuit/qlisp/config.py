@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
-from waveforms.config import Config as BaseConfig
-from waveforms.config import Trait
+from waveforms.baseconfig import BaseConfig
+from waveforms.baseconfig import Trait
 
 
 class Config(BaseConfig):
