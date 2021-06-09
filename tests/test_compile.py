@@ -1,6 +1,7 @@
 import pytest
 from waveforms.quantum import compile, libraries, stdlib
 from waveforms.quantum.circuit.qlisp.library import Library
+from waveforms.quantum.circuit.qlisp.qlisp import QLispCode
 
 from config import config
 
@@ -115,9 +116,9 @@ def test_lib(lib):
 
 def test_compile(lib, cfg):
     ret = compile(qasm, cfg=cfg, lib=lib)
-    assert len(ret) == 3
+    assert isinstance(ret, QLispCode)
     ret2 = compile(qlisp, cfg=cfg, lib=lib)
-    assert len(ret2) == 3
-    for k, wav in ret[0].items():
-        assert k in ret2[0]
-        assert wav == ret2[0][k]
+    assert isinstance(ret2, QLispCode)
+    for k, wav in ret.waveforms.items():
+        assert k in ret2.waveforms
+        assert wav == ret2.waveforms[k]
