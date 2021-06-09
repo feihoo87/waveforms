@@ -142,6 +142,10 @@ def rfUnitary(ctx, qubits, theta, phi):
     if theta < 0:
         theta = -theta
         phi += pi
+    theta = mod(theta, 2 * pi)
+    if theta > pi:
+        theta = 2 * pi - theta
+        phi += pi
 
     phi = mod(phi - ctx.phases[qubit], 2 * pi)
     if phi > pi:

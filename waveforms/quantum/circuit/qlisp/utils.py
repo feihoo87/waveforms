@@ -20,6 +20,24 @@ def DD(t, gates, pos, Delta=0):
     return seq
 
 
+def XY4(t, Delta=0):
+    pos = np.arange(1, 5) / 5
+    return DD(t, ['X', 'Y', 'X', 'Y'], pos, Delta)
+
+
+def XY8(t, Delta=0):
+    pos = np.arange(1, 9) / 9
+    return DD(t, ['X', 'Y', 'X', 'Y', 'Y', 'X', 'Y', 'X'], pos, Delta)
+
+
+def XY16(t, Delta=0):
+    pos = np.arange(1, 17) / 17
+    return DD(t, [
+        'X', 'Y', 'X', 'Y', 'Y', 'X', 'Y', 'X', 'X', 'Y', 'X', 'Y', 'Y', 'X',
+        'Y', 'X'
+    ], pos, Delta)
+
+
 def UDD(n, t, Delta=0):
     j = np.arange(n) + 1
     return DD(t, repeat('Y', times=n),
@@ -45,7 +63,7 @@ def Ramsey(t, f=0):
 
 def SpinEcho(t, f=0):
     return [
-        'X/2', ('Delay', t / 2), ('rfUnitary', np.pi, 2 * np.pi * f * t),
+        'X/2', ('Delay', t / 2), ('rfUnitary', np.pi, np.pi * f * t),
         ('Delay', t / 2), 'X/2', 'Measure'
     ]
 
