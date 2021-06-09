@@ -67,7 +67,7 @@ def reduceVirtualZ(qlisp, lib):
 
     for st in qlisp:
         target = st[1]
-        if isinstance(target, int):
+        if isinstance(target, (int, str)):
             target = (target, )
         try:
             stList, phaseList = exchangeRzWithGate(st,

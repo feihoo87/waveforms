@@ -21,7 +21,7 @@ def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
                     *args,
                     scope: dict = scope,
                     **kwds):
-            if isinstance(qubits, int):
+            if isinstance(qubits, (int, str)):
                 if qnum != 1:
                     raise TypeError(
                         f"gate {name} should be {qnum}-qubit gate, but 1 were given."

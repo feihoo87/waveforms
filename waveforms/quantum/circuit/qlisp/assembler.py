@@ -130,8 +130,11 @@ def assembly(qlisp,
         ctx.qlisp.append((gate, qubits))
         if isinstance(qubits, int):
             qubits = (allQubits[qubits], )
+        elif isinstance(qubits, str):
+            qubits = (qubits, )
         else:
-            qubits = tuple([allQubits[q] for q in qubits])
+            qubits = tuple(
+                [allQubits[q] if isinstance(q, int) else q for q in qubits])
 
         try:
             call_opaque((gate, qubits), ctx, lib=lib)
