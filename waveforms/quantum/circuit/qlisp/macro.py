@@ -47,7 +47,7 @@ def extend_macro(qlisp, scope):
 
 def exchangeRzWithGate(st, phaseList, scope):
     if gateName(st) == 'P':
-        return [], [(phaseList[0] + st[0][1]) % pi]
+        return [], [mod(phaseList[0] + st[0][1], 2 * pi)]
     elif gateName(st) == 'rfUnitary':
         (_, theta, phi), qubit = st
         return [(('rfUnitary', theta, phi - phaseList[0]), qubit)], phaseList
