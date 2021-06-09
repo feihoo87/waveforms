@@ -198,10 +198,10 @@ def mesure(ctx, qubits, cbit):
     frequency = gate.params.frequency
     t = ctx.time[qubit]
 
-    pulse = square(duration) >> duration / 2
+    pulse = square(duration) >> duration / 2 + t
     ctx.channel['readoutLine.RF',
-                qubit] += amp * pulse * cos(2 * pi * frequency) >> t
-    ctx.channel['readoutLine.AD.trigger', qubit] += pulse >> t
+                qubit] += amp * pulse * cos(2 * pi * frequency)
+    ctx.channel['readoutLine.AD.trigger', qubit] += pulse
 
     params = {k: v for k, v in gate.params.items()}
     ctx.measures[cbit].append(

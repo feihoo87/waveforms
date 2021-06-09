@@ -4,7 +4,7 @@ from collections import defaultdict
 from functools import wraps
 from inspect import signature
 from typing import Callable, NamedTuple, Optional
-
+from dataclasses import dataclass,field
 from waveforms.waveform import Waveform, zero
 
 from .config import Config
@@ -72,6 +72,7 @@ class Context():
         self.raw_waveforms: dict[tuple[str, ...], Waveform] = defaultdict(zero)
         self.measures: dict[int, list[MeasurementTask]] = defaultdict(list)
         self.phases: dict[str, float] = defaultdict(lambda: 0)
+        self.end: float = 0
 
     @property
     def channel(self):

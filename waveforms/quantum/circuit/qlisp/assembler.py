@@ -29,7 +29,7 @@ def call_opaque(st: tuple, ctx: Context, scope: dict):
         args = ()
     else:
         args = st[0][1:]
-    sub_ctx = Context(ctx.cfg)
+    sub_ctx = Context(cfg=ctx.cfg)
     sub_ctx.time.update(ctx.time)
     sub_ctx.phases.update(ctx.phases)
 
@@ -123,7 +123,7 @@ def assembly(qlisp,
         cfg = getConfig()
 
     if ctx is None:
-        ctx = Context(cfg)
+        ctx = Context(cfg=cfg)
 
     allQubits = sorted(cfg['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
 
