@@ -37,12 +37,12 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     ctx.time.update(sub_ctx.time)
     ctx.phases.update(sub_ctx.phases)
 
-    for k, wav in sub_ctx.raw_waveforms.items():
-        _addWaveforms(ctx, k, wav)
-    for k, taskList in sub_ctx.measures.items():
+    for channel, wav in sub_ctx.raw_waveforms.items():
+        _addWaveforms(ctx, channel, wav)
+    for cbit, taskList in sub_ctx.measures.items():
         for task in taskList:
             _addMeasurementInfo(ctx, task)
-            ctx.measures[k].append(task)
+            ctx.measures[cbit].append(task)
 
 
 def _getSharedCoupler(qubits):
