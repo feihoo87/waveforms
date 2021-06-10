@@ -1,1 +1,1 @@
-from .progress import Progress, ProgressBar
+from .progress import Progress, ProgressBar, JupyterProgressBar

@@ -4,6 +4,14 @@ from datetime import timedelta
 from math import ceil
 from time import monotonic
 
+from blinker import signal
+
+try:
+    import ipywidgets as widgets
+    from IPython.display import display
+except:
+    pass
+
 
 class Progress:
     sma_window = 10  # Simple Moving Average window
@@ -17,6 +25,8 @@ class Progress:
         self.max = max
         self.index = 0
         self._update_loop = None
+        self.updated = signal('updated')
+        self.finished = signal('finished')
 
     @property
     def eta(self):
@@ -63,7 +73,7 @@ class Progress:
         self.update_avg(n, dt)
         self._ts = now
         self.index = self.index + n
-        self.update()
+        self.updated.send(self)
 
     def goto(self, index):
         incr = index - self.index
@@ -79,11 +89,14 @@ class Progress:
         else:
             self.finish(False)
 
-    def iter(self, it):
-        try:
-            self.max = len(it)
-        except TypeError:
-            pass
+    def iter(self, it, max=None):
+        if max is None:
+            try:
+                self.max = len(it)
+            except TypeError:
+                self.max = 0
+        else:
+            self.max = max
 
         with self:
             for x in it:
@@ -99,7 +112,6 @@ class Progress:
                 f" Used time: {self.elapsed_td} Remaining time: {eta_td}")
 
     def start(self):
-        self.display()
         self.index = 0
         self.start_ts = monotonic()
         self.avg = 0
@@ -108,62 +120,69 @@ class Progress:
         self.update_regularly()
 
     def update_regularly(self, frequency=1):
-        self.update()
+        self.updated.send(self)
         self._update_loop = asyncio.get_running_loop().call_later(
             frequency, self.update_regularly)
 
-    def update(self):
-        pass
-
     def finish(self, success=True):
         try:
+            self.finished.send(self, success=success)
             self._update_loop.cancel()
         except:
             pass
 
 
-try:
-    import ipywidgets as widgets
-    from IPython.display import display
-except:
-    pass
+class ProgressBar():
+    def listen(self, progress: Progress):
+        self.progress = progress
+        self.progress.updated.connect(self.update)
+        self.progress.finished.connect(self.finish)
+
+    def update(self, sender):
+        raise NotImplementedError()
+
+    def finish(self, sender, success):
+        self.progress.updated.disconnect(self.update)
+        self.progress.finished.disconnect(self.finish)
 
 
-class ProgressBar(Progress):
-    
-    def __init__(self, *, max=10, description='Progressing', hiden=False):
-        super().__init__(max=max)
+class JupyterProgressBar(ProgressBar):
+    def __init__(self, *, description='Progressing', hiden=False):
+        self.description = description
+        self.hiden = hiden
+
+    def display(self):
+        if self.hiden:
+            return
         self.progress_ui = widgets.IntProgress(value=0,
                                                min=0,
-                                               max=max,
+                                               max=self.progress.max,
                                                step=1,
-                                               description=description,
+                                               description=self.description,
                                                bar_style='')
 
         self.elapsed_ui = widgets.Label(value='Used time: 00:00:00')
         self.eta_ui = widgets.Label(value='Remaining time: --:--:--')
         self.ui = widgets.HBox(
             [self.progress_ui, self.elapsed_ui, self.eta_ui])
-        self._displayed = False if not hiden else True
-
-    def display(self):
-        if self._displayed:
-            return
         display(self.ui)
-        self._displayed = True
 
-    def update(self):
-        self.progress_ui.value = self.index
-        self.elapsed_ui.value = f'Used time: {self.elapsed_td}'
-        if self.eta_ui == self.start_ts:
+    def update(self, sender):
+        if self.hiden:
+            return
+        self.progress_ui.value = sender.index
+        self.elapsed_ui.value = f'Used time: {sender.elapsed_td}'
+        if sender.eta == sender.start_ts:
             self.eta_ui.value = f'Remaining time: --:--:--'
         else:
-            self.eta_ui.value = f'Remaining time: {self.eta_td}'
+            self.eta_ui.value = f'Remaining time: {sender.eta_td}'
 
-    def finish(self, success=True):
+    def finish(self, sender, success=True):
+        if self.hiden:
+            return
         if success:
             self.progress_ui.bar_style = 'success'
             self.progress_ui.value = self.progress_ui.max
         else:
             self.progress_ui.bar_style = 'danger'
-        super().finish(success)
+        super().finish(sender, success)

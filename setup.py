@@ -15,6 +15,7 @@ __version__ = ""
 exec(open('waveforms/version.py').read())
 
 requirements = [
+    'blinker>=1.4',
     'decorator>=5.0.7',
     'GitPython>=3.1.14',
     'numpy>=1.13.3',
