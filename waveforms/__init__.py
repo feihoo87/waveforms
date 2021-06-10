@@ -5,4 +5,4 @@ from .quantum.transmon import Transmon
 from .version import __version__
 from .waveform import (D, Waveform, const, cos, cosPulse, exp, gaussian,
                        mixing, one, poly, registerBaseFunc, registerDerivative,
-                       sign, sin, square, step, zero)
+                       sign, sin, sinc, square, step, zero)
