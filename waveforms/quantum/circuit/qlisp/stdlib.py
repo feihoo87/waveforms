@@ -198,8 +198,14 @@ def barrier(ctx, qubits):
 
 
 @std.opaque('Measure')
-def mesure(ctx, qubits, cbit):
+def measure(ctx, qubits, cbit=None):
     qubit, = qubits
+
+    if cbit is None:
+        if len(ctx.measures) == 0:
+            cbit = 0
+        else:
+            cbit = max(ctx.measures.keys()) + 1
 
     gate = ctx.cfg.getGate('Measure', qubit)
     amp = gate.params.amp
