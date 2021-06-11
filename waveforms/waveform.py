@@ -2,7 +2,9 @@ from bisect import bisect_left
 from itertools import chain, product
 
 import numpy as np
+import ply.lex as lex
 import scipy.special as special
+from numpy import e, inf, pi
 
 from .math import comb
 
@@ -16,9 +18,9 @@ def _const(c):
 _one = _const(1)
 _half = _const(1 / 2)
 _two = _const(2)
-_pi = _const(np.pi)
-_two_pi = _const(2 * np.pi)
-_half_pi = _const(np.pi / 2)
+_pi = _const(pi)
+_two_pi = _const(2 * pi)
+_half_pi = _const(pi / 2)
 
 
 def _is_const(x):
@@ -224,7 +226,7 @@ def _calc(wav, x):
 class Waveform:
     __slots__ = ('bounds', 'seq')
 
-    def __init__(self, bounds=(+np.inf, ), seq=(_zero, )):
+    def __init__(self, bounds=(+inf, ), seq=(_zero, )):
         self.bounds = bounds
         self.seq = seq
 
@@ -234,7 +236,7 @@ class Waveform:
             seq.append(_simplify(expr))
         return Waveform(self.bounds, tuple(seq))
 
-    def filter(self, low=0, high=np.inf):
+    def filter(self, low=0, high=inf):
         seq = []
         for expr in self.seq:
             seq.append(_filter(expr, low, high))
@@ -415,18 +417,17 @@ registerDerivative(
 
 registerDerivative(
     ERF, lambda shift, *args: (((((GAUSSIAN, shift, *args), ), (1, )), ),
-                               (2 / args[0] / np.sqrt(np.pi), )))
+                               (2 / args[0] / np.sqrt(pi), )))
 
 registerDerivative(
-    COS, lambda shift, *args:
-    (((((COS, shift - np.pi / args[0] / 2, args[0]), ), (1, )), ),
-     (args[0], )))
+    COS, lambda shift, *args: (((((COS, shift - pi / args[0] / 2, args[0]), ),
+                                 (1, )), ), (args[0], )))
 
 registerDerivative(
     SINC, lambda shift, *args:
     (((((LINEAR, shift), (COS, shift, *args)), (-1, 1)),
-      (((LINEAR, shift), (COS, shift, args[0], args[1] - np.pi / 2)),
-       (-2, 1))), (1, -1 / args[0])))
+      (((LINEAR, shift), (COS, shift, args[0], args[1] - pi / 2)), (-2, 1))),
+     (1, -1 / args[0])))
 
 registerDerivative(
     EXP, lambda shift, *args: (((((EXP, shift, *args), ), (1, )), ),
@@ -470,7 +471,7 @@ def convolve(a, b):
 
 
 def sign():
-    return Waveform(bounds=(0, +np.inf), seq=(_const(-1), _one))
+    return Waveform(bounds=(0, +inf), seq=(_const(-1), _one))
 
 
 def step(edge, type='erf'):
@@ -478,27 +479,26 @@ def step(edge, type='erf'):
     type: "erf", "cos", "linear"
     """
     if type == 'cos':
-        rise = _add(
-            _half, _mul(_half, _basic_wave(COS, np.pi / edge,
-                                           shift=0.5 * edge)))
-        return Waveform(bounds=(-edge / 2, edge / 2, +np.inf),
+        rise = _add(_half,
+                    _mul(_half, _basic_wave(COS, pi / edge, shift=0.5 * edge)))
+        return Waveform(bounds=(-edge / 2, edge / 2, +inf),
                         seq=(_zero, rise, _one))
     elif type == 'linear':
         rise = _add(_half, _mul(_const(1 / edge), _basic_wave(LINEAR)))
-        return Waveform(bounds=(-edge / 2, edge / 2, +np.inf),
+        return Waveform(bounds=(-edge / 2, edge / 2, +inf),
                         seq=(_zero, rise, _one))
     else:
         std_sq2 = edge / 5
         # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
         rise = ((((), ()), (((ERF, 0, std_sq2), ), (1, ))), (0.5, 0.5))
-        return Waveform(bounds=(-edge, edge, +np.inf), seq=(_zero, rise, _one))
+        return Waveform(bounds=(-edge, edge, +inf), seq=(_zero, rise, _one))
 
 
 def square(width, edge=0, type='erf'):
     if width <= 0:
         return zero()
     if edge == 0:
-        return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
+        return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
                         seq=(_zero, _one, _zero))
     else:
         return ((step(edge, type=type) << width / 2) -
@@ -513,7 +513,7 @@ def gaussian(width):
     std_sq2 = width / 3.3302184446307908
     # std is set to give total pulse area same as a square
     #std_sq2 = width/np.sqrt(np.pi)
-    return Waveform(bounds=(-0.75 * width, 0.75 * width, +np.inf),
+    return Waveform(bounds=(-0.75 * width, 0.75 * width, +inf),
                     seq=(_zero, _basic_wave(GAUSSIAN, std_sq2), _zero))
 
 
@@ -530,9 +530,9 @@ def sin(w, phi=0):
     if w == 0:
         return const(np.sin(phi))
     if w < 0:
-        phi = -phi + np.pi
+        phi = -phi + pi
         w = -w
-    return Waveform(seq=(_basic_wave(COS, w, shift=(np.pi / 2 - phi) / w), ))
+    return Waveform(seq=(_basic_wave(COS, w, shift=(pi / 2 - phi) / w), ))
 
 
 def exp(alpha):
@@ -543,7 +543,7 @@ def sinc(bw):
     if bw <= 0:
         return zero()
     width = 100 / bw
-    return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
+    return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
                     seq=(_zero, _basic_wave(SINC, bw), _zero))
 
 
@@ -554,7 +554,7 @@ def cosPulse(width):
         return zero()
     pulse = ((((), ()), (((COS, 0, 6.283185307179586 / width), ), (1, ))),
              (0.5, 0.5))
-    return Waveform(bounds=(-0.5 * width, 0.5 * width, +np.inf),
+    return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
                     seq=(_zero, pulse, _zero))
 
 
@@ -588,7 +588,7 @@ def mixing(I,
         I = I
         Q = zero()
 
-    w = 2 * np.pi * freq
+    w = 2 * pi * freq
     if freq != 0.0:
         # SSB mixing
         Iout = I * cos(w, -phase) + Q * sin(w, -phase)
@@ -609,32 +609,74 @@ def mixing(I,
     return Iout, Qout
 
 
+class _WaveLexer:
+    """Waveform Lexer.
+    """
+    def __init__(self, data):
+        """Create a PLY lexer."""
+        self.lexer = lex.lex(module=self, debug=False)
+        self.lineno = 1
+        self.lexer.input(data)
+
+    def token(self):
+        """Return the next token."""
+        ret = self.lexer.token()
+        return ret
+
+    literals = r'=()<>,.+-/*^'
+    keywords = [
+        'D', 'const', 'cos', 'cosPulse', 'e', 'exp', 'gaussian', 'inf',
+        'mixing', 'one', 'poly', 'pi', 'sign', 'sin', 'square', 'step', 'zero'
+    ]
+    tokens = keywords + ['REAL', 'INT', 'ID', 'LSHIFT', 'RSHIFT']
+
+    def t_ID(self, t):
+        r'[a-zA-Z_][a-zA-Z_0-9]*'
+        if t.value in self.tokens:
+            return t
+        else:
+            raise SyntaxError("Unknow token -->%s<-- " % t.value)
+
+    def t_REAL(self, t):
+        r'(([0-9]+|([0-9]+)?\.[0-9]+|[0-9]+\.)[eE][+-]?[0-9]+)|(([0-9]+)?\.[0-9]+|[0-9]+\.)'
+        return t
+
+    def t_INT(self, t):
+        r'[+-]?[1-9][0-9]*'
+        return t
+
+    def t_LSHIFT(self, t):
+        '<<'
+        return t
+
+    def t_RSHIFT(self, t):
+        '>>'
+        return t
+
+    def t_eof(self, _):
+        return None
+
+    t_ignore = ' \t\r'
+
+    def t_error(self, t):
+        raise SyntaxError("Unable to match any token rule, got -->%s<-- " %
+                          t.value)
+
+
 def wave_eval(expr: str) -> Waveform:
-    namespace = {
-        '__builtins__': None,
-        '__name__': None,
-        '__file__': None,
-        'globals': None,
-        'locals': None,
-        'D': D,
-        'const': const,
-        'cos': cos,
-        'cosPulse': cosPulse,
-        'e': np.e,
-        'exp': exp,
-        'gaussian': gaussian,
-        'mixing': mixing,
-        'one': one,
-        'pi': np.pi,
-        'poly': poly,
-        'sign': sign,
-        'sin': sin,
-        'sinc': sinc,
-        'square': square,
-        'step': step,
-        'zero': zero
-    }
-    return eval(expr, namespace, {})
+    lexer = _WaveLexer(expr)
+    s = []
+    while True:
+        tok = lexer.token()
+        if not tok:
+            break
+        s.append(tok.value)
+
+    expr = ''.join(s)
+    try:
+        return eval(expr)
+    except:
+        raise SyntaxError(f"Illegal expression '{expr}'")
 
 
 __all__ = [
