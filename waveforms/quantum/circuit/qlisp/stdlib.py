@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from numpy import mod, pi
-from waveforms.waveform import cos, cosPulse, gaussian, mixing, square, zero
+from waveforms.waveform import (cos, cosPulse, gaussian, mixing, square,
+                                wave_eval, zero)
 
 from .library import Library
 from .qlisp import MeasurementTask
@@ -233,11 +234,17 @@ def measure(ctx, qubits, cbit=None):
 def rfPulse(ctx, qubits, waveform):
     qubit, = qubits
 
+    if isinstance(waveform, str):
+        waveform = wave_eval(waveform)
+
     ctx.channel['RF', qubit] += waveform >> ctx.time[qubit]
 
 
 @std.opaque('fluxPulse')
 def fluxPulse(ctx, qubits, waveform):
     qubit, = qubits
+
+    if isinstance(waveform, str):
+        waveform = wave_eval(waveform)
 
     ctx.channel['Z', qubit] += waveform >> ctx.time[qubit]
