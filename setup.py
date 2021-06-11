@@ -10,7 +10,7 @@ here = path.abspath(path.dirname(__file__))
 with open(path.join(here, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
-# This reads the __version__ variable from lab/_version.py
+# This reads the __version__ variable from waveforms/version.py
 __version__ = ""
 exec(open('waveforms/version.py').read())
 
