@@ -626,7 +626,8 @@ class _WaveLexer:
     literals = r'=()<>,.+-/*^'
     keywords = [
         'D', 'const', 'cos', 'cosPulse', 'e', 'exp', 'gaussian', 'inf',
-        'mixing', 'one', 'poly', 'pi', 'sign', 'sin', 'square', 'step', 'zero'
+        'mixing', 'one', 'poly', 'pi', 'sign', 'sin', 'sinc', 'square', 'step',
+        'zero'
     ]
     tokens = keywords + ['REAL', 'INT', 'ID', 'LSHIFT', 'RSHIFT']
 
@@ -682,5 +683,5 @@ def wave_eval(expr: str) -> Waveform:
 __all__ = [
     'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing',
     'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'sign', 'sin',
-    'square', 'step', 'wave_eval', 'zero'
+    'sinc', 'square', 'step', 'wave_eval', 'zero'
 ]
