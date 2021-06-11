@@ -21,6 +21,7 @@ requirements = [
     'numpy>=1.13.3',
     'ply>=3.11',
     'portalocker>=1.4.0',
+    'scikit-optimize>=0.8.1',
     'scipy>=1.0.0',
 ]
 
