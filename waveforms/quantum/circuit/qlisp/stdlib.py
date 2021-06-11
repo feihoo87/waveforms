@@ -227,3 +227,17 @@ def measure(ctx, qubits, cbit=None):
                         }))
     ctx.time[qubit] += duration
     ctx.phases[qubit] = 0
+
+
+@std.opaque('rfPulse')
+def rfPulse(ctx, qubits, waveform):
+    qubit, = qubits
+
+    ctx.channel['RF', qubit] += waveform >> ctx.time[qubit]
+
+
+@std.opaque('fluxPulse')
+def fluxPulse(ctx, qubits, waveform):
+    qubit, = qubits
+
+    ctx.channel['Z', qubit] += waveform >> ctx.time[qubit]
