@@ -1,8 +1,10 @@
+import tempfile
 from bisect import bisect_left
 from itertools import chain, product
 
 import numpy as np
 import ply.lex as lex
+import ply.yacc as yacc
 import scipy.special as special
 from numpy import e, inf, pi
 
@@ -97,15 +99,21 @@ def _pow(x, n):
     if _is_const(x):
         return _const(x[1][0]**n)
 
-    t_list, v_list = [], []
-
-    for (mtlist, pre_nlist), v in zip(*x):
-        nlist = []
-        for m in pre_nlist:
-            nlist.append(n * m)
-        t_list.append((mtlist, tuple(nlist)))
-        v_list.append(v**n)
-    return tuple(t_list), tuple(v_list)
+    if len(x[0]) == 1:
+        t_list, v_list = [], []
+        for (mtlist, pre_nlist), v in zip(*x):
+            nlist = []
+            for m in pre_nlist:
+                nlist.append(n * m)
+            t_list.append((mtlist, tuple(nlist)))
+            v_list.append(v**n)
+        return tuple(t_list), tuple(v_list)
+    else:
+        assert isinstance(n, int) and n > 0
+        ret = _one
+        for i in range(n):
+            ret = _mul(ret, x)
+        return ret
 
 
 def _cos_power_n(x, n):
@@ -612,10 +620,11 @@ def mixing(I,
 class _WaveLexer:
     """Waveform Lexer.
     """
-    def __init__(self, data):
+    def __init__(self):
         """Create a PLY lexer."""
         self.lexer = lex.lex(module=self, debug=False)
-        self.lineno = 1
+
+    def input(self, data):
         self.lexer.input(data)
 
     def token(self):
@@ -624,26 +633,36 @@ class _WaveLexer:
         return ret
 
     literals = r'=()<>,.+-/*^'
-    keywords = [
-        'D', 'const', 'cos', 'cosPulse', 'e', 'exp', 'gaussian', 'inf',
-        'mixing', 'one', 'poly', 'pi', 'sign', 'sin', 'sinc', 'square', 'step',
-        'zero'
+    functions = [
+        'D', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing', 'one',
+        'poly', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
     ]
-    tokens = keywords + ['REAL', 'INT', 'ID', 'LSHIFT', 'RSHIFT']
+    tokens = [
+        'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',
+        'FUNCTION'
+    ]
 
     def t_ID(self, t):
         r'[a-zA-Z_][a-zA-Z_0-9]*'
-        if t.value in self.tokens:
+        if t.value in ['pi', 'e', 'inf']:
+            t.type = 'CONST'
+            return t
+        if t.value in self.functions:
+            t.type = 'FUNCTION'
             return t
         else:
-            raise SyntaxError("Unknow token -->%s<-- " % t.value)
+            return t
 
     def t_REAL(self, t):
         r'(([0-9]+|([0-9]+)?\.[0-9]+|[0-9]+\.)[eE][+-]?[0-9]+)|(([0-9]+)?\.[0-9]+|[0-9]+\.)'
         return t
 
     def t_INT(self, t):
-        r'[+-]?[1-9][0-9]*'
+        r'[1-9][0-9]*'
+        return t
+
+    def t_STRING(self, t):
+        r'(".*")|(\'.*\')'
         return t
 
     def t_LSHIFT(self, t):
@@ -652,6 +671,10 @@ class _WaveLexer:
 
     def t_RSHIFT(self, t):
         '>>'
+        return t
+
+    def t_POW(self, t):
+        r'\*\*'
         return t
 
     def t_eof(self, _):
@@ -664,18 +687,157 @@ class _WaveLexer:
                           t.value)
 
 
-def wave_eval(expr: str) -> Waveform:
-    lexer = _WaveLexer(expr)
-    s = []
-    while True:
-        tok = lexer.token()
-        if not tok:
-            break
-        s.append(tok.value)
+class _WaveParser:
+    def __init__(self):
+        self.lexer = _WaveLexer()
+        self.tokens = self.lexer.tokens
+        self.parse_dir = tempfile.mkdtemp(prefix='waveforms')
+        self.precedence = (('left', 'RSHIFT', 'LSHIFT'), ('left', '+', '-'),
+                           ('left', '*', '/'), ('left', 'POW',
+                                                '^'), ('right', 'UMINUS'))
+        self.parser = yacc.yacc(module=self,
+                                debug=False,
+                                outputdir=self.parse_dir)
+        self.waveform = None
 
-    expr = ''.join(s)
+    def parse(self, data):
+        #self.waveform = None
+        self.parser.parse(data, lexer=self.lexer, debug=False)
+        if self.waveform is None:
+            raise SyntaxError("Uncaught exception in parser; " +
+                              "see previous messages for details.")
+        if isinstance(self.waveform, (float, int)):
+            self.waveform = const(self.waveform)
+        return self.waveform.simplify()
+
+    def getFunction(self, name):
+        return globals()[name]
+
+    # ---- Begin the PLY parser ----
+    start = 'main'
+
+    def p_main(self, p):
+        """
+        main : expression
+        """
+        self.waveform = p[1]
+
+    def p_const(self, p):
+        """
+        expression : CONST
+        """
+        p[0] = {'pi': pi, 'e': e, 'inf': inf}[p[1]]
+
+    def p_real(self, p):
+        """
+        expression : REAL
+        """
+        p[0] = float(p[1])
+
+    def p_int(self, p):
+        """
+        expression : INT
+        """
+        p[0] = int(p[1])
+
+    def p_string(self, p):
+        """
+        expression : STRING
+        """
+        p[0] = p[1]
+
+    def p_expr_uminus(self, p):
+        """
+        expression : '-' expression %prec UMINUS
+        """
+        p[0] = -p[1]
+
+    def p_function_call(self, p):
+        """
+        expression : FUNCTION '(' ')'
+        """
+        p[0] = self.getFunction(p[1])()
+
+    def p_function_call_2(self, p):
+        """
+        expression :  FUNCTION '(' args ')'
+        """
+        p[0] = self.getFunction(p[1])(*p[3])
+
+    def p_function_call_3(self, p):
+        """
+        expression :  FUNCTION '(' kwds ')'
+        """
+        p[0] = self.getFunction(p[1])(**p[3])
+
+    def p_function_call_4(self, p):
+        """
+        expression :  FUNCTION '(' args ',' kwds ')'
+        """
+        p[0] = self.getFunction(p[1])(*p[3], **p[5])
+
+    def p_bracket(self, p):
+        """
+        expression :  '(' expression ')'
+        """
+        p[0] = p[2]
+
+    def p_binary_operators(self, p):
+        """
+        expression : expression '+' expression
+                   | expression '-' expression
+                   | expression '*' expression
+                   | expression '/' expression
+                   | expression LSHIFT expression
+                   | expression RSHIFT expression
+                   | expression '^' expression
+                   | expression POW expression
+        """
+        if p[2] == '+':
+            p[0] = p[1] + p[3]
+        elif p[2] == '-':
+            p[0] = p[1] - p[3]
+        elif p[2] == '*':
+            p[0] = p[1] * p[3]
+        elif p[2] == '/':
+            p[0] = p[1] / p[3]
+        elif p[2] == '>>':
+            p[0] = p[1] >> p[3]
+        elif p[2] == '<<':
+            p[0] = p[1] << p[3]
+        elif p[2] == '^':
+            p[0] = p[1]**p[3]
+        else:
+            p[0] = p[1]**p[3]
+
+    def p_args(self, p):
+        """
+        args : expression
+             | args ',' expression
+        """
+        if len(p) == 2:
+            p[0] = (p[1], )
+        else:
+            p[0] = p[1] + (p[3], )
+
+    def p_kwds(self, p):
+        """
+        kwds : ID '=' expression
+             | kwds ',' ID '=' expression
+        """
+        if len(p) == 4:
+            p[0] = {p[1]: p[3]}
+        else:
+            p[0] = p[1] | {p[3]: p[5]}
+
+    def p_error(self, p):
+        raise SyntaxError("Syntax error in input!")
+
+
+def wave_eval(expr: str) -> Waveform:
+    parser = _WaveParser()
     try:
-        return eval(expr)
+        return parser.parse(expr)
     except:
         raise SyntaxError(f"Illegal expression '{expr}'")
 
