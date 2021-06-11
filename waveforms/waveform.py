@@ -609,8 +609,36 @@ def mixing(I,
     return Iout, Qout
 
 
+def wave_eval(expr: str) -> Waveform:
+    namespace = {
+        '__builtins__': None,
+        '__name__': None,
+        '__file__': None,
+        'globals': None,
+        'locals': None,
+        'D': D,
+        'const': const,
+        'cos': cos,
+        'cosPulse': cosPulse,
+        'e': np.e,
+        'exp': exp,
+        'gaussian': gaussian,
+        'mixing': mixing,
+        'one': one,
+        'pi': np.pi,
+        'poly': poly,
+        'sign': sign,
+        'sin': sin,
+        'sinc': sinc,
+        'square': square,
+        'step': step,
+        'zero': zero
+    }
+    return eval(expr, namespace, {})
+
+
 __all__ = [
     'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing',
     'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'sign', 'sin',
-    'square', 'step', 'zero'
+    'square', 'step', 'wave_eval', 'zero'
 ]
