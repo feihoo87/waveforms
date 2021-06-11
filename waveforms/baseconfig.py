@@ -110,7 +110,7 @@ def setKey(q, value, dct, prefix=None):
 
 
 class ConfigSection(dict):
-    def __init__(self, cfg: Config, key: str):
+    def __init__(self, cfg: BaseConfig, key: str):
         self._cfg_ = cfg
         self._key_ = key
 
