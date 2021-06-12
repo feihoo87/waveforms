@@ -41,3 +41,10 @@ def test_parser():
     assert w1 == w2
     assert w1 == w3
     assert w1 == w4
+
+    w1 = poly([1, -1 / 2, 1 / 6, -1 / 12])
+    w2 = wave_eval("poly([1, -1/2, 1/6, -1/12])")
+    w3 = wave_eval("poly((1, -1/2, 1/6, -1/12))")
+
+    assert w1 == w2
+    assert w1 == w3
