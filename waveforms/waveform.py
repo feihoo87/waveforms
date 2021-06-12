@@ -239,10 +239,16 @@ class Waveform:
         self.seq = seq
 
     def simplify(self):
-        seq = []
-        for expr in self.seq:
-            seq.append(_simplify(expr))
-        return Waveform(self.bounds, tuple(seq))
+        seq = [_simplify(self.seq[0])]
+        bounds = [self.bounds[0]]
+        for expr, b in zip(self.seq[1:], self.bounds[1:]):
+            expr = _simplify(expr)
+            if expr == seq[-1]:
+                seq.pop()
+                bounds.pop()
+            seq.append(expr)
+            bounds.append(b)
+        return Waveform(tuple(bounds), tuple(seq))
 
     def filter(self, low=0, high=inf):
         seq = []
