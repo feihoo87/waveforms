@@ -1,6 +1,7 @@
 import tempfile
 from ast import literal_eval
 from bisect import bisect_left
+from functools import lru_cache
 from itertools import chain, product
 
 import numpy as np
@@ -831,10 +832,13 @@ class _WaveParser:
         raise SyntaxError("Syntax error in input!")
 
 
+_wave_parser = _WaveParser()
+
+
+@lru_cache(maxsize=1024)
 def wave_eval(expr: str) -> Waveform:
-    parser = _WaveParser()
     try:
-        return parser.parse(expr)
+        return _wave_parser.parse(expr)
     except:
         raise SyntaxError(f"Illegal expression '{expr}'")
 
