@@ -640,7 +640,7 @@ class _WaveLexer:
         ret = self.lexer.token()
         return ret
 
-    literals = r'=()<>,.+-/*^'
+    literals = r'=()[]<>,.+-/*^'
     functions = [
         'D', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing', 'one',
         'poly', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
@@ -744,11 +744,18 @@ class _WaveParser:
         """
         p[0] = literal_eval(p[1])
 
+    def p_tuple_list(self, p):
+        """
+        expression : tuple
+                   | list
+        """
+        p[0] = p[1]
+
     def p_expr_uminus(self, p):
         """
         expression : '-' expression %prec UMINUS
         """
-        p[0] = -p[1]
+        p[0] = -p[2]
 
     def p_function_call(self, p):
         """
@@ -807,6 +814,40 @@ class _WaveParser:
             p[0] = p[1]**p[3]
         else:
             p[0] = p[1]**p[3]
+
+    def p_expr_list_2(self, p):
+        """
+        expr_list : expression ',' expression
+        """
+        p[0] = [p[1], p[3]]
+
+    def p_expr_list_3(self, p):
+        """
+        expr_list : expr_list ',' expression
+        """
+        p[0] = [*p[1], p[3]]
+
+    def p_tuple(self, p):
+        """
+        tuple : '(' expression ',' ')'
+              | '(' expr_list ')'
+        """
+        if len(p) == 5:
+            p[0] = (p[2], )
+        else:
+            p[0] = tuple(p[2])
+
+    def p_list_1(self, p):
+        """
+        list : '[' expression ']'
+        """
+        p[0] = [p[2]]
+
+    def p_list_2(self, p):
+        """
+        list : '[' expr_list ']'
+        """
+        p[0] = p[2]
 
     def p_args(self, p):
         """
