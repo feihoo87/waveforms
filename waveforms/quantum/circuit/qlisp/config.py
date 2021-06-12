@@ -159,7 +159,7 @@ class Config(BaseConfig):
         return self.query(q + ':' + cls)
 
     def getQubit(self, name):
-        return self.getObject(f"chip.qubits.{name}")
+        return self.getObject(f"chip.qubits.{name}", cls='Qubit')
 
     def getCoupler(self, name):
         return self.getObject(f"chip.couplers.{name}")
@@ -201,8 +201,73 @@ class ConfigObject(Trait):
     def setStatus(self, **status):
         self['status'].update(status)
 
+    def _channelDetails(self):
+        if 'channels' not in self:
+            return {}
+
+        def _getChannels(dct):
+            ret = {}
+            for c, v in dct.items():
+                if isinstance(v, str):
+                    try:
+                        ret[c] = self._cfg_.getChannel(v)
+                    except:
+                        ret[c] = v
+                elif isinstance(v, dict):
+                    ret[c] = _getChannels(v)
+                else:
+                    ret[c] = v
+            return ret
+
+        return _getChannels(self.channels)
+
+    def _getSectionDetails(self, section, skip):
+        if section not in self:
+            return None
+
+        getMethod = {
+            'qubits': self._cfg_.getQubit,
+            'couplers': self._cfg_.getCoupler,
+            'readoutLine': self._cfg_.getReadoutLine
+        }[section]
+
+        if isinstance(self[section], str):
+            return getMethod(self[section]).details(skip + (section, ))
+        else:
+            return {
+                k: getMethod(k).details(skip + (section, ))
+                for k in self[section]
+            }
+
+    def details(self, skip=('channels', 'qubits', 'couplers', 'readoutLine')):
+        ret = {}
+        ret.update(self)
+        if 'channels' not in skip:
+            ret['channels'] = self._channelDetails()
+        if 'qubits' not in skip:
+            ret['qubits'] = self._getSectionDetails('qubits', skip)
+        if 'couplers' not in skip:
+            ret['couplers'] = self._getSectionDetails('couplers', skip)
+        if 'readoutLine' not in skip:
+            ret['readoutLine'] = self._getSectionDetails('readoutLine', skip)
+        return BaseConfig.fromdict(ret)
+
+
+class Qubit(ConfigObject):
+    def details(self):
+        return super().details(skip=('qubits', ))
+
 
 class Gate(ConfigObject):
+    def details(self):
+        ret = {}
+        ret.update(self)
+        ret['qubits'] = {
+            q: self._cfg_.getQubit(q).details()
+            for q in self.qubits
+        }
+        return BaseConfig.fromdict(ret)
+
     @property
     def name(self):
         return self._key_.split('.')[1]
