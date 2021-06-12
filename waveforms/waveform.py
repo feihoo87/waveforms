@@ -1,4 +1,5 @@
 import tempfile
+from ast import literal_eval
 from bisect import bisect_left
 from itertools import chain, product
 
@@ -734,23 +735,13 @@ class _WaveParser:
         """
         p[0] = {'pi': pi, 'e': e, 'inf': inf}[p[1]]
 
-    def p_real(self, p):
+    def p_real_int_string(self, p):
         """
         expression : REAL
+                   | INT
+                   | STRING
         """
-        p[0] = float(p[1])
-
-    def p_int(self, p):
-        """
-        expression : INT
-        """
-        p[0] = int(p[1])
-
-    def p_string(self, p):
-        """
-        expression : STRING
-        """
-        p[0] = p[1]
+        p[0] = literal_eval(p[1])
 
     def p_expr_uminus(self, p):
         """
