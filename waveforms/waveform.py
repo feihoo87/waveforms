@@ -141,7 +141,11 @@ def _trigMul_t(x, y, v):
         w1, w2 = w2, w1
     exp1 = (COS, (w1 * t1 + w2 * t2) / (w1 + w2), w1 + w2)
     if w1 == w2:
-        return (((exp1, ), (1, )), ), (0.5 * v, )
+        c = v * np.cos(w1 * t1 - w2 * t2) / 2
+        if c == 0:
+            return (((exp1, ), (1, )), ), (0.5 * v, )
+        else:
+            return (((), ()), ((exp1, ), (1, ))), (c, 0.5 * v)
     else:
         exp2 = (COS, (w1 * t1 - w2 * t2) / (w1 - w2), w1 - w2)
         return (((exp2, ), (1, )), ((exp1, ), (1, ))), (0.5 * v, 0.5 * v)
