@@ -826,7 +826,11 @@ class _WaveParser:
         if len(p) == 4:
             p[0] = {p[1]: p[3]}
         else:
-            p[0] = p[1] | {p[3]: p[5]}
+            kwds = {}
+            kwds.update(p[1])
+            kwds[p[3]] = p[5]
+            p[0] = kwds
+            # p[0] = p[1] | {p[3]: p[5]}   # only works on Python>=3.9
 
     def p_error(self, p):
         raise SyntaxError("Syntax error in input!")
