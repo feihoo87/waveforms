@@ -148,6 +148,8 @@ def _trigMul_t(x, y, v):
             return (((), ()), ((exp1, ), (1, ))), (c, 0.5 * v)
     else:
         exp2 = (COS, (w1 * t1 - w2 * t2) / (w1 - w2), w1 - w2)
+        if exp2[1] > exp1[1]:
+            exp2, exp1 = exp1, exp2
         return (((exp2, ), (1, )), ((exp1, ), (1, ))), (0.5 * v, 0.5 * v)
 
 
