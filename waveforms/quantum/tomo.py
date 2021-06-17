@@ -260,10 +260,10 @@ def chi0(rhosIn, rhosOut):
     rhosIn_mat = np.array(rhosIn).reshape((n, Din))
     rhosOut_mat = np.array(rhosOut).reshape((n, Dout))
 
-    chi0, *_ = linalg.lstsq(rhosIn_mat,
-                            rhosOut_mat,
-                            overwrite_a=True,
-                            overwrite_b=True)
+    chi0, resids, rank, s = linalg.lstsq(rhosIn_mat,
+                                         rhosOut_mat,
+                                         overwrite_a=True,
+                                         overwrite_b=True)
     return chi0
 
 
@@ -276,7 +276,7 @@ def chi0_to_chi_mat(N, basis=pauli_basis):
 def chi_to_chi0_mat(N, basis=pauli_basis):
     dim = 2**N
     A_data, A_i, A_j = [], [], []
-    for row, (i, j, k, l) in enumerate(product(range(dim), repeat=4)):
+    for row, (k, l, i, j) in enumerate(product(range(dim), repeat=4)):
         for col, (m,
                   n) in enumerate(product(qptBases(N, gates=basis), repeat=2)):
             elm = tensorElement(m, i, k) * np.conj(tensorElement(n, j, l))
