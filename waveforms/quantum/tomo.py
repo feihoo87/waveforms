@@ -312,7 +312,7 @@ def U_to_chi(U, basis=pauli_basis):
     riList = []
     rfList = []
 
-    N = 2
+    N = round(np.log2(U.shape[0]))
 
     for Ui in qptInitList(N):
         # 分别制备不同的初态
