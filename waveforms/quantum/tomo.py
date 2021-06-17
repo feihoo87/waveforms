@@ -288,11 +288,19 @@ def chi_to_chi0_mat(N, basis=pauli_basis):
 
 
 def chi0_to_chi(chi0, basis=pauli_basis):
-    dim = int(np.sqrt(chi0.shape[0]))
-    N = int(np.log2(dim))
+    dim = round(np.sqrt(chi0.shape[0]))
+    N = round(np.log2(dim))
     M = chi0_to_chi_mat(N, basis)
     chi = M @ chi0.reshape(dim**4)
     return chi.reshape((dim**2, dim**2))
+
+
+def chi_to_chi0(chi, basis=pauli_basis):
+    dim = round(np.sqrt(chi.shape[0]))
+    N = round(np.log2(dim))
+    M = chi_to_chi0_mat(N, basis)
+    chi0 = M @ chi.reshape(dim**4)
+    return chi0.reshape((dim**2, dim**2))
 
 
 def qpt(riList, rfList, basis=pauli_basis):
@@ -306,6 +314,13 @@ def applyOp(opList, rho=None):
                      repeat(np.array([[1, 0], [0, 0]]), times=len(opList)))
     U = tensorMatrix(opList)
     return U @ rho @ dagger(U)
+
+
+def applyChi(chi, rho, basis=pauli_basis):
+    dim = rho.shape[0]
+    chi0 = chi_to_chi0(chi, basis)
+    rhoF = rho.reshape(dim * dim) @ chi0
+    return rhoF.reshape((dim, dim))
 
 
 def U_to_chi(U, basis=pauli_basis):
