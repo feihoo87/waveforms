@@ -288,16 +288,16 @@ def chi_to_chi0_mat(N, basis=pauli_basis):
 
 
 def chi0_to_chi(chi0, basis=pauli_basis):
-    dim = round(np.sqrt(chi0.shape[0]))
-    N = round(np.log2(dim))
+    dim = int(round(np.sqrt(chi0.shape[0])))
+    N = int(round(np.log2(dim)))
     M = chi0_to_chi_mat(N, basis)
     chi = M @ chi0.reshape(dim**4)
     return chi.reshape((dim**2, dim**2))
 
 
 def chi_to_chi0(chi, basis=pauli_basis):
-    dim = round(np.sqrt(chi.shape[0]))
-    N = round(np.log2(dim))
+    dim = int(round(np.sqrt(chi.shape[0])))
+    N = int(round(np.log2(dim)))
     M = chi_to_chi0_mat(N, basis)
     chi0 = M @ chi.reshape(dim**4)
     return chi0.reshape((dim**2, dim**2))
@@ -327,7 +327,7 @@ def U_to_chi(U, basis=pauli_basis):
     riList = []
     rfList = []
 
-    N = round(np.log2(U.shape[0]))
+    N = int(round(np.log2(U.shape[0])))
 
     for Ui in qptInitList(N):
         # 分别制备不同的初态
