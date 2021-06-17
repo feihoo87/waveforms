@@ -8,7 +8,7 @@ from scipy.sparse import coo_matrix, csc_matrix
 from scipy.sparse.linalg import inv, lsqr
 
 from ..cache import cache
-from .math import dagger, normalize
+from .math import dagger, normalize, randomUnitary
 
 __base_op = {
     'I': np.array([[1, 0], [0, 1]]),
@@ -341,6 +341,42 @@ def U_to_chi(U, basis=pauli_basis):
     chi = chi0(np.asarray(riList), np.asarray(rfList))
     chi = chi0_to_chi(chi, basis)
     return chi
+
+
+def chi_to_U(chi, basis=pauli_basis, U0=None):
+    from waveforms.quantum.clifford.mat import normalize
+
+    def UToV(U):
+        H = -1j * linalg.logm(U)
+        N = H.shape[0]
+        indices = np.triu_indices(N, 1)
+        return np.hstack((H[indices].real, H[indices].imag, np.diag(H).real))
+
+    def vToU(V):
+        N = int(round(np.sqrt(len(V))))
+
+        X = V[:(N**2 - N) // 2]
+        Y = V[(N**2 - N) // 2:(N**2 - N)]
+        Z = V[(N**2 - N):]
+        H = np.diag(Z / 2).astype(np.complex)
+
+        H[np.triu_indices(N, 1)] = X + 1j * Y
+        H += dagger(H)
+        return linalg.expm(1j * H)
+
+    def unlikelihood(v):
+        U = vToU(v)
+        chi1 = U_to_chi(U, basis)
+        return (np.abs(chi - chi1)**2).sum()
+
+    dim = int(round(np.sqrt(chi.shape[0])))
+
+    if U0 is None:
+        v_guess = UToV(randomUnitary(dim))
+    else:
+        v_guess = UToV(U0)
+    v = optimize.minimize(unlikelihood, v_guess, method='BFGS')['x']
+    return normalize(vToU(v))
 
 
 __all__ = ["qst", "qst_mle", "qpt", "qstOpList", "qptInitList"]
