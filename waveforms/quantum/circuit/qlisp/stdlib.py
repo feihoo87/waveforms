@@ -248,3 +248,14 @@ def fluxPulse(ctx, qubits, waveform):
         waveform = wave_eval(waveform)
 
     ctx.channel['Z', qubit] += waveform >> ctx.time[qubit]
+
+
+@std.opaque('Pulse')
+def Pulse(ctx, qubits, channel, waveform):
+
+    if isinstance(waveform, str):
+        waveform = wave_eval(waveform)
+
+    t = max(ctx.time[qubit] for qubit in qubits)
+
+    ctx.channel[(channel, *qubits)] += waveform >> t
