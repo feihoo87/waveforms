@@ -303,7 +303,17 @@ def chi_to_chi0(chi, basis=pauli_basis):
     return chi0.reshape((dim**2, dim**2))
 
 
-def qpt(riList, rfList, basis=pauli_basis):
+#def qpt(a, b=None, /, *, init_gates=qpt_init_gates, basis=pauli_basis):
+def qpt(a, b=None, *, init_gates=qpt_init_gates, basis=pauli_basis):
+    if b is None:
+        rfList = a
+        rho0 = np.zeros_like(rfList[0], dtype=complex)
+        rho0[0, 0] = 1
+        N = int(round(np.log2(rfList[0].shape[0])))
+        Us = [tensorMatrix(seq) for seq in qptInitList(N, gates=init_gates)]
+        riList = [U @ rho0 @ dagger(U) for U in Us]
+    else:
+        riList, rfList = a, b
     chi = chi0(np.array(riList), np.array(rfList))
     return chi0_to_chi(chi, basis)
 

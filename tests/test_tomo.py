@@ -62,3 +62,4 @@ def test_qpt():
 
     assert checkChi(chi, testGate)
     assert np.allclose(chi, U_to_chi(testGate))
+    assert np.allclose(chi, qpt(rfList))
