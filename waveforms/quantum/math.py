@@ -4,7 +4,7 @@ from itertools import chain, product
 from typing import Optional, Union
 
 import numpy as np
-from scipy.linalg import eigh, expm, sqrtm
+from scipy.linalg import eigh, expm, sqrtm, logm
 from waveforms.math import (fitCircle, fitCrossPoint, fitPole, getFTMatrix,
                             linFit)
 from waveforms.math.signal import decay, oscillation
@@ -148,6 +148,35 @@ def v2rho(V):
     rho += dagger(rho)
 
     return normalize(rho)
+
+
+def Hermitian2v(H):
+    N = H.shape[0]
+    indices = np.triu_indices(N, 1)
+    return np.hstack((H[indices].real, H[indices].imag, np.diag(H).real))
+
+
+def v2Hermitian(V):
+    N = int(round(np.sqrt(len(V))))
+
+    X = V[:(N**2 - N) // 2]
+    Y = V[(N**2 - N) // 2:(N**2 - N)]
+    Z = V[(N**2 - N):]
+    H = np.diag(Z / 2).astype(np.complex)
+
+    H[np.triu_indices(N, 1)] = X + 1j * Y
+    H += dagger(H)
+    return H
+
+
+def unitary2v(U):
+    H = -1j * logm(U)
+    return Hermitian2v(H)
+
+
+def v2unitary(V):
+    H = v2Hermitian(V)
+    return expm(1j * H)
 
 
 def rho2bloch(rho):

@@ -8,7 +8,7 @@ from scipy.sparse import coo_matrix, csc_matrix
 from scipy.sparse.linalg import inv, lsqr
 
 from ..cache import cache
-from .math import dagger, normalize, randomUnitary
+from .math import dagger, normalize, randomUnitary, unitary2v, v2unitary
 
 __base_op = {
     'I': np.array([[1, 0], [0, 1]]),
@@ -77,7 +77,7 @@ def rhoToV(rho):
 
 
 def vToRho(V):
-    """rhoToV 的拟函数"""
+    """rhoToV 的逆函数"""
     N = int(np.sqrt(len(V) + 1))
     assert N**2 - 1 == len(V)
 
@@ -346,37 +346,22 @@ def U_to_chi(U, basis=pauli_basis):
 def chi_to_U(chi, basis=pauli_basis, U0=None):
     from waveforms.quantum.clifford.mat import normalize
 
-    def UToV(U):
-        H = -1j * linalg.logm(U)
-        N = H.shape[0]
-        indices = np.triu_indices(N, 1)
-        return np.hstack((H[indices].real, H[indices].imag, np.diag(H).real))
-
-    def vToU(V):
-        N = int(round(np.sqrt(len(V))))
-
-        X = V[:(N**2 - N) // 2]
-        Y = V[(N**2 - N) // 2:(N**2 - N)]
-        Z = V[(N**2 - N):]
-        H = np.diag(Z / 2).astype(np.complex)
-
-        H[np.triu_indices(N, 1)] = X + 1j * Y
-        H += dagger(H)
-        return linalg.expm(1j * H)
-
     def unlikelihood(v):
-        U = vToU(v)
+        U = v2unitary(v)
         chi1 = U_to_chi(U, basis)
-        return (np.abs(chi - chi1)**2).sum()
+        return -np.abs(np.trace(chi @ dagger(chi1))) / np.sqrt(
+            np.trace(chi @ dagger(chi)).real *
+            np.trace(chi1 @ dagger(chi1)).real)
+        #return (np.abs(chi - chi1)**2).sum()
 
     dim = int(round(np.sqrt(chi.shape[0])))
 
     if U0 is None:
-        v_guess = UToV(randomUnitary(dim))
+        v_guess = unitary2v(randomUnitary(dim))
     else:
-        v_guess = UToV(U0)
+        v_guess = unitary2v(U0)
     v = optimize.minimize(unlikelihood, v_guess, method='BFGS')['x']
-    return normalize(vToU(v))
+    return normalize(v2unitary(v))
 
 
 __all__ = ["qst", "qst_mle", "qpt", "qstOpList", "qptInitList"]
