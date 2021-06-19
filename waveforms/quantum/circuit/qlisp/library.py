@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import wraps
 from inspect import signature
-from typing import Callable, Iterable, NoReturn, Optional, Union
+from typing import Callable, Iterable, Optional, Union
 
 from .qlisp import Context
 
@@ -47,7 +47,7 @@ def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
 def opaque(name: str,
            type: str = 'default',
            scope: dict[str, dict[str, Callable]] = None):
-    def decorator(func: Callable[..., NoReturn], name: str = name):
+    def decorator(func: Callable[..., None], name: str = name):
         sig = signature(func)
 
         @wraps(func)
