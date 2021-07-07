@@ -348,7 +348,7 @@ class rfUnitary(Gate):
 class Measure(Gate):
     @property
     def wfile(self):
-        return self._cfg__._path_.parent / 'Measure' / self.qubits[0]+'.pic'
+        return self._cfg_._path_.parent / 'Measure' / (self.qubits[0]+'.pic')
 
     def setW(self, w):
         with open(self.wfile, 'wb') as f:
