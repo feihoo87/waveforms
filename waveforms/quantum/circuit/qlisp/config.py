@@ -347,10 +347,11 @@ class rfUnitary(Gate):
 
 class Measure(Gate):
     @property
-    def wfile(self):
-        return self._cfg_._path_.parent / 'Measure' / (self.qubits[0]+'.pic')
+    def wfile(self) -> Path:
+        return self._cfg_._path_.parent / 'Measure' / (self.qubits[0] + '.pic')
 
     def setW(self, w):
+        self.wfile.parent.mkdir(parents=True, exist_ok=True)
         with open(self.wfile, 'wb') as f:
             pickle.dump(w, f)
 
