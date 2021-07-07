@@ -200,6 +200,10 @@ def barrier(ctx, qubits):
 
 @std.opaque('Measure')
 def measure(ctx, qubits, cbit=None):
+    import numpy as np
+    from waveforms import step, exp
+    from waveforms.quantum.circuit.qlisp.qlisp import MeasurementTask
+
     qubit, = qubits
 
     if cbit is None:
@@ -209,17 +213,31 @@ def measure(ctx, qubits, cbit=None):
             cbit = max(ctx.measures.keys()) + 1
 
     gate = ctx.cfg.getGate('Measure', qubit)
+    rl = ctx.cfg.getReadoutLine(ctx.cfg.getQubit(qubit).readoutLine)
+    lo = ctx.cfg.getChannel(rl.channels.AD.LO).status.frequency
     amp = gate.params.amp
     duration = gate.params.duration
     frequency = gate.params.frequency
+
+    try:
+        w = gate.W()
+        weight = None
+    except:
+        w = (step(2500.0) >> 800) * exp(-1 / 100000)
+        weight = w(np.arange(4096, dtype=np.float64))
+        w = None
     t = ctx.time[qubit]
+
+    phi = 2 * np.pi * (lo - frequency) * t
 
     pulse = square(duration) >> duration / 2 + t
     ctx.channel['readoutLine.RF',
-                qubit] += amp * pulse * cos(2 * pi * frequency)
+                qubit] += amp * pulse * cos(2 * pi * frequency, phi)
     ctx.channel['readoutLine.AD.trigger', qubit] += pulse
 
     params = {k: v for k, v in gate.params.items()}
+    params['w'] = w
+    params['weight'] = weight
     ctx.measures[cbit].append(
         MeasurementTask(qubit, cbit, ctx.time[qubit],
                         gate.get('signal', 'state'), params, {
