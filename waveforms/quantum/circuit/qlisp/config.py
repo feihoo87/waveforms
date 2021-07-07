@@ -1,11 +1,11 @@
+import pickle
 import warnings
 from itertools import chain, permutations
 from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
-from waveforms.baseconfig import BaseConfig
-from waveforms.baseconfig import Trait
+from waveforms.baseconfig import BaseConfig, Trait
 
 
 class Config(BaseConfig):
@@ -179,6 +179,9 @@ class Config(BaseConfig):
         if name == 'rfUnitary':
             return self.getObject(f"gates.{name}.{','.join(qubits)}",
                                   cls='rfUnitary')
+        elif name == 'Measure':
+            return self.getObject(f"gates.{name}.{','.join(qubits)}",
+                                  cls='Measure')
         if ('__order_senstive__' in self['gates'][name]
                 and self['gates'][name]['__order_senstive__']):
             return self.getObject(f"gates.{name}.{','.join(qubits)}",
@@ -340,6 +343,20 @@ class rfUnitary(Gate):
             'frequency': self['params']['frequency'],
             'DRAGScaling': self['params'].get('DRAGScaling', 0)
         }
+
+
+class Measure(Gate):
+    @property
+    def wfile(self):
+        return self._cfg__._path_.parent / 'Measure' / self.qubits[0]+'.pic'
+
+    def setW(self, w):
+        with open(self.wfile, 'wb') as f:
+            pickle.dump(w, f)
+
+    def W(self):
+        with open(self.wfile, 'rb') as f:
+            return pickle.load(f)
 
 
 __configFilePath = None
