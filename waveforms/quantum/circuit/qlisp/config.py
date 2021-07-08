@@ -1,5 +1,6 @@
 import pickle
 import warnings
+from abc import ABC, abstractmethod
 from itertools import chain, permutations
 from pathlib import Path
 from typing import Any, Optional, Union
@@ -360,18 +361,42 @@ class Measure(Gate):
             return pickle.load(f)
 
 
+class ConfigProxy(ABC):
+    @abstractmethod
+    def getQubit(self, name):
+        pass
+
+    @abstractmethod
+    def getCoupler(self, name):
+        pass
+
+    @abstractmethod
+    def getReadoutLine(self, name):
+        pass
+
+    @abstractmethod
+    def getGate(self, name, *qubits):
+        pass
+
+
 __configFilePath = None
 
 
-def setConfig(path: Union[Path, str]) -> None:
+def setConfig(path: Union[Path, str, ConfigProxy]) -> None:
     global __configFilePath
-    __configFilePath = Path(path)
+    if isinstance(path, ConfigProxy):
+        __configFilePath = path
+    else:
+        __configFilePath = Path(path)
 
 
 def getConfig() -> Config:
     if __configFilePath is None:
         raise FileNotFoundError('setConfig(path) must be run first.')
-    return Config(__configFilePath)
+    if isinstance(__configFilePath, ConfigProxy):
+        return __configFilePath
+    else:
+        return Config(__configFilePath)
 
 
 __all__ = ['Config', 'getConfig', 'setConfig']
