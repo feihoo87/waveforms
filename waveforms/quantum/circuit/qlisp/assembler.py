@@ -155,9 +155,6 @@ def compile(prog, cfg: Optional[Config] = None, lib: Library = std, **options):
         no_virtual_z = True: keep P gates as original form.
         no_assembly = True: return simplified qlisp.
     """
-    if cfg is None:
-        cfg = getConfig()
-
     if isinstance(prog, str):
         prog = qasm_eval(prog, lib)
     if 'qasm_only' in options:
