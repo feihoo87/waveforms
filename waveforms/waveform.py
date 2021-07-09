@@ -621,6 +621,14 @@ def interp(x, y):
     return Waveform(seq=tuple(seq), bounds=tuple(bounds)).simplify()
 
 
+def cut(wav, start=None, stop=None):
+    if start is not None:
+        wav = wav * (step(0) >> start)
+    if stop is not None:
+        wav = wav * ((1 - step(0)) >> stop)
+    return wav
+
+
 def function(fun, *args, start=None, stop=None):
     TYPEID = registerBaseFunc(fun)
     seq = (_basic_wave(TYPEID, *args), )
@@ -937,8 +945,8 @@ def wave_eval(expr: str) -> Waveform:
 
 
 __all__ = [
-    'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'function', 'gaussian',
-    'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
+    'D', 'Waveform', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'function',
+    'gaussian', 'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
     'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'square',
     'step', 'wave_eval', 'zero'
 ]
