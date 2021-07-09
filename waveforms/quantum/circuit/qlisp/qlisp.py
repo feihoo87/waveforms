@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from waveforms.waveform import Waveform, zero
 
@@ -45,6 +45,7 @@ class _ChannelGetter():
 @dataclass
 class Context():
     cfg: Config = field(default_factory=getConfig)
+    scopes: list[dict[str, Any]] = field(default_factory=lambda: [dict()])
     qlisp: list = field(default_factory=list)
     time: dict[str,
                float] = field(default_factory=lambda: defaultdict(lambda: 0))
@@ -61,6 +62,10 @@ class Context():
     @property
     def channel(self):
         return _ChannelGetter(self)
+
+    @property
+    def vars(self):
+        return self.scopes[-1]
 
 
 @dataclass
