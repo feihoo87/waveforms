@@ -663,8 +663,8 @@ class _WaveLexer:
 
     literals = r'=()[]<>,.+-/*^'
     functions = [
-        'D', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing', 'one',
-        'poly', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
+        'D', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'interp', 'mixing',
+        'one', 'poly', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
     ]
     tokens = [
         'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',
