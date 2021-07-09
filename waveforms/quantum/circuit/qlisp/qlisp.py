@@ -65,8 +65,8 @@ class Context():
 
 @dataclass
 class QLispCode():
-    cfg: Config
-    qlisp: list
-    waveforms: dict[str, Waveform]
-    measures: dict[int, list[MeasurementTask]]
-    end: float = 0
+    cfg: Config = field(repr=False)
+    qlisp: list = field(repr=True)
+    waveforms: dict[str, Waveform] = field(repr=True)
+    measures: dict[int, list[MeasurementTask]] = field(repr=True)
+    end: float = field(default=0, repr=True)
