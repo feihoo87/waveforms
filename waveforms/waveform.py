@@ -621,7 +621,14 @@ def interp(x, y):
     return Waveform(seq=tuple(seq), bounds=tuple(bounds)).simplify()
 
 
-def cut(wav, start=None, stop=None):
+def cut(wav, start=None, stop=None, head=None, tail=None):
+    offset = 0
+    if start is not None and head is not None:
+        offset = head - wav(np.array([1.0 * start]))[0]
+    elif stop is not None and tail is not None:
+        offset = tail - wav(np.array([1.0 * stop]))[0]
+    wav = wav + offset
+
     if start is not None:
         wav = wav * (step(0) >> start)
     if stop is not None:
