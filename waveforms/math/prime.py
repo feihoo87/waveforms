@@ -3,7 +3,7 @@ import functools
 import itertools
 import random
 from math import ceil, floor, log, sqrt
-from typing import Generator, Iterator, List, Optional, Set
+from typing import Generator, Iterator, List, Optional, Set, Union
 
 
 def __sieve(lst: List[int], p_lst: List[int]) -> None:
@@ -178,8 +178,12 @@ class _Primes:
     def __contains__(self, num: int) -> bool:
         return is_prime(num)
 
-    def __getitem__(self, n: int) -> int:
-        return prime(n)
+    def __getitem__(self, n: Union[int, slice]) -> Union[int, list]:
+        if isinstance(n, int):
+            return prime(n + 1)
+        else:
+            _MAXSIZE = 1000000
+            return [prime(i + 1) for i in range(*n.indices(_MAXSIZE))]
 
     def __call__(self):
         return self
