@@ -5,9 +5,7 @@ from waveforms.waveform import cos, sin
 
 from .config import Config, getConfig
 from .library import Library
-from .macro import extend_macro, reduceVirtualZ
-from .qasm import qasm_eval
-from .qlisp import Context, MeasurementTask, QLispCode, QLispError, gateName
+from .qlisp import Context, MeasurementTask, QLispError, gateName
 from .stdlib import std
 
 
@@ -163,30 +161,3 @@ def assembly(qlisp,
         ctx.time[q] = end
     ctx.end = end
     return ctx
-
-
-def compile(prog, cfg: Optional[Config] = None, lib: Library = std, **options):
-    """
-    options: 
-        qasm_only = True: only compile qasm to qlisp
-        no_virtual_z = True: keep P gates as original form.
-        no_assembly = True: return simplified qlisp.
-    """
-    if isinstance(prog, str):
-        prog = qasm_eval(prog, lib)
-    if 'qasm_only' in options:
-        return list(prog)
-    prog = extend_macro(prog, lib)
-    if 'no_virtual_z' in options:
-        return list(prog)
-    prog = reduceVirtualZ(prog, lib)
-    if 'no_assembly' in options:
-        return list(prog)
-    ctx = assembly(prog, cfg, lib)
-
-    code = QLispCode(cfg=ctx.cfg,
-                     qlisp=ctx.qlisp,
-                     waveforms=dict(ctx.waveforms),
-                     measures=dict(ctx.measures),
-                     end=ctx.end)
-    return code
