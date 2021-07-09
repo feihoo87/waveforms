@@ -57,6 +57,8 @@ class Context():
         default_factory=lambda: defaultdict(list))
     phases: dict[str,
                  float] = field(default_factory=lambda: defaultdict(lambda: 0))
+    biases: dict[str,
+                 float] = field(default_factory=lambda: defaultdict(lambda: 0))
     end: float = 0
 
     @property

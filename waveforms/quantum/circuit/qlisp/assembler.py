@@ -1,7 +1,7 @@
 from typing import Optional
 
 from numpy import pi
-from waveforms.waveform import cos, sin
+from waveforms.waveform import cos, sin, step
 
 from .config import Config, getConfig
 from .library import Library
@@ -78,8 +78,17 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     sub_ctx = Context(cfg=ctx.cfg, scopes=[*ctx.scopes, gatecfg['params']])
     sub_ctx.time.update(ctx.time)
     sub_ctx.phases.update(ctx.phases)
+    sub_ctx.biases.update(ctx.biases)
 
     func(sub_ctx, qubits, *args)
+
+    for channel, bias in sub_ctx.biases.items():
+        if ctx.biases[channel] != bias:
+            _, *qubits = channel
+            t = max(ctx.time[q] for q in qubits)
+            wav = (bias - ctx.biases[channel]) * step(0) >> t
+            _addWaveforms(ctx, channel, wav)
+            ctx.biases[channel] = bias
 
     ctx.time.update(sub_ctx.time)
     ctx.phases.update(sub_ctx.phases)
