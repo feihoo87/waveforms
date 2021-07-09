@@ -81,9 +81,24 @@ def _addWaveforms(ctx, key, wav):
         _addMultChannelWaveforms(ctx, wav, chInfo)
 
 
-def _addMultChannelWaveforms(ctx, wav, chInfo):
+def _getLOFrequency(ctx, chInfo):
     lo = ctx.cfg.getChannel(chInfo['LO'])
     lofreq = lo.status.frequency
+    return lofreq
+
+
+def _getADChannel(ctx, qubit):
+    rl = ctx.cfg.getQubit(qubit).readoutLine
+    rl = ctx.cfg.getReadoutLine(rl)
+    return rl.channels.AD
+
+
+def _getSampleRate(ctx, channel):
+    return ctx.cfg.getChannel(channel).params.sampleRate
+
+
+def _addMultChannelWaveforms(ctx, wav, chInfo):
+    lofreq = _getLOFrequency(ctx, chInfo)
     if 'I' in chInfo:
         I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
         ctx.waveforms[chInfo['I']] += I
@@ -93,24 +108,29 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
 
 
 def _addMeasurementInfo(ctx: Context, task: MeasurementTask):
-    rl = ctx.cfg.getQubit(task.qubit).readoutLine
-    rl = ctx.cfg.getReadoutLine(rl)
-    if isinstance(rl.channels.AD, dict):
-        if 'LO' in rl.channels.AD:
-            lo = ctx.cfg.getChannel(rl.channels.AD.LO)
-            loFreq = lo.status.frequency
-            task.hardware['channel']['LO'] = rl.channels.AD.LO
+    AD = _getADChannel(ctx, task.qubit)
+    if isinstance(AD, dict):
+        if 'LO' in AD:
+            loFreq = _getLOFrequency(ctx, AD)
+            task.hardware['channel']['LO'] = AD['LO']
             task.hardware['params']['LOFrequency'] = loFreq
 
         task.hardware['params']['sampleRate'] = {}
         for ch in ['I', 'Q', 'IQ', 'Ref']:
-            if ch in rl.channels.AD:
-                task.hardware['channel'][ch] = rl.channels.AD[ch]
-                sampleRate = ctx.cfg.getChannel(
-                    rl.channels.AD[ch]).params.sampleRate
+            if ch in AD:
+                task.hardware['channel'][ch] = AD[ch]
+                sampleRate = _getSampleRate(ctx, AD[ch])
                 task.hardware['params']['sampleRate'][ch] = sampleRate
-    elif isinstance(rl.channels.AD, str):
-        task.hardware['channel'] = rl.channels.AD
+    elif isinstance(AD, str):
+        task.hardware['channel'] = AD
+
+
+def _allocQubits(cfg, qlisp):
+    allQubits = sorted(cfg['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
+    addressTable = {q: q for q in allQubits}
+    for i, q in enumerate(allQubits):
+        addressTable[i] = q
+    return addressTable
 
 
 def assembly(qlisp,
@@ -124,18 +144,15 @@ def assembly(qlisp,
     if ctx is None:
         ctx = Context(cfg=cfg)
 
-    allQubits = sorted(cfg['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
+    addressTable = _allocQubits(cfg, qlisp)
 
     for gate, qubits in qlisp:
         ctx.qlisp.append((gate, qubits))
-        if isinstance(qubits, int):
-            qubits = (allQubits[qubits], )
-        elif isinstance(qubits, str):
-            qubits = (qubits, )
+        if isinstance(qubits, (int, str)):
+            qubits = (addressTable[qubits], )
         else:
             qubits = tuple(
-                [allQubits[q] if isinstance(q, int) else q for q in qubits])
-
+                [addressTable[q] if isinstance(q, int) else q for q in qubits])
         try:
             call_opaque((gate, qubits), ctx, lib=lib)
         except:
