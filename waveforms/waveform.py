@@ -596,6 +596,21 @@ def poly(a):
     return Waveform(seq=(_poly(*a), ))
 
 
+def interp(x, y):
+    seq, bounds = [_zero], [x[0]]
+    for x1, x2, y1, y2 in zip(x[:-1], x[1:], y[:-1], y[1:]):
+        if x2 == x1:
+            continue
+        seq.append(
+            _add(
+                _mul(_const((y2 - y1) / (x2 - x1)),
+                     _basic_wave(LINEAR, shift=x1)), _const(y1)))
+        bounds.append(x2)
+    bounds.append(inf)
+    seq.append(_zero)
+    return Waveform(seq=tuple(seq), bounds=tuple(bounds)).simplify()
+
+
 def mixing(I,
            Q=None,
            *,
@@ -895,7 +910,7 @@ def wave_eval(expr: str) -> Waveform:
 
 
 __all__ = [
-    'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'mixing',
-    'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'sign', 'sin',
-    'sinc', 'square', 'step', 'wave_eval', 'zero'
+    'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'interp',
+    'mixing', 'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'sign',
+    'sin', 'sinc', 'square', 'step', 'wave_eval', 'zero'
 ]

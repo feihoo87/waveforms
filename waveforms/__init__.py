@@ -6,5 +6,6 @@ from .quantum import (Config, compile, getConfig, libraries, qpt, qptInitList,
 from .quantum.transmon import Transmon
 from .version import __version__
 from .waveform import (D, Waveform, const, cos, cosPulse, exp, gaussian,
-                       mixing, one, poly, registerBaseFunc, registerDerivative,
-                       sign, sin, sinc, square, step, wave_eval, zero)
+                       interp, mixing, one, poly, registerBaseFunc,
+                       registerDerivative, sign, sin, sinc, square, step,
+                       wave_eval, zero)
