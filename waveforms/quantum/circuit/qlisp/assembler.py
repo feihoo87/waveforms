@@ -8,46 +8,7 @@ from .library import Library
 from .qlisp import Context, MeasurementTask, QLispError, gateName
 from .stdlib import std
 
-
-def call_opaque(st: tuple, ctx: Context, lib: Library):
-    name = gateName(st)
-    gate, qubits = st
-    try:
-        g = ctx.cfg.getGate(name, *qubits)
-        type = g.type
-    except:
-        type = 'default'
-
-    func = lib.getOpaque(name, type)
-    if func is None:
-        raise KeyError('Undefined {type} type of {name} opaque.')
-    qubits = st[1]
-    if isinstance(st[0], str):
-        args = ()
-    else:
-        args = st[0][1:]
-    sub_ctx = Context(cfg=ctx.cfg)
-    sub_ctx.time.update(ctx.time)
-    sub_ctx.phases.update(ctx.phases)
-
-    func(sub_ctx, qubits, *args)
-
-    ctx.time.update(sub_ctx.time)
-    ctx.phases.update(sub_ctx.phases)
-
-    for channel, wav in sub_ctx.raw_waveforms.items():
-        _addWaveforms(ctx, channel, wav)
-    for cbit, taskList in sub_ctx.measures.items():
-        for task in taskList:
-            _addMeasurementInfo(ctx, task)
-            ctx.measures[cbit].append(task)
-
-
-def _getSharedCoupler(qubits):
-    s = set(qubits[0]['couplers'])
-    for qubit in qubits[1:]:
-        s = s & set(qubit['couplers'])
-    return s
+## query
 
 
 def _getChannel(ctx, key):
@@ -71,14 +32,6 @@ def _getChannel(ctx, key):
     return chInfo
 
 
-def _addWaveforms(ctx, key, wav):
-    chInfo = _getChannel(ctx, key)
-    if isinstance(chInfo, str):
-        ctx.waveforms[chInfo] += wav
-    else:
-        _addMultChannelWaveforms(ctx, wav, chInfo)
-
-
 def _getLOFrequency(ctx, chInfo):
     lo = ctx.cfg.getChannel(chInfo['LO'])
     lofreq = lo.status.frequency
@@ -93,6 +46,65 @@ def _getADChannel(ctx, qubit):
 
 def _getSampleRate(ctx, channel):
     return ctx.cfg.getChannel(channel).params.sampleRate
+
+
+def _getGateConfig(ctx, name, *qubits):
+    try:
+        gate = ctx.cfg.getGate(name, *qubits)
+    except:
+        return {'type': 'default', 'params': {}}
+    params = gate['params']
+    type = gate.get('type', 'default')
+    return {'type': type, 'params': params}
+
+
+##
+
+
+def call_opaque(st: tuple, ctx: Context, lib: Library):
+    name = gateName(st)
+    gate, qubits = st
+    gatecfg = _getGateConfig(ctx, name, *qubits)
+
+    func = lib.getOpaque(name, gatecfg['type'])
+    if func is None:
+        raise KeyError('Undefined {type} type of {name} opaque.')
+
+    if isinstance(gate, str):
+        args = ()
+    else:
+        args = gate[1:]
+
+    sub_ctx = Context(cfg=ctx.cfg, scopes=[*ctx.scopes, gatecfg['params']])
+    sub_ctx.time.update(ctx.time)
+    sub_ctx.phases.update(ctx.phases)
+
+    func(sub_ctx, qubits, *args)
+
+    ctx.time.update(sub_ctx.time)
+    ctx.phases.update(sub_ctx.phases)
+
+    for channel, wav in sub_ctx.raw_waveforms.items():
+        _addWaveforms(ctx, channel, wav)
+    for cbit, taskList in sub_ctx.measures.items():
+        for task in taskList:
+            _addMeasurementInfo(ctx, task)
+            ctx.measures[cbit].append(task)
+
+
+def _getSharedCoupler(qubits):
+    s = set(qubits[0]['couplers'])
+    for qubit in qubits[1:]:
+        s = s & set(qubit['couplers'])
+    return s
+
+
+def _addWaveforms(ctx, key, wav):
+    chInfo = _getChannel(ctx, key)
+    if isinstance(chInfo, str):
+        ctx.waveforms[chInfo] += wav
+    else:
+        _addMultChannelWaveforms(ctx, wav, chInfo)
 
 
 def _addMultChannelWaveforms(ctx, wav, chInfo):
