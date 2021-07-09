@@ -181,9 +181,13 @@ class _Primes:
     def __getitem__(self, n: Union[int, slice]) -> Union[int, list]:
         if isinstance(n, int):
             return prime(n + 1)
-        else:
+        elif isinstance(n, slice):
             _MAXSIZE = 1000000
             return [prime(i + 1) for i in range(*n.indices(_MAXSIZE))]
+        elif isinstance(n, tuple):
+            return [prime(i + 1) for i in n]
+        else:
+            raise TypeError(f'indices must be integers or slices, not {type(n)}')
 
     def __call__(self):
         return self
