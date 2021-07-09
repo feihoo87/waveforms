@@ -61,6 +61,16 @@ def _getGateConfig(ctx, name, *qubits):
 ##
 
 
+@std.opaque('__finally__')
+def _finally_opaque(ctx, qubits):
+    """_finally_opaque
+
+    clean all biases.
+    """
+    for ch in ctx.biases:
+        ctx.biases[ch] = 0
+
+
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
@@ -165,6 +175,8 @@ def assembly(qlisp,
 
     addressTable = _allocQubits(cfg, qlisp)
 
+    allQubits = set()
+
     for gate, qubits in qlisp:
         ctx.qlisp.append((gate, qubits))
         if isinstance(qubits, (int, str)):
@@ -174,11 +186,10 @@ def assembly(qlisp,
                 [addressTable[q] if isinstance(q, int) else q for q in qubits])
         try:
             call_opaque((gate, qubits), ctx, lib=lib)
+            allQubits.update(set(qubits))
         except:
             raise QLispError(f'assembly statement {(gate, qubits)} error.')
-
-    end = max(ctx.time.values())
-    for q in ctx.time:
-        ctx.time[q] = end
-    ctx.end = end
+    call_opaque(('Barrier', tuple(allQubits)), ctx, lib=lib)
+    call_opaque(('__finally__', tuple(allQubits)), ctx, lib=lib)
+    ctx.end = max(ctx.time.values())
     return ctx
