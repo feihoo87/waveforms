@@ -3,7 +3,7 @@ from ast import literal_eval
 from bisect import bisect_left
 from functools import lru_cache
 from itertools import chain, product
-
+import pickle
 import numpy as np
 import ply.lex as lex
 import ply.yacc as yacc
@@ -417,6 +417,14 @@ def registerBaseFunc(func):
     return Type
 
 
+def packBaseFunc():
+    return pickle.dumps(_baseFunc)
+
+
+def updateBaseFunc(buf):
+    _baseFunc.update(pickle.loads(buf))
+
+
 def registerDerivative(Type, dFunc):
     _derivativeBaseFunc[Type] = dFunc
 
@@ -428,6 +436,8 @@ ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2))
 COS = registerBaseFunc(lambda t, w: np.cos(w * t))
 SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
 EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
+INTERP = registerBaseFunc(lambda t, start, stop, points: np.interp(
+    t, np.linspace(start, stop, len(points)), points))
 
 # register derivative
 registerDerivative(LINEAR, lambda shift, *args: _one)
@@ -620,6 +630,12 @@ def function(fun, *args, start=None, stop=None):
     if stop is not None:
         wav = wav * ((1 - step(0)) >> stop)
     return wav
+
+
+def samplingPoints(start, stop, points):
+    return Waveform(bounds=(start, stop, inf),
+                    seq=(_zero, _basic_wave(INTERP, start, stop,
+                                            tuple(points)), _zero))
 
 
 def mixing(I,
@@ -923,6 +939,6 @@ def wave_eval(expr: str) -> Waveform:
 __all__ = [
     'D', 'Waveform', 'const', 'cos', 'cosPulse', 'exp', 'function', 'gaussian',
     'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
-    'registerDerivative', 'sign', 'sin', 'sinc', 'square', 'step', 'wave_eval',
-    'zero'
+    'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'square',
+    'step', 'wave_eval', 'zero'
 ]

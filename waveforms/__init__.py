@@ -7,5 +7,5 @@ from .quantum.transmon import Transmon
 from .version import __version__
 from .waveform import (D, Waveform, const, cos, cosPulse, exp, function,
                        gaussian, interp, mixing, one, poly, registerBaseFunc,
-                       registerDerivative, sign, sin, sinc, square, step,
-                       wave_eval, zero)
+                       registerDerivative, samplingPoints, sign, sin, sinc,
+                       square, step, wave_eval, zero)
