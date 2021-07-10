@@ -5,7 +5,6 @@ from .config import Config
 from .library import Library
 from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
-from .qlisp import QLispCode
 from .stdlib import std
 
 
@@ -26,11 +25,5 @@ def compile(prog, cfg: Optional[Config] = None, lib: Library = std, **options):
     prog = reduceVirtualZ(prog, lib)
     if 'no_assembly' in options:
         return list(prog)
-    ctx = assembly(prog, cfg, lib)
-
-    code = QLispCode(cfg=ctx.cfg,
-                     qlisp=ctx.qlisp,
-                     waveforms=dict(ctx.waveforms),
-                     measures=dict(ctx.measures),
-                     end=ctx.end)
+    code = assembly(prog, cfg, lib)
     return code
