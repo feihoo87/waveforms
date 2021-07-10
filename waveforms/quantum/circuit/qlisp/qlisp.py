@@ -49,6 +49,7 @@ class Context():
     qlisp: list = field(default_factory=list)
     time: dict[str,
                float] = field(default_factory=lambda: defaultdict(lambda: 0))
+    addressTable: dict = field(default_factory=dict)
     waveforms: dict[str, Waveform] = field(
         default_factory=lambda: defaultdict(zero))
     raw_waveforms: dict[tuple[str, ...], Waveform] = field(
@@ -66,8 +67,19 @@ class Context():
         return _ChannelGetter(self)
 
     @property
-    def vars(self):
+    def params(self):
         return self.scopes[-1]
+
+    @property
+    def vars(self):
+        return self.scopes[-2]
+
+    @property
+    def globals(self):
+        return self.scopes[0]
+
+    def qubit(self, q):
+        return self.addressTable[q]
 
 
 @dataclass

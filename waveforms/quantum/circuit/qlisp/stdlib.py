@@ -1,4 +1,5 @@
 from pathlib import Path
+from waveforms.math import signal
 
 from numpy import mod, pi
 from waveforms.waveform import (cos, cosPulse, gaussian, mixing, square,
@@ -215,9 +216,10 @@ def measure(ctx, qubits, cbit=None):
     gate = ctx.cfg.getGate('Measure', qubit)
     rl = ctx.cfg.getReadoutLine(ctx.cfg.getQubit(qubit).readoutLine)
     lo = ctx.cfg.getChannel(rl.channels.AD.LO).status.frequency
-    amp = gate.params.amp
-    duration = gate.params.duration
-    frequency = gate.params.frequency
+    amp = ctx.params['amp']
+    duration = ctx.params['duration']
+    frequency = ctx.params['frequency']
+    signal = ctx.params.get('signal', 'state')
 
     try:
         w = gate.W()
@@ -235,15 +237,16 @@ def measure(ctx, qubits, cbit=None):
                 qubit] += amp * pulse * cos(2 * pi * frequency, phi)
     ctx.channel['readoutLine.AD.trigger', qubit] += pulse
 
-    params = {k: v for k, v in gate.params.items()}
+    params = {k: v for k, v in ctx.params.items()}
     params['w'] = w
     params['weight'] = weight
     ctx.measures[cbit].append(
-        MeasurementTask(qubit, cbit, ctx.time[qubit],
-                        gate.get('signal', 'state'), params, {
-                            'channel': {},
-                            'params': {}
-                        }))
+        MeasurementTask(qubit,
+                        cbit,
+                        ctx.time[qubit],
+                        signal,
+                        params,
+                        hardware={}))
     ctx.time[qubit] += duration
     ctx.phases[qubit] = 0
 
@@ -277,3 +280,8 @@ def Pulse(ctx, qubits, channel, waveform):
     t = max(ctx.time[qubit] for qubit in qubits)
 
     ctx.channel[(channel, *qubits)] += waveform >> t
+
+
+@std.opaque('setBias')
+def setBias(ctx, qubits, channel, bias):
+    ctx.biases[(channel, *qubits)] = bias
