@@ -5,7 +5,7 @@ from waveforms.waveform import cos, sin, step
 
 from .config import Config, getConfig
 from .library import Library
-from .qlisp import Context, MeasurementTask, QLispError, gateName
+from .qlisp import Context, MeasurementTask, QLispCode, QLispError, gateName
 from .stdlib import std
 
 ## query
@@ -200,4 +200,10 @@ def assembly(qlisp,
     call_opaque(('Barrier', tuple(allQubits)), ctx, lib=lib)
     call_opaque(('__finally__', tuple(allQubits)), ctx, lib=lib)
     ctx.end = max(ctx.time.values())
-    return ctx
+
+    code = QLispCode(cfg=ctx.cfg,
+                     qlisp=ctx.qlisp,
+                     waveforms=dict(ctx.waveforms),
+                     measures=dict(ctx.measures),
+                     end=ctx.end)
+    return code
