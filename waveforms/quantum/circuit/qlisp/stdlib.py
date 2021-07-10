@@ -140,6 +140,8 @@ def crz(qubits, lambda_):
 
 @std.opaque('rfUnitary')
 def rfUnitary(ctx, qubits, theta, phi):
+    import numpy as np
+
     qubit, = qubits
 
     if theta < 0:
@@ -154,8 +156,11 @@ def rfUnitary(ctx, qubits, theta, phi):
     if phi > pi:
         phi -= 2 * pi
 
-    gate = ctx.cfg.getGate('rfUnitary', qubit)
-    shape = gate.shape(theta, phi)
+    shape = ctx.params['shape']
+    duration = np.interp(theta / np.pi, *ctx.params['duration'])
+    amp = np.interp(theta / np.pi, *ctx.params['amp'])
+    phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
+
     pulseLib = {
         'CosPulse': cosPulse,
         'Gaussian': gaussian,
@@ -163,17 +168,16 @@ def rfUnitary(ctx, qubits, theta, phi):
         'DC': square,
     }
 
-    if shape['duration'] > 0 and shape['amp'] != 0:
-        pulse = pulseLib[shape['shape']](
-            shape['duration']) >> (shape['duration'] / 2 + ctx.time[qubit])
+    if duration > 0 and amp != 0:
+        pulse = pulseLib[shape](duration) >> (duration / 2 + ctx.time[qubit])
         pulse, _ = mixing(pulse,
-                          phase=shape['phase'],
-                          freq=shape['frequency'],
-                          DRAGScaling=shape['DRAGScaling'])
-        ctx.channel['RF', qubit] += shape['amp'] * pulse
+                          phase=phase,
+                          freq=ctx.params['frequency'],
+                          DRAGScaling=ctx.params['DRAGScaling'])
+        ctx.channel['RF', qubit] += amp * pulse
     else:
         ctx.channel['RF', qubit] += zero()
-    ctx.time[qubit] += shape['duration']
+    ctx.time[qubit] += duration
 
 
 @std.opaque('Delay')
