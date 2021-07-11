@@ -2,7 +2,7 @@ import bisect
 import functools
 import itertools
 import random
-from math import ceil, floor, log, sqrt
+from math import ceil, floor, inf, log, sqrt
 from typing import Generator, Iterator, List, Optional, Set, Union
 
 
