@@ -465,6 +465,11 @@ registerDerivative(
     EXP, lambda shift, *args: (((((EXP, shift, *args), ), (1, )), ),
                                (args[0], )))
 
+registerDerivative(
+    INTERP, lambda shift, start, stop, points:
+    (((((INTERP, shift, start, stop, tuple(np.gradient(np.asarray(points)))),
+        ), (1, )), ), ((len(points) - 1) / (stop - start), )))
+
 
 def _D_base(m):
     Type, shift, *args = m
@@ -705,8 +710,9 @@ class _WaveLexer:
 
     literals = r'=()[]<>,.+-/*^'
     functions = [
-        'D', 'const', 'cos', 'cosPulse', 'exp', 'gaussian', 'interp', 'mixing',
-        'one', 'poly', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
+        'D', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'gaussian', 'interp',
+        'mixing', 'one', 'poly', 'sign', 'sin', 'sinc', 'square', 'step',
+        'zero'
     ]
     tokens = [
         'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',
@@ -729,7 +735,7 @@ class _WaveLexer:
         return t
 
     def t_INT(self, t):
-        r'[1-9][0-9]*'
+        r'[1-9][0-9]*|0'
         return t
 
     def t_STRING(self, t):
