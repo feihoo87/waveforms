@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 from numpy import pi
 from waveforms.waveform import cos, sin, step
@@ -7,80 +7,6 @@ from .config import Config, getConfig
 from .library import Library
 from .qlisp import Context, MeasurementTask, QLispCode, QLispError, gateName
 from .stdlib import std
-
-## query
-
-
-def _getAWGChannel(ctx, name, *qubits) -> Union[str, dict]:
-
-    qubits = [ctx.cfg.getQubit(q) for q in qubits]
-
-    if name.startswith('readoutLine.'):
-        #name = name.removeprefix('readoutLine.')
-        name = name[len('readoutLine.'):]
-        rl = ctx.cfg.getReadoutLine(qubits[0]['readoutLine'])
-        chInfo = rl.query('channels.' + name)
-    elif name.startswith('coupler.'):
-        #name = name.removeprefix('coupler.')
-        name = name[len('coupler.'):]
-        c = _getSharedCoupler(qubits).pop()
-        c = ctx.cfg.getCoupler(c)
-        chInfo = c.query('channels.' + name)
-    else:
-        chInfo = qubits[0].query('channels.' + name)
-    return chInfo
-
-
-def _getADChannel(ctx, qubit) -> Union[str, dict]:
-    rl = ctx.cfg.getQubit(qubit).readoutLine
-    rl = ctx.cfg.getReadoutLine(rl)
-    return rl.channels.AD
-
-
-def _getLOFrequency(ctx, chInfo) -> float:
-    lo = ctx.cfg.getChannel(chInfo['LO'])
-    lofreq = lo.status.frequency
-    return lofreq
-
-
-def _getADChannelDetails(ctx, chInfo) -> dict:
-    def _getADSampleRate(ctx, channel):
-        return ctx.cfg.getChannel(channel).params.sampleRate
-
-    hardware = {'channel': {}, 'params': {}}
-    if isinstance(chInfo, dict):
-        if 'LO' in chInfo:
-            loFreq = _getLOFrequency(ctx, chInfo)
-            hardware['channel']['LO'] = chInfo['LO']
-            hardware['params']['LOFrequency'] = loFreq
-
-        hardware['params']['sampleRate'] = {}
-        for ch in ['I', 'Q', 'IQ', 'Ref']:
-            if ch in chInfo:
-                hardware['channel'][ch] = chInfo[ch]
-                sampleRate = _getADSampleRate(ctx, chInfo[ch])
-                hardware['params']['sampleRate'][ch] = sampleRate
-    elif isinstance(chInfo, str):
-        hardware['channel'] = chInfo
-
-    return hardware
-
-
-def _getGateConfig(ctx, name, *qubits):
-    try:
-        gate = ctx.cfg.getGate(name, *qubits)
-    except:
-        return {'type': 'default', 'params': {}}
-    params = gate['params']
-    type = gate.get('type', 'default')
-    return {'type': type, 'params': params}
-
-
-def _getQubitList(ctx):
-    return sorted(ctx.cfg['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
-
-
-##
 
 
 @std.opaque('__finally__')
@@ -96,7 +22,7 @@ def _finally_opaque(ctx, qubits):
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
-    gatecfg = _getGateConfig(ctx, name, *qubits)
+    gatecfg = ctx._getGateConfig(name, *qubits)
 
     func = lib.getOpaque(name, gatecfg['type'])
     if func is None:
@@ -133,16 +59,9 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
             ctx.measures[cbit].append(task)
 
 
-def _getSharedCoupler(qubits):
-    s = set(qubits[0]['couplers'])
-    for qubit in qubits[1:]:
-        s = s & set(qubit['couplers'])
-    return s
-
-
 def _addWaveforms(ctx, channel, wav):
     name, *qubits = channel
-    chInfo = _getAWGChannel(ctx, name, *qubits)
+    chInfo = ctx._getAWGChannel(name, *qubits)
     if isinstance(chInfo, str):
         ctx.waveforms[chInfo] += wav
     else:
@@ -150,7 +69,7 @@ def _addWaveforms(ctx, channel, wav):
 
 
 def _addMultChannelWaveforms(ctx, wav, chInfo):
-    lofreq = _getLOFrequency(ctx, chInfo)
+    lofreq = ctx._getLOFrequencyOfChannel(chInfo)
     if 'I' in chInfo:
         I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
         ctx.waveforms[chInfo['I']] += I
@@ -160,12 +79,12 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
 
 
 def _addMeasurementHardwareInfo(ctx: Context, task: MeasurementTask):
-    AD = _getADChannel(ctx, task.qubit)
-    task.hardware.update(_getADChannelDetails(ctx, AD))
+    AD = ctx._getADChannel(task.qubit)
+    task.hardware.update(ctx._getADChannelDetails(AD))
 
 
 def _allocQubits(ctx, qlisp):
-    for i, q in enumerate(_getQubitList(ctx)):
+    for i, q in enumerate(ctx._getAllQubitLabels()):
         ctx.addressTable[q] = q
         ctx.addressTable[i] = q
 
