@@ -23,25 +23,6 @@ __sieve(iter(range(3, 50000, 2)), __least_primes)
 __primes_set: Set[int] = set(__least_primes)
 
 
-def powMod(a: int, b: int, r: int) -> int:
-    """
-    power mod
-
-    Args:
-        a (int), b (int), r (int)
-
-    Returns:
-        int: (a ** b) % r
-    """
-    ans, buff = 1, a
-    while b:
-        if b & 1:
-            ans = (ans * buff) % r
-        buff = (buff * buff) % r
-        b >>= 1
-    return ans
-
-
 def _MillerRabin(n: int, a: int) -> bool:
     """
     Miller-Rabin test with base a
@@ -56,7 +37,7 @@ def _MillerRabin(n: int, a: int) -> bool:
     d = n - 1
     while (d & 1) == 0:
         d >>= 1
-    t = powMod(a, d, n)
+    t = pow(a, d, n)
     while d != n - 1 and t != n - 1 and t != 1:
         t = (t * t) % n
         d <<= 1
@@ -182,12 +163,20 @@ class _Primes:
         if isinstance(n, int):
             return prime(n + 1)
         elif isinstance(n, slice):
-            _MAXSIZE = 1000000
-            return [prime(i + 1) for i in range(*n.indices(_MAXSIZE))]
+            start, stop, step = n.start, n.stop, n.step
+            if start is None:
+                start = 0
+            if step is None:
+                step = 1
+            if stop is None:
+                stop = inf
+            return (prime(i + 1) for i in itertools.takewhile(
+                lambda n: n < stop, itertools.count(start, step)))
         elif isinstance(n, tuple):
             return [prime(i + 1) for i in n]
         else:
-            raise TypeError(f'indices must be integers or slices, not {type(n)}')
+            raise TypeError(
+                f'indices must be integers or slices, not {type(n)}')
 
     def __call__(self):
         return self
