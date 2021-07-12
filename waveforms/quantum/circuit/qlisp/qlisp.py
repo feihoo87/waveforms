@@ -160,13 +160,21 @@ class QLispCode():
     end: float = field(default=0, repr=True)
 
 
+__context_factory = Context
+
+
+def set_context_factory(factory):
+    global __context_factory
+    __context_factory = factory
+
+
 def create_context(ctx: Optional[Context] = None, **kw) -> Context:
     if ctx is None:
-        return Context(**kw)
+        return __context_factory(**kw)
     else:
         if 'cfg' not in kw:
             kw['cfg'] = ctx.cfg
-        sub_ctx = Context(**kw)
+        sub_ctx = __context_factory(**kw)
         sub_ctx.time.update(ctx.time)
         sub_ctx.phases.update(ctx.phases)
         sub_ctx.biases.update(ctx.biases)
