@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple, Union
+from typing import Any, NamedTuple, Optional, Union
 
 from waveforms.waveform import Waveform, zero
 
@@ -137,7 +137,7 @@ class Context():
 
         return hardware
 
-    def _getGateConfig(self, name, *qubits):
+    def _getGateConfig(self, name, *qubits) -> dict:
         try:
             gate = self.cfg.getGate(name, *qubits)
         except:
@@ -146,7 +146,7 @@ class Context():
         type = gate.get('type', 'default')
         return {'type': type, 'params': params}
 
-    def _getAllQubitLabels(self):
+    def _getAllQubitLabels(self) -> list[str]:
         return sorted(self.cfg['chip']['qubits'].keys(),
                       key=lambda s: int(s[1:]))
 
@@ -158,3 +158,17 @@ class QLispCode():
     waveforms: dict[str, Waveform] = field(repr=True)
     measures: dict[int, list[MeasurementTask]] = field(repr=True)
     end: float = field(default=0, repr=True)
+
+
+def create_context(ctx: Optional[Context] = None, **kw) -> Context:
+    if ctx is None:
+        return Context(**kw)
+    else:
+        if 'cfg' not in kw:
+            kw['cfg'] = ctx.cfg
+        sub_ctx = Context(**kw)
+        sub_ctx.time.update(ctx.time)
+        sub_ctx.phases.update(ctx.phases)
+        sub_ctx.biases.update(ctx.biases)
+
+        return sub_ctx

@@ -5,7 +5,8 @@ from waveforms.waveform import cos, sin, step
 
 from .config import Config, getConfig
 from .library import Library
-from .qlisp import Context, MeasurementTask, QLispCode, QLispError, gateName
+from .qlisp import (Context, MeasurementTask, QLispCode, QLispError,
+                    create_context, gateName)
 from .stdlib import std
 
 
@@ -33,10 +34,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     else:
         args = gate[1:]
 
-    sub_ctx = Context(cfg=ctx.cfg, scopes=[*ctx.scopes, gatecfg['params']])
-    sub_ctx.time.update(ctx.time)
-    sub_ctx.phases.update(ctx.phases)
-    sub_ctx.biases.update(ctx.biases)
+    sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg['params']])
 
     func(sub_ctx, qubits, *args)
 
@@ -98,7 +96,7 @@ def assembly(qlisp,
         cfg = getConfig()
 
     if ctx is None:
-        ctx = Context(cfg=cfg)
+        ctx = create_context(cfg=cfg)
 
     _allocQubits(ctx, qlisp)
 
