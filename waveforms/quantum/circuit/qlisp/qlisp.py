@@ -29,19 +29,6 @@ class MeasurementTask(NamedTuple):
     hardware: dict
 
 
-class _ChannelGetter():
-    __slots__ = ('ctx')
-
-    def __init__(self, ctx):
-        self.ctx = ctx
-
-    def __getitem__(self, key):
-        return self.ctx.raw_waveforms.__getitem__(key)
-
-    def __setitem__(self, key, wav):
-        self.ctx.raw_waveforms.__setitem__(key, wav)
-
-
 @dataclass
 class Context():
     cfg: Config = field(default_factory=getConfig)
@@ -64,7 +51,7 @@ class Context():
 
     @property
     def channel(self):
-        return _ChannelGetter(self)
+        return self.raw_waveforms
 
     @property
     def params(self):
