@@ -16,7 +16,6 @@ def DD(t, gates, pos, Delta=0):
     if Delta != 0:
         seq.append(('P', Delta * t))
     seq.append('X/2')
-    seq.append('Measure')
     return seq
 
 
@@ -55,16 +54,13 @@ def CP(n, t, Delta=0):
 
 
 def Ramsey(t, f=0):
-    return [
-        'X/2', ('Delay', t), ('rfUnitary', np.pi / 2, 2 * np.pi * f * t),
-        'Measure'
-    ]
+    return ['X/2', ('Delay', t), ('rfUnitary', np.pi / 2, 2 * np.pi * f * t)]
 
 
 def SpinEcho(t, f=0):
     return [
         'X/2', ('Delay', t / 2), ('rfUnitary', np.pi, np.pi * f * t),
-        ('Delay', t / 2), 'X/2', 'Measure'
+        ('Delay', t / 2), 'X/2'
     ]
 
 
