@@ -16,7 +16,7 @@ To install from the latest source, you need to clone the GitHub repository on yo
 git clone https://github.com/feihoo87/waveforms.git
 ```
 
-Then dependencies and QuLab can be installed in this way:
+Then dependencies and `waveforms` can be installed in this way:
 ```bash
 cd waveforms
 python -m pip install -e .
