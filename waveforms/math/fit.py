@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import numpy as np
 
 
@@ -63,3 +65,66 @@ def goodnessOfFit(pnum, ydata, fvec, sigma=None):
     Adj_R_sq = 1 - (SSE / (dfe - 1)) / (SST / (n - 1))
 
     return SSE, R_square, Adj_R_sq, RMSE
+
+
+def countState(state):
+    ret = defaultdict(lambda: 0)
+    for s in state:
+        ret[tuple(s)] += 1
+    return dict(ret)
+
+
+def count_to_diag(count, shape=None):
+    state = list(count.keys())
+    if shape is None:
+        shape = (2, ) * len(state[0])
+    n = np.asarray(list(count.values()))
+    p = n / np.sum(n)
+    state = np.ravel_multi_index(np.asarray(state).T, shape)
+    ret = np.zeros(shape).reshape(-1)
+    ret[state] = p
+    return ret
+
+
+def _atleast_type(a, dtype):
+    if dtype == np.double and a.dtype.type == np.int8:
+        return a.astype(np.double)
+    elif dtype == complex and a.dtype.type in [np.int8, np.double]:
+        return a.astype(complex)
+    else:
+        return a
+
+
+def classifyData(data, measure_gates, avg=False):
+    assert data.shape[-1] == len(
+        measure_gates), 'number of qubits must equal to the size of last axis'
+
+    ret = np.zeros_like(data, dtype=np.int8)
+
+    for i, g in enumerate(measure_gates):
+        signal = g['params'].get('signal', 'state')
+        thr = g['params'].get('threshold', 0)
+        phi = g['params'].get('phi', 0)
+
+        if signal == 'state':
+            ret[..., i] = (data[..., i] * np.exp(-1j * phi)).real > thr
+        elif signal == 'amp':
+            ret = _atleast_type(ret, np.double)
+            ret[..., i] = (data[..., i] * np.exp(-1j * phi)).real
+        if signal == 'raw':
+            ret = _atleast_type(ret, complex)
+            ret[..., i] = data[..., i]
+        elif signal == 'real':
+            ret = _atleast_type(ret, np.double)
+            ret[..., i] = data[..., i].real
+        elif signal == 'imag':
+            ret = _atleast_type(ret, np.double)
+            ret[..., i] = data[..., i].imag
+        elif signal == 'abs':
+            ret = _atleast_type(ret, np.double)
+            ret[..., i] = np.abs(data[..., i])
+        else:
+            pass
+    if avg:
+        ret = ret.mean(axis=-2)
+    return ret
