@@ -379,24 +379,26 @@ class ConfigProxy(ABC):
         pass
 
 
-__configFilePath = None
+__config_factory = None
+
+
+def set_config_factory(factory):
+    global __config_factory
+    __config_factory = factory
 
 
 def setConfig(path: Union[Path, str, ConfigProxy]) -> None:
-    global __configFilePath
-    if isinstance(path, ConfigProxy):
-        __configFilePath = path
-    else:
-        __configFilePath = Path(path)
+    factory = lambda path=Path(path): Config(path)
+    set_config_factory(factory)
 
 
 def getConfig() -> Config:
-    if __configFilePath is None:
-        raise FileNotFoundError('setConfig(path) must be run first.')
-    if isinstance(__configFilePath, ConfigProxy):
-        return __configFilePath
+    if __config_factory is None:
+        raise FileNotFoundError(
+            'setConfig(path) or set_config_factory(factory) must be run first.'
+        )
     else:
-        return Config(__configFilePath)
+        return __config_factory()
 
 
 __all__ = ['Config', 'getConfig', 'setConfig']
