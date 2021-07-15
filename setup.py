@@ -16,7 +16,8 @@ exec(open('waveforms/version.py').read())
 
 requirements = [
     'blinker>=1.4',
-    'decorator>=5.0.7',
+    'cryptography>=3.4.7',
+    #'decorator>=5.0.7',
     'GitPython>=3.1.14',
     'numpy>=1.13.3',
     'ply>=3.11',
@@ -24,6 +25,7 @@ requirements = [
     'scikit-learn>=0.24.1',
     'scikit-optimize>=0.8.1',
     'scipy>=1.0.0',
+    #'tables>=3.6.1'
 ]
 
 setup(
