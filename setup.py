@@ -40,7 +40,7 @@ setup(
     packages = find_packages(),
     include_package_data = True,
     package_data={
-        'waveforms': ['quantum/circuit/qasm/libs/*.inc']
+        'waveforms': ['libs/*.inc']
     },
     #data_files=[('waveforms/Data', waveData)],
     install_requires=requirements,
