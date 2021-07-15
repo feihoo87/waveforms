@@ -240,11 +240,13 @@ def _calc(wav, x):
 
 
 class Waveform:
-    __slots__ = ('bounds', 'seq')
+    __slots__ = ('bounds', 'seq', 'max', 'min')
 
     def __init__(self, bounds=(+inf, ), seq=(_zero, )):
         self.bounds = bounds
         self.seq = seq
+        self.max = inf
+        self.min = -inf
 
     def simplify(self):
         seq = [_simplify(self.seq[0])]
@@ -362,7 +364,9 @@ class Waveform:
         for i, stop in enumerate(range_list):
             if start < stop and self.seq[i] != _zero:
                 #ret[start:stop] = _calc(self.seq[i], x[start:stop])
-                ret.append((start, stop, _calc(self.seq[i], x[start:stop])))
+                ret.append((start, stop,
+                            np.clip(_calc(self.seq[i], x[start:stop]),
+                                    self.min, self.max)))
             start = stop
         if not frag:
             y = np.zeros_like(x)
@@ -626,7 +630,7 @@ def interp(x, y):
     return Waveform(seq=tuple(seq), bounds=tuple(bounds)).simplify()
 
 
-def cut(wav, start=None, stop=None, head=None, tail=None):
+def cut(wav, start=None, stop=None, head=None, tail=None, min=None, max=None):
     offset = 0
     if start is not None and head is not None:
         offset = head - wav(np.array([1.0 * start]))[0]
@@ -638,6 +642,10 @@ def cut(wav, start=None, stop=None, head=None, tail=None):
         wav = wav * (step(0) >> start)
     if stop is not None:
         wav = wav * ((1 - step(0)) >> stop)
+    if min is not None:
+        wav.min = min
+    if max is not None:
+        wav.max = max
     return wav
 
 
@@ -711,8 +719,8 @@ class _WaveLexer:
     literals = r'=()[]<>,.+-/*^'
     functions = [
         'D', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'gaussian', 'interp',
-        'mixing', 'one', 'poly', 'sign', 'sin', 'sinc', 'square', 'step',
-        'zero'
+        'mixing', 'one', 'poly', 'samplingPoints', 'sign', 'sin', 'sinc',
+        'square', 'step', 'zero'
     ]
     tokens = [
         'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',
