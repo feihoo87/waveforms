@@ -207,7 +207,6 @@ def barrier(ctx, qubits):
 def measure(ctx, qubits, cbit=None):
     import numpy as np
     from waveforms import step, exp
-    from waveforms.quantum.circuit.qlisp.qlisp import MeasurementTask
 
     qubit, = qubits
 
@@ -218,8 +217,7 @@ def measure(ctx, qubits, cbit=None):
             cbit = max(ctx.measures.keys()) + 1
 
     gate = ctx.cfg.getGate('Measure', qubit)
-    rl = ctx.cfg.getReadoutLine(ctx.cfg.getQubit(qubit).readoutLine)
-    lo = ctx.cfg.getChannel(rl.channels.AD.LO).status.frequency
+    lo = ctx._getReadoutADLO(qubit)
     amp = ctx.params['amp']
     duration = ctx.params['duration']
     frequency = ctx.params['frequency']

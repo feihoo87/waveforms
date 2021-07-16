@@ -92,6 +92,11 @@ class Context():
             chInfo = qubits[0].query('channels.' + name)
         return chInfo
 
+    def _getReadoutADLO(self, qubit):
+        rl = self.cfg.getReadoutLine(self.cfg.getQubit(qubit).readoutLine)
+        lo = self.cfg.getChannel(rl.channels.AD.LO).status.frequency
+        return lo
+
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.cfg.getQubit(qubit).readoutLine
         rl = self.cfg.getReadoutLine(rl)
