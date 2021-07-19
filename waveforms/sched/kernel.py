@@ -9,9 +9,9 @@ import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
+
 from waveforms import compile as Qcompile
-from waveforms import (cos, exp, getConfig, libraries, pi, sin, square, stdlib,
-                       step)
+from waveforms import getConfig, stdlib
 from waveforms.backends.quark import set_up_backend
 from waveforms.backends.quark.executable import assymblyData, getCommands
 
@@ -126,35 +126,63 @@ class Kernel():
         self.uuid = uuid.uuid1()
         self._queue = deque()
         self._waiting_result = {}
+        self._submit_stack = []
         self.excuter = excuter
         self.cfg = getConfig()
 
-        self._main = threading.Thread(target=self._main, daemon=True)
-        self._main.start()
+        self._waiting_thread = threading.Thread(target=self._waiting,
+                                                daemon=True)
+        self._waiting_thread.start()
 
         self._submit_thread = threading.Thread(target=self._submit,
                                                daemon=True)
         self._submit_thread.start()
 
+    def _get_next_task(self):
+        try:
+            return self._queue.popleft()
+        except IndexError:
+            return None
+
     def _submit(self):
+        def is_children_of(parent, child):
+            return (child.parent is not None and child.parent == parent.id)
+
         while True:
-            try:
-                task = self._queue.popleft()
-            except IndexError:
+            if len(self._submit_stack) > 0:
+                current_task, thread = self._submit_stack.pop()
+
+                if thread.is_alive():
+                    self._submit_stack.append((current_task, thread))
+                else:
+                    t = threading.Thread(target=self._join,
+                                         args=(current_task, ))
+                    t.start()
+                    current_task._runtime.status = 'running'
+                    self._waiting_result[current_task.id] = current_task, t
+
+            task = self._get_next_task()
+            if task is None:
                 time.sleep(1)
                 continue
-            self.excuter.free(task.id)
-            logging.info(f'free({task.id})')
-            self.excuter.submit(task.id, {})
-            logging.info(f'submit({task.id}, dict())')
-            task._runtime.status = 'submiting'
-            task.main()
-            task._runtime.status = 'running'
-            t = threading.Thread(target=self._join, args=(task, ))
-            t.start()
-            self._waiting_result[task.id] = task, t
 
-    def _main(self):
+            if (len(self._submit_stack) == 0
+                    or is_children_of(self._submit_stack[-1][0], task)):
+                self._run_submit(task)
+            else:
+                self._queue.append(task)
+
+    def _run_submit(self, task):
+        self.excuter.free(task.id)
+        logging.info(f'free({task.id})')
+        self.excuter.submit(task.id, {})
+        logging.info(f'submit({task.id}, dict())')
+        task._runtime.status = 'submiting'
+        thread = threading.Thread(target=task.main)
+        self._submit_stack.append((task, thread))
+        thread.start()
+
+    def _waiting(self):
         while True:
             for taskID, (task, thread) in list(self._waiting_result.items()):
                 if not thread.is_alive():
@@ -211,10 +239,8 @@ class Kernel():
             await asyncio.sleep(1)
 
     def generate_task_id(self):
-        #return next(self.counter)
         i = uuid.uuid3(self.uuid, f"{next(self.counter)}").int
-        print((i >> 64))
-        return (i >> 64)
+        return i & ((1 << 64) - 1)
 
     def scan(self, task):
         task._runtime.step = 0
@@ -243,6 +269,14 @@ class Kernel():
         self.excuter.feed(task.id, task._runtime.step, list(a), list(b))
         logging.info(
             f'feed({task.id}, {task._runtime.step}, {list(a)}, {list(b)})')
+
+    def run_sub_task(self, task, sub_task):
+        sub_task.parent = task.id
+        self.submit(sub_task)
+        self.join(sub_task)
+        ret = sub_task.result()
+        task._runtime.data.append(ret['data'])
+        return ret
 
     def result(self, task, skip=0):
         logging.info(f'result({task.id})')
@@ -301,6 +335,7 @@ class AppRuntime():
 
 class App():
     def __init__(self):
+        self.parent = None
         self.id = None
         self.kernel = None
         self.signal = 'count'
@@ -311,6 +346,12 @@ class App():
             self.kernel.excuter.free(self.id)
         except:
             pass
+
+    def set(self, key, value):
+        self._runtime.cmds.append((key, value))
+
+    def get(self, key):
+        self.kernel.query(key)
 
     def data_path(self):
         name = self.__class__.__name__
@@ -342,5 +383,10 @@ class App():
                 'diags': self._runtime.result['diags']
             }
         except:
-            raise
-            return {'index': [], 'data': [], 'states': [], 'counts': [], 'diags': []}
+            return {
+                'index': [],
+                'data': [],
+                'states': [],
+                'counts': [],
+                'diags': []
+            }
