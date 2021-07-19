@@ -4,6 +4,8 @@ from waveforms.math.fit import classifyData, count_to_diag, countState
 
 
 def getCommands(code, signal='state'):
+    GETVALUECMD = 'EMPTY'
+
     cmds = list(code.waveforms.items())
 
     ADInfo = {}
@@ -43,9 +45,9 @@ def getCommands(code, signal='state'):
 
     for channel in readChannels:
         if signal == 'trace':
-            cmds.append((channel + '.TraceIQ', None))
+            cmds.append((channel + '.TraceIQ', GETVALUECMD))
         else:
-            cmds.append((channel + '.IQ', None))
+            cmds.append((channel + '.IQ', GETVALUECMD))
 
     return cmds, dataMap
 
