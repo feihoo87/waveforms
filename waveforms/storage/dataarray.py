@@ -42,7 +42,7 @@ class DataArray(xr.DataArray):
             if _group_is_xarray(file[key]):
                 return _from_hdf_group(file[key])
             else:
-                raise ValueError('Cannot convert hdf group to xarray.')
+                raise ValueError(f"Cannot convert hdf group '{key}' to xarray.")
 
 
 def _to_hdf(data: DataArray, file: h5py.File, key: str) -> None:
