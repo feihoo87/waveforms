@@ -37,7 +37,7 @@ class QuarkContext(Context):
             #name = name.removeprefix('readoutLine.')
             name = name[len('readoutLine.'):]
             section = qubitsDict[0]['probe']
-            cfgDict = self.cfg.getReadoutLine(section)
+            cfgDict = self.cfg.getReadout(section)
         elif name.startswith('coupler.'):
             #name = name.removeprefix('coupler.')
             name = name[len('coupler.'):]
@@ -52,13 +52,13 @@ class QuarkContext(Context):
         return chInfo
 
     def _getReadoutADLO(self, qubit):
-        rl = self.cfg.getReadoutLine(self.cfg.getQubit(qubit)['probe'])
+        rl = self.cfg.getReadout(self.cfg.getQubit(qubit)['probe'])
         lo = rl['setting']['LO']
         return lo
 
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.cfg.getQubit(qubit)['probe']
-        rlDict = self.cfg.getReadoutLine(rl)
+        rlDict = self.cfg.getReadout(rl)
         chInfo = {
             'IQ': rlDict['channel']['ADC'],
             'LO': rlDict['setting']['LO'],

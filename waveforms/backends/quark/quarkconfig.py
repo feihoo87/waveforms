@@ -1,5 +1,7 @@
+import warnings
 from functools import lru_cache
 from itertools import permutations
+
 from waveforms.quantum.circuit.qlisp.config import ConfigProxy
 
 
@@ -32,8 +34,14 @@ class QuarkConfig(ConfigProxy):
     def getCoupler(self, c):
         return self.query(c)[0]
 
-    def getReadoutLine(self, r):
+    def getReadout(self, r):
         return self.query(r)[0]
+
+    def getReadoutLine(self, r):
+        warnings.warn(
+            '`getReadoutLine` is no longer used and is being '
+            'deprecated, use `getReadout` instead.', DeprecationWarning, 2)
+        return self.getReadout(r)
 
     def getGate(self, name, *qubits):
         # if name not in self['gates']:
@@ -80,4 +88,3 @@ class QuarkConfig(ConfigProxy):
 
     def update(self, q, v):
         self.conn.update(q, v)
-
