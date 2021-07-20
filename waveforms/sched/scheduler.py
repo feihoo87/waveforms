@@ -148,6 +148,7 @@ class Scheduler():
             return None
 
     def cancel(self):
+        self.excuter.cancel()
         self._queue.clear()
         while self._submit_stack:
             task, thread = self._submit_stack.pop()

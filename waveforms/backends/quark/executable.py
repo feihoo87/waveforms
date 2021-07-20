@@ -193,3 +193,6 @@ class QuarkExcutor(Executor):
 
     def query(self, key):
         return self.conn.query(key)[0]
+
+    def cancel(self):
+        self.conn.cancel()
