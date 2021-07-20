@@ -189,7 +189,7 @@ class Scheduler():
             yield args
             task._runtime.step += 1
 
-    def _exec(self, task, circuit, lib=None, cfg=None):
+    def _exec(self, task, circuit, lib=None, cfg=None, signal='state'):
         from waveforms import compile, stdlib
         from waveforms.backends.quark.executable import getCommands
 
@@ -203,7 +203,7 @@ class Scheduler():
             cfg = self.cfg
 
         code = compile(circuit, lib=lib, cfg=cfg)
-        cmds, dataMap = getCommands(code)
+        cmds, dataMap = getCommands(code, signal=signal)
         task._runtime.dataMaps.append(dataMap)
         cmds.extend(task._runtime.cmds)
 
