@@ -188,7 +188,7 @@ class Scheduler():
             yield args
             task._runtime.step += 1
 
-    def exec(self, task, circuit, lib=None, cfg=None):
+    def _exec(self, task, circuit, lib=None, cfg=None):
         from waveforms import compile, stdlib
         from waveforms.backends.quark.executable import getCommands
 
@@ -210,6 +210,9 @@ class Scheduler():
         logging.info(
             f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
         )
+
+    def exec(self, circuit, lib=None, cfg=None):
+        pass
 
     def measure(self, task, keys, labels=None):
         cmds = [(key, READ) for key in keys]

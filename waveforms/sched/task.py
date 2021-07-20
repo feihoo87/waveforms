@@ -50,7 +50,7 @@ class App():
         return self.kernel.query(key)
 
     def exec(self, circuit, lib=None, cfg=None):
-        self.kernel.exec(circuit, lib, cfg)
+        self.kernel._exec(circuit, lib, cfg)
 
     def measure(self, keys, labels=None):
         self.kernel.measure(self, keys, labels)
