@@ -121,49 +121,33 @@ class QuarkExcutor(Executor):
         self._gc_thread.start()
 
     def _gc(self):
+        """clear unused connections.
+        """
         while True:
-            time.sleep(1)
-            alived = [t.ident for t in threading.enumerate()]
-            for tid in list(self._conn_pool.actived.keys()):
-                if tid not in alived:
-                    del self._conn_pool.actived[tid]
+            time.sleep(60)
+            with self._conn_pool.lock:
+                alived = [t.ident for t in threading.enumerate()]
+                for tid in list(self._conn_pool.actived.keys()):
+                    if tid not in alived:
+                        conn = self._conn_pool.actived.pop(tid)
+                        if len(self._conn_pool.disactived
+                               ) < self._conn_pool.max_unused:
+                            self._conn_pool.disactived.append(conn)
 
     @property
     def conn(self):
-        from quark import connect
-        tid = threading.get_ident()
-        if tid not in self._conn_pool.actived:
-            self._conn_pool.actived[tid] = connect('QuarkServer',
-                                                   host=self.host)
-        return self._conn_pool.actived[tid]
-
-    # def _gc(self):
-    #     """clear unused connections.
-    #     """
-    #     while True:
-    #         time.sleep(60)
-    #         with self._conn_pool.lock:
-    #             alived = [t.ident for t in threading.enumerate()]
-    #             for tid in list(self._conn_pool.actived.keys()):
-    #                 if tid not in alived:
-    #                     conn = self._conn_pool.actived.pop(tid)
-    #                     if len(self._conn_pool.disactived
-    #                            ) < self._conn_pool.max_unused:
-    #                         self._conn_pool.disactived.append(conn)
-
-    # @property
-    # def conn(self):
-    #     """rpc connection to quarkstudio
-    #     """
-    #     with self._conn_pool.lock:
-    #         tid = threading.get_ident()
-    #         if tid not in self._conn_pool:
-    #             try:
-    #                 self._conn_pool.actived[tid] = self._conn_pool.disactived.pop()
-    #             except IndexError:
-    #                 self._conn_pool.actived[tid] = connect('QuarkServer',
-    #                                                host=self.host)
-    #         return self._conn_pool.actived[tid]
+        """rpc connection to quarkstudio
+        """
+        with self._conn_pool.lock:
+            tid = threading.get_ident()
+            if tid not in self._conn_pool.actived:
+                try:
+                    self._conn_pool.actived[
+                        tid] = self._conn_pool.disactived.pop()
+                except IndexError:
+                    self._conn_pool.actived[tid] = connect('QuarkServer',
+                                                           host=self.host)
+            return self._conn_pool.actived[tid]
 
     def feed(self, task_id, task_step, keys, values):
         """feed api of quark
@@ -205,7 +189,7 @@ class QuarkExcutor(Executor):
         return ret
 
     def save(self, path, task_id, data):
-        self.conn.save(path, task_id, data)
+        return self.conn.save(path, task_id, data)
 
     def query(self, key):
         return self.conn.query(key)[0]
