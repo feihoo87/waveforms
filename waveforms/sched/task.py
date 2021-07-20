@@ -55,6 +55,15 @@ class App():
     def measure(self, keys, labels=None):
         self.kernel.measure(self, keys, labels)
 
+    def scan(self):
+        yield from self.kernel.scan(self)
+
+    def feedback(self, obj):
+        self.kernel.feedback(self, obj)
+
+    def get_feedback(self):
+        return self.kernel.get_feedback(self)
+
     def data_path(self):
         if self.parent:
             name = '/'.join([
