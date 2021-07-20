@@ -1,1 +1,3 @@
-from .progress import Progress, ProgressBar, JupyterProgressBar
+from .progress import JupyterProgressBar, Progress, ProgressBar
+from .scheduler import Scheduler
+from .task import App
