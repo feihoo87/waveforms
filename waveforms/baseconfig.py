@@ -7,6 +7,51 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 
+def _flattenDictIter(d, prefix=[]):
+    for k in d:
+        if isinstance(d[k], dict):
+            yield from _flattenDictIter(d[k], prefix=[*prefix, k])
+        else:
+            yield '.'.join(prefix + [k]), d[k]
+
+
+def _flattenDict(d):
+    return {k: v for k, v in _flattenDictIter(d)}
+
+
+def _foldDict(d):
+    ret = {}
+    for k, v in d.items():
+        keys = k.split('.')
+        d = ret
+        for key in keys[:-1]:
+            if key not in d:
+                d[key] = dict()
+            d = d[key]
+        d[keys[-1]] = v
+    return ret
+
+
+def _query(q, dct):
+    return {
+        k.removeprefix(q + '.'): v
+        for k, v in dct.items() if k.startswith(q + '.')
+    }
+
+
+def _update(d, u):
+    for k in u:
+        if isinstance(u[k], dict):
+            if k not in d:
+                d[k] = {}
+            if isinstance(d[k], dict):
+                _update(d[k], u[k])
+            else:
+                raise TypeError()
+        else:
+            d[k] = u[k]
+
+
 def randomStr(n):
     s = ('abcdefghijklmnopqrstuvwxyz'
          'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -196,19 +241,7 @@ class ConfigSection(dict):
         setKey(q, value, self, prefix=prefix)
 
     def update(self, other):
-        def update(d, u):
-            for k in u:
-                if isinstance(u[k], dict):
-                    if k not in d:
-                        d[k] = {}
-                    if isinstance(d[k], dict):
-                        update(d[k], u[k])
-                    else:
-                        raise TypeError()
-                else:
-                    d[k] = u[k]
-
-        update(self, other)
+        _update(self, other)
 
 
 ValueType = Union[str, int, float, list, ConfigSection]
