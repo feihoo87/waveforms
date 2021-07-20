@@ -211,7 +211,7 @@ class Scheduler():
             f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
         )
 
-    def measure(self, task, keys):
+    def measure(self, task, keys, labels=None):
         cmds = [(key, READ) for key in keys]
         cmds.extend(task._runtime.cmds)
 

@@ -49,6 +49,12 @@ class App():
     def get(self, key):
         return self.kernel.query(key)
 
+    def exec(self, circuit, lib=None, cfg=None):
+        self.kernel.exec(circuit, lib, cfg)
+
+    def measure(self, keys, labels=None):
+        self.kernel.measure(self, keys, labels)
+
     def data_path(self):
         if self.parent:
             name = '/'.join([
