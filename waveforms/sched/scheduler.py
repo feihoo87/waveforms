@@ -10,9 +10,6 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 
-from waveforms import compile as Qcompile
-from waveforms import getConfig, stdlib
-
 
 class _COMMANDREAD():
     pass
@@ -54,6 +51,8 @@ class _ThreadWithKill(threading.Thread):
 
 class Scheduler():
     def __init__(self, excuter):
+        from waveforms import getConfig
+
         self.counter = itertools.count()
         self.uuid = uuid.uuid1()
         self._task_pool = {}
@@ -190,6 +189,7 @@ class Scheduler():
             task._runtime.step += 1
 
     def exec(self, task, circuit, lib=None, cfg=None):
+        from waveforms import compile, stdlib
         from waveforms.backends.quark.executable import getCommands
 
         if lib is None:
@@ -201,7 +201,7 @@ class Scheduler():
                 pass
             cfg = self.cfg
 
-        code = Qcompile(circuit, lib=lib, cfg=cfg)
+        code = compile(circuit, lib=lib, cfg=cfg)
         cmds, dataMap = getCommands(code)
         task._runtime.dataMaps.append(dataMap)
         cmds.extend(task._runtime.cmds)
