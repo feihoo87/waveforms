@@ -214,7 +214,7 @@ class Scheduler():
     def exec(self, circuit, lib=None, cfg=None):
         pass
 
-    def measure(self, task, keys, labels=None):
+    def _measure(self, task, keys, labels=None):
         cmds = [(key, READ) for key in keys]
         cmds.extend(task._runtime.cmds)
 
@@ -222,6 +222,9 @@ class Scheduler():
         logging.info(
             f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
         )
+
+    def measure(self, keys, labels=None):
+        pass
 
     def result(self, task, skip=0):
         logging.info(f'result({task.id})')

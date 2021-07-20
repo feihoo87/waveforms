@@ -53,7 +53,7 @@ class App():
         self.kernel._exec(circuit, lib, cfg)
 
     def measure(self, keys, labels=None):
-        self.kernel.measure(self, keys, labels)
+        self.kernel._measure(self, keys, labels)
 
     def scan(self):
         yield from self.kernel.scan(self)
