@@ -9,6 +9,7 @@ class QuarkConfig(ConfigProxy):
     def __init__(self, host='127.0.0.1'):
         self.host = host
         self._cache = {}
+        self._history = {}
         self._cached_keys = set()
         self.connect()
 
@@ -90,9 +91,13 @@ class QuarkConfig(ConfigProxy):
     def clear_buffer(self):
         """Clear the cache."""
         self._cache.clear()
+        self._history.clear()
         self._cached_keys.clear()
 
     def commit(self):
+        pass
+
+    def rollback(self):
         pass
 
     def query(self, q):
@@ -107,20 +112,24 @@ class QuarkConfig(ConfigProxy):
         _update(ret, u)
         return ret
 
-    def _cache_result(self, q, ret):
+    def _cache_result(self, q, ret, record_history=False):
         """Cache the result."""
         if isinstance(ret, dict):
             for k, v in _flattenDictIter(ret):
                 key = f'{q}.{k}'
+                if record_history and key not in self._history:
+                    self._history[key] = self.query(key)
                 self._cache[key] = v
                 buffered_key = key.split('.')
                 for i in range(len(buffered_key)):
                     self._cached_keys.add('.'.join([q, *buffered_key[:i]]))
         else:
+            if record_history and q not in self._history:
+                self._history[q] = self.query(q)
             self._cache[q] = ret
 
     def update(self, q, v, cache=False):
         """Update config."""
-        self._cache_result(q, v)
+        self._cache_result(q, v, record_history=True)
         if not cache:
             self.conn.update(q, v)
