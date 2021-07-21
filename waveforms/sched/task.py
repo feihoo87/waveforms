@@ -12,6 +12,7 @@ class AppRuntime():
     data: list = field(default_factory=list)
     cmds: list = field(default_factory=list)
     feedback_buffer: Any = None
+    side_effects: dict = field(default_factory=dict)
     result: dict = field(default_factory=lambda: {
         'index': [],
         'states': [],
@@ -43,8 +44,9 @@ class App():
             return self.kernel.get_task_by_id(self.parent)
         return None
 
-    def set(self, key, value):
+    def set(self, key, value, cache=True):
         self._runtime.cmds.append((key, value))
+        self.kernel.get_config().update(key, value, cache=cache)
 
     def get(self, key):
         return self.kernel.query(key)

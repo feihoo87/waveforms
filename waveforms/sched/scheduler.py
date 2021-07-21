@@ -260,11 +260,10 @@ class Scheduler():
         return self.cfg
 
     def query(self, key):
-        return self.excuter.query(key)
+        return self.cfg.query(key)
 
     def update(self, key, value):
         self.excuter.update(key, value)
-        self.cfg.clear_buffer()
 
     def feedback(self, task, obj):
         task._runtime.feedback_buffer = obj
