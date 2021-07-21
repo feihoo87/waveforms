@@ -1,7 +1,7 @@
 import warnings
-from functools import lru_cache
 from itertools import permutations
 
+from waveforms.baseconfig import _flattenDictIter, _foldDict, _query, _update
 from waveforms.quantum.circuit.qlisp.config import ConfigProxy
 
 
@@ -9,41 +9,52 @@ class QuarkConfig(ConfigProxy):
     def __init__(self, host='127.0.0.1'):
         self.host = host
         self._cache = {}
+        self._cached_keys = set()
         self.connect()
 
     def connect(self):
+        """Connect to the quark server."""
         from quark import connect
         self.conn = connect('QuarkServer', host=self.host)
 
     def newGate(self, name, *qubits):
+        """Create a new gate."""
         qubits = '_'.join(qubits)
         self.conn.alter(f"+gate.{name}.{qubits}")
 
     def newQubit(self, q):
+        """Create a new qubit."""
         self.conn.alter(f"+{q}")
 
     def newCoupler(self, c):
+        """Create a new coupler."""
         self.conn.alter(f"+{c}")
 
     def newReadout(self, r):
+        """Create a new readout."""
         self.conn.alter(f"+{r}")
 
     def getQubit(self, q):
-        return self.query(q)[0]
+        """Get a qubit."""
+        return self.query(q)
 
     def getCoupler(self, c):
-        return self.query(c)[0]
+        """Get a coupler."""
+        return self.query(c)
 
     def getReadout(self, r):
-        return self.query(r)[0]
+        """Get a readout line."""
+        return self.query(r)
 
     def getReadoutLine(self, r):
+        """Get a readout line. (deprecated)"""
         warnings.warn(
             '`getReadoutLine` is no longer used and is being '
             'deprecated, use `getReadout` instead.', DeprecationWarning, 2)
         return self.getReadout(r)
 
     def getGate(self, name, *qubits):
+        """Get a gate."""
         # if name not in self['gates']:
         #     raise KeyError(f'"{name}" gate not defined.')
         # if name == 'rfUnitary':
@@ -67,7 +78,7 @@ class QuarkConfig(ConfigProxy):
         #         raise KeyError(f'Could not find "{name}" gate for {qubits}')
 
         qubits = '_'.join(qubits)
-        ret = self.query(f"gate.{name}.{qubits}")[0]
+        ret = self.query(f"gate.{name}.{qubits}")
         if isinstance(ret, dict):
             return ret
         else:
@@ -77,14 +88,39 @@ class QuarkConfig(ConfigProxy):
         return {}
 
     def clear_buffer(self):
-        self.query.cache_clear()
+        """Clear the cache."""
+        self._cache.clear()
+        self._cached_keys.clear()
 
     def commit(self):
         pass
 
-    @lru_cache()
     def query(self, q):
-        return self.conn.query(q)
+        """Query the quark server."""
+        u = {}
+        if q in self._cache:
+            return self._cache[q]
+        elif q in self._cached_keys:
+            u = _foldDict(_query(q, self._cache))
+        ret = self.conn.query(q)[0]
+        self._cache_result(q, ret)
+        _update(ret, u)
+        return ret
 
-    def update(self, q, v):
-        self.conn.update(q, v)
+    def _cache_result(self, q, ret):
+        """Cache the result."""
+        if isinstance(ret, dict):
+            for k, v in _flattenDictIter(ret):
+                key = f'{q}.{k}'
+                self._cache[key] = v
+                buffered_key = key.split('.')
+                for i in range(len(buffered_key)):
+                    self._cached_keys.add('.'.join([q, *buffered_key[:i]]))
+        else:
+            self._cache[q] = ret
+
+    def update(self, q, v, cache=False):
+        """Update config."""
+        self._cache_result(q, v)
+        if not cache:
+            self.conn.update(q, v)
