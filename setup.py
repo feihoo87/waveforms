@@ -24,6 +24,7 @@ requirements = [
     'scikit-learn>=0.24.1',
     'scikit-optimize>=0.8.1',
     'scipy>=1.0.0',
+    'xarray>=0.18.2'
 ]
 
 setup(
