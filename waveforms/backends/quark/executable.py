@@ -3,6 +3,7 @@ import time
 from typing import NamedTuple
 
 import numpy as np
+from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.sched.scheduler import _COMMANDREAD, READ, Executor
@@ -69,16 +70,9 @@ def getCommands(code, signal='state'):
 
 
 def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
-    def flattenDictIter(d, prefix=[]):
-        for k in d:
-            if isinstance(d[k], dict):
-                yield from flattenDictIter(d[k], prefix=[*prefix, k])
-            else:
-                yield '.'.join(prefix + [k]), d[k]
-
     ret = []
     gate_list = []
-    result = {k: v[0] + 1j * v[1] for k, v in flattenDictIter(raw_data)}
+    result = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
 
     for cbit in sorted(dataMap):
         ch, i, Delta, params = dataMap[cbit]
@@ -88,7 +82,7 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
             ret.append(result[key][:, i])
         except KeyError:
             key = f'{ch}.TraceIQ'
-            ret.append(result[key][:, i])
+            ret.append(result[key])
 
     result = {}
     result['data'] = np.asarray(ret).T

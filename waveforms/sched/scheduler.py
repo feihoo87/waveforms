@@ -185,8 +185,14 @@ class Scheduler():
             except AttributeError:
                 pass
             task._runtime.result['index'].append(args)
+            task._runtime.dataMaps.append({})
             task._runtime.cmds.clear()
             yield args
+            cmds = task._runtime.cmds
+            self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
+            logging.info(
+                f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
+            )
             task._runtime.step += 1
 
     def _exec(self, task, circuit, lib=None, cfg=None, signal='state'):
@@ -201,28 +207,34 @@ class Scheduler():
             except AttributeError:
                 pass
             cfg = self.cfg
-
         code = compile(circuit, lib=lib, cfg=cfg)
         cmds, dataMap = getCommands(code, signal=signal)
-        task._runtime.dataMaps.append(dataMap)
-        cmds.extend(task._runtime.cmds)
+        task._runtime.dataMaps[-1].update(dataMap)
+        task._runtime.cmds.extend(cmds)
 
-        self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
-        logging.info(
-            f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
-        )
+    def exec(self, circuit, lib=None, cfg=None, signal='state'):
+        from waveforms.sched import App
 
-    def exec(self, circuit, lib=None, cfg=None):
-        pass
+        class A(App):
+            def scan_range(self):
+                yield 0
+
+            def main(self):
+                for f in self.scan():
+                    self.exec(circuit, lib=lib, cfg=cfg)
+
+        t = A()
+        t.signal = signal
+        self.submit(t)
+        return t
 
     def _measure(self, task, keys, labels=None):
+        if labels is None:
+            labels = keys
+        dataMap = {label: key for key, label in zip(keys, labels)}
+        task._runtime.dataMaps[-1].update(dataMap)
         cmds = [(key, READ) for key in keys]
-        cmds.extend(task._runtime.cmds)
-
-        self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
-        logging.info(
-            f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
-        )
+        task._runtime.cmds.extend(cmds)
 
     def measure(self, keys, labels=None):
         pass
