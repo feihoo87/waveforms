@@ -105,7 +105,7 @@ class _connection_pool(NamedTuple):
 
 
 class QuarkExcutor(Executor):
-    def __init__(self, host):
+    def __init__(self, host='127.0.0.1'):
 
         self.host = host
         set_up_backend(self.host)
@@ -163,6 +163,9 @@ class QuarkExcutor(Executor):
             task_id (int): uuid of task
         """
         self.conn.free(task_id)
+
+    def free_all(self):
+        return self.free(-1000)
 
     def submit(self, task_id, data_template):
         self.conn.submit(task_id, data_template)
