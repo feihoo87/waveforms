@@ -237,6 +237,64 @@ class Scheduler():
     def measure(self, keys, labels=None):
         pass
 
+    def update_parameters(self, result):
+        for key, value in result.parameters.item():
+            self.update(key, value)
+
+    def calibrate(self, task):
+        raise NotImplementedError()
+
+    def check_data(self, task):
+        raise NotImplementedError()
+
+    def maintain(self, task):
+        # recursive maintain
+        for n in task.depends():
+            self.maintain(self.create_task(*n))
+
+        # check state
+        result = task.chech_state()
+        if result.success:
+            return
+
+        # check data
+        result = self.chech_data(task)
+        if result.in_spec:
+            return
+        elif result.bad_data:
+            for n in task.depends():
+                self.diagnose(self.create_task(*n))
+
+        # calibrate
+        result = self.calibrate(task)
+        self.update_parameters(result)
+        return
+
+    def diagnose(self, task):
+        '''
+        Returns: True if node
+        or dependent recalibrated.
+        '''
+        # check data
+        result = task.check_data()
+
+        # in spec case
+        if result.in_spec:
+            return False
+
+        # bad data case
+        if result.bad_data:
+            recalibrated = [
+                self.diagnose(self.create_task(*n)) for n in task.depends()
+            ]
+        if not any(recalibrated):
+            return False
+
+        # calibrate
+        result = self.calibrate(task)
+        self.update_parameters(result)
+        return True
+
     def result(self, task, skip=0):
         logging.info(f'result({task.id})')
         return self.excuter.result(task.id, skip)

@@ -1,6 +1,7 @@
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from abc import ABC, abstractmethod
 
 
 @dataclass
@@ -21,7 +22,15 @@ class AppRuntime():
     })
 
 
-class App():
+@dataclass
+class CalibrationResult():
+    success: bool = False
+    bad_data: bool = True
+    in_spec: bool = False
+    parameters: dict = field(default_factory=dict)
+
+
+class App(ABC):
     def __init__(self):
         self._time_str = time.strftime("%Y-%m=%d-%H-%M-%S")
         self.parent = None
@@ -77,11 +86,21 @@ class App():
             name = self.__class__.__name__ + '_<timestamp>'
             return f"Test2:/{name}"
 
+    @abstractmethod
     def scan_range(self):
         pass
 
+    @abstractmethod
     def main(self):
         pass
+
+    def depends(self) -> list[tuple[str, tuple, dict]]:
+        """
+        """
+        return []
+
+    def check_state(self):
+        raise NotImplementedError()
 
     def run_subtask(self, subtask):
         subtask.parent = self.id
