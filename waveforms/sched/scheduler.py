@@ -9,6 +9,8 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 
+from .task import CalibrationResult, Task
+
 _COMMANDS = uuid.UUID('urn:uuid:308c54dc-c13d-4e52-9caa-3a05a7bc7fa8')
 
 READ = uuid.uuid3(_COMMANDS, "READ")
@@ -235,17 +237,17 @@ class Scheduler():
     def measure(self, keys, labels=None):
         pass
 
-    def update_parameters(self, result):
+    def update_parameters(self, result: CalibrationResult):
         for key, value in result.parameters.item():
             self.update(key, value)
 
-    def calibrate(self, task):
+    def calibrate(self, task: Task) -> CalibrationResult:
         raise NotImplementedError()
 
-    def check_data(self, task):
+    def check_data(self, task: Task) -> CalibrationResult:
         raise NotImplementedError()
 
-    def maintain(self, task):
+    def maintain(self, task: Task):
         # recursive maintain
         for n in task.depends():
             self.maintain(self.create_task(*n))
@@ -268,7 +270,7 @@ class Scheduler():
         self.update_parameters(result)
         return
 
-    def diagnose(self, task):
+    def diagnose(self, task: Task) -> bool:
         '''
         Returns: True if node
         or dependent recalibrated.
