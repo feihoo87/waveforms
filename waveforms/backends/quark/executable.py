@@ -164,8 +164,9 @@ class QuarkExcutor(Executor):
             TRIG: 'TRIG',
         }
 
-        self.conn.feed(task_id, task_step, keys,
-                       [conv.get(v, v) for v in values])
+        self.conn.feed(
+            task_id, task_step, keys,
+            [conv.get(v) if isinstance(v, type(READ)) else v for v in values])
 
     def free(self, task_id):
         """release resources of task
