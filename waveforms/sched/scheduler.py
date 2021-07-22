@@ -109,6 +109,7 @@ class Scheduler():
         task._runtime.status = 'submiting'
         thread = _ThreadWithKill(target=task.main)
         self._submit_stack.append((task, thread))
+        task._runtime.started_time = time.time()
         thread.start()
 
     def _read_data_loop(self):
@@ -123,20 +124,22 @@ class Scheduler():
             time.sleep(0.01)
 
     def _join(self, task):
+        import numpy as np
+
         while True:
             time.sleep(1)
             try:
                 if len(task.result()['data']) == task._runtime.step:
                     result = {
                         key: {
-                            'data': value.tolist(),
+                            'data': np.asarray(value).tolist(),
                         }
                         for key, value in task.result().items()
                         if key not in ['counts', 'diags']
                     }
                     self.excuter.save(task.data_path(), task.id, result)
                     self.excuter.free(task.id)
-                    break
+                    task._runtime.finished_time = time.time()
             except:
                 raise
 
@@ -212,7 +215,7 @@ class Scheduler():
         task._runtime.dataMaps[-1].update(dataMap)
         task._runtime.cmds.extend(cmds)
 
-    def exec(self, circuit, lib=None, cfg=None, signal='state'):
+    def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
         from waveforms.sched import App
 
         class A(App):
@@ -221,6 +224,8 @@ class Scheduler():
 
             def main(self):
                 for f in self.scan():
+                    for cmd in cmds:
+                        self.set(*cmd)
                     self.exec(circuit, lib=lib, cfg=cfg)
 
         t = A()
@@ -236,7 +241,7 @@ class Scheduler():
         cmds = [(key, READ) for key in keys]
         task._runtime.cmds.extend(cmds)
 
-    def measure(self, keys, labels=None):
+    def measure(self, keys, labels=None, cmds=[]):
         pass
 
     def update_parameters(self, result: CalibrationResult):
