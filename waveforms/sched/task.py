@@ -9,6 +9,9 @@ class AppRuntime():
     step: int = 0
     sub_index: int = 0
     status: str = 'not submited'
+    created_time: float = field(default_factory=time.time)
+    started_time: float = field(default_factory=time.time)
+    finished_time: float = field(default=-1)
     dataMaps: list = field(default_factory=list)
     data: list = field(default_factory=list)
     cmds: list = field(default_factory=list)
@@ -31,12 +34,12 @@ class CalibrationResult():
 
 
 class App(ABC):
-    def __init__(self):
-        self._time_str = time.strftime("%Y-%m=%d-%H-%M-%S")
+    def __init__(self, signal='count', calibration_level=0):
         self.parent = None
         self.id = None
         self.kernel = None
-        self.signal = 'count'
+        self.signal = signal
+        self.calibration_level = calibration_level
         self._runtime = AppRuntime()
 
     def __del__(self):
@@ -82,12 +85,16 @@ class App(ABC):
         if self.parent:
             name = '/'.join([
                 self.kernel.get_task_by_id(self.parent).data_path(),
+                'sub_data',
                 f"{self.__class__.__name__}_{self._runtime.sub_index}"
             ])
             return name
         else:
-            name = self.__class__.__name__ + '_<timestamp>'
-            return f"Test2:/{name}"
+            file_name = self.get('sampleID')
+            time_str = time.strftime('%Y-%m-%d-%H-%M-%S',
+                                     self._runtime.started_time)
+            name = f"{self.__class__.__name__}_{time_str}"
+            return f"{file_name}:/{name}"
 
     @abstractmethod
     def scan_range(self):
@@ -105,7 +112,7 @@ class App(ABC):
     def check_state(self):
         raise NotImplementedError()
 
-    def analize(self, data) -> CalibrationResult:
+    def analyze(self, data) -> CalibrationResult:
         raise NotImplementedError()
 
     def run_subtask(self, subtask):
