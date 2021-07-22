@@ -188,12 +188,14 @@ def delay(ctx, qubits, time):
 
 @std.opaque('P')
 def P(ctx, qubits, phi):
+    from .assembler import call_opaque
+
     phi += ctx.phases[qubits[0]]
     ctx.phases[qubits[0]] = 0
 
-    rfUnitary(ctx, qubits, pi / 2, pi / 2)
-    rfUnitary(ctx, qubits, phi, 0)
-    rfUnitary(ctx, qubits, pi / 2, -pi / 2)
+    call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
+    call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, -pi / 2), *qubits), ctx, std)
 
 
 @std.opaque('Barrier')
