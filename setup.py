@@ -47,9 +47,9 @@ setup(
     install_requires=requirements,
     extras_require={
         'storage': [
-            'decorator>=5.0.7',
+            'h5py>=2.7.0',
+            'netcdf4>=1.5.7',
             'SQLAlchemy>=1.4.11',
-            'tables>=3.6.1'
         ],
         'test': [
             'pytest>=4.4.0',
