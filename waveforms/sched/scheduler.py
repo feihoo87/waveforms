@@ -2,7 +2,6 @@ import asyncio
 import functools
 import itertools
 import logging
-import pickle
 import threading
 import time
 import uuid
@@ -129,13 +128,12 @@ class Scheduler():
                 if len(task.result()['data']) == task._runtime.step:
                     result = {
                         key: {
-                            'data': value
+                            'data': value.tolist(),
                         }
                         for key, value in task.result().items()
                         if key not in ['counts', 'diags']
                     }
-                    self.excuter.save(task.data_path(), task.id,
-                                      pickle.dumps(result))
+                    self.excuter.save(task.data_path(), task.id, result)
                     self.excuter.free(task.id)
                     break
             except:
