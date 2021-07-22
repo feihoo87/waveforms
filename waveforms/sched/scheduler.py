@@ -9,12 +9,10 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 
+_COMMANDS = uuid.UUID('urn:uuid:308c54dc-c13d-4e52-9caa-3a05a7bc7fa8')
 
-class _COMMANDREAD():
-    pass
-
-
-READ = _COMMANDREAD()
+READ = uuid.uuid3(_COMMANDS, "READ")
+TRIG = uuid.uuid3(_COMMANDS, "TRIG")
 
 
 class Executor(ABC):

@@ -6,7 +6,7 @@ import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
-from waveforms.sched.scheduler import _COMMANDREAD, READ, Executor
+from waveforms.sched.scheduler import TRIG, READ, Executor
 
 from quark import connect
 
@@ -63,8 +63,12 @@ def getCommands(code, signal='state'):
     for channel in readChannels:
         if signal == 'trace':
             cmds.append((channel + '.TraceIQ', READ))
+            cmds.append((channel + '.CaptureMode', 'raw'))
+            cmds.append((channel + '.StartCapture', TRIG))
         else:
             cmds.append((channel + '.IQ', READ))
+            cmds.append((channel + '.CaptureMode', 'alg'))
+            cmds.append((channel + '.StartCapture', TRIG))
 
     return cmds, dataMap
 
@@ -152,9 +156,13 @@ class QuarkExcutor(Executor):
             keys (list[str]): a list of keys to set or read
             values (list[Any]): a list of values to set, if value is 'EMPTY', read the key
         """
-        self.conn.feed(
-            task_id, task_step, keys,
-            ['EMPTY' if isinstance(v, _COMMANDREAD) else v for v in values])
+        conv = {
+            READ: 'READ',
+            TRIG: 'TRIG',
+        }
+
+        self.conn.feed(task_id, task_step, keys,
+                       [conv.get(v, v) for v in values])
 
     def free(self, task_id):
         """release resources of task
