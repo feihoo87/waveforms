@@ -66,6 +66,9 @@ class App(ABC):
     def measure(self, keys, labels=None):
         self.kernel._measure(self, keys, labels)
 
+    def trigger(self):
+        pass
+
     def scan(self):
         yield from self.kernel.scan(self)
 

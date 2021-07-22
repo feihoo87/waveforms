@@ -1,3 +1,4 @@
+import random
 import threading
 import time
 from typing import NamedTuple
@@ -6,7 +7,7 @@ import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
-from waveforms.sched.scheduler import TRIG, READ, Executor
+from waveforms.sched.scheduler import READ, TRIG, Executor
 
 from quark import connect
 
@@ -64,11 +65,13 @@ def getCommands(code, signal='state'):
         if signal == 'trace':
             cmds.append((channel + '.TraceIQ', READ))
             cmds.append((channel + '.CaptureMode', 'raw'))
-            cmds.append((channel + '.StartCapture', TRIG))
+            cmds.append(
+                (channel + '.StartCapture', random.randint(0, 2**16 - 1)))
         else:
             cmds.append((channel + '.IQ', READ))
             cmds.append((channel + '.CaptureMode', 'alg'))
-            cmds.append((channel + '.StartCapture', TRIG))
+            cmds.append(
+                (channel + '.StartCapture', random.randint(0, 2**16 - 1)))
 
     return cmds, dataMap
 

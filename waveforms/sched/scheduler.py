@@ -186,6 +186,7 @@ class Scheduler():
             task._runtime.dataMaps.append({})
             task._runtime.cmds.clear()
             yield args
+            task.trigger()
             cmds = task._runtime.cmds
             self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
             logging.info(
