@@ -11,58 +11,6 @@ import numpy as np
 import xarray as xr
 
 
-class DataArray(xr.DataArray):
-    def to_hdf(self, path_or_buf: Union[str, Path, BytesIO, BufferedWriter],
-               key: str) -> None:
-        """Write the contained data to an HDF5 file.
-        
-        In order to add another DataFrame or Series to an existing HDF file please
-        use a different key.
-
-        Parameters:
-            path_or_buf: Path to the HDF file or an open file-like object.
-            key (str): Identifier for the group in the store.
-        """
-        with h5py.File(path_or_buf, 'a') as file:
-            _dataarray_to_hdf(self, file, key)
-
-    @staticmethod
-    def from_hdf(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
-                 key: str) -> DataArray:
-        """Read from the store, close it if we opened it.
-
-        Retrieve DataArray object stored in file.
-
-        Parameters:
-            path_or_buf: Path to the HDF file or an open file-like object.
-            key (str): Identifier for the group in the store.
-
-        Returns:
-            DataArray: The DataArray object.
-        """
-        with h5py.File(path_or_buf, 'r') as file:
-            if _group_is_dataarray(file[key]):
-                return _dataarray_from_hdf_group(file[key])
-            else:
-                raise ValueError(
-                    f"Cannot convert hdf group '{key}' to xarray.")
-
-    @staticmethod
-    def is_xarray(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
-                  key: str) -> bool:
-        """Check if the group is an xarray group.
-
-        Parameters:
-            path_or_buf: Path to the HDF file or an open file-like object.
-            key (str): Identifier for the group in the store.
-
-        Returns:
-            bool: True if the group is an xarray group.
-        """
-        with h5py.File(path_or_buf, 'r') as file:
-            return _group_is_xarray(file[key])
-
-
 def _coords_to_hdf(data: dict, group: h5py.Group) -> None:
     """Write the coords to an HDF group.
 
@@ -188,58 +136,6 @@ def _group_is_dataarray(group: h5py.Group) -> bool:
             and 'coords' in group)
 
 
-class Dataset(xr.Dataset):
-    def to_hdf(self, path_or_buf: Union[str, Path, BytesIO, BufferedWriter],
-               key: str) -> None:
-        """Write the contained data to an HDF file.
-        
-        In order to add another DataFrame or Series to an existing HDF file please
-        use a different key.
-
-        Parameters:
-            path_or_buf: Path to the HDF file or an open file-like object.
-            key (str): Identifier for the group in the store.
-        """
-        with h5py.File(path_or_buf, 'a') as file:
-            _dataset_to_hdf(self, file, key)
-
-    @staticmethod
-    def from_hdf(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
-                 key: str) -> Dataset:
-        """Read from the store, close it if we opened it.
-
-        Retrieve Dataset object stored in file.
-
-        Parameters:
-            path_or_buf: Path to the HDF file or an open file-like object.
-            key (str): Identifier for the group in the store.
-
-        Returns:
-            DataArray: The Dataset object.
-        """
-        with h5py.File(path_or_buf, 'r') as file:
-            if _group_is_dataset(file[key]):
-                return _dataset_from_hdf_group(file[key])
-            else:
-                raise ValueError(
-                    f"Cannot convert hdf group '{key}' to xarray.")
-
-    @staticmethod
-    def is_xarray(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
-                  key: str) -> bool:
-        """Check if the group is an xarray group.
-
-        Parameters:
-            path_or_buf: Path to the HDF file or an open file-like object.
-            key (str): Identifier for the group in the store.
-
-        Returns:
-            bool: True if the group is an xarray group.
-        """
-        with h5py.File(path_or_buf, 'r') as file:
-            return _group_is_dataset(file[key])
-
-
 def _dataset_to_hdf(data: Dataset, file: h5py.File, key: str) -> None:
     """Write the Dataset to an HDF file.
 
@@ -306,3 +202,116 @@ def _group_is_dataset(group: h5py.Group) -> bool:
     """
     return True or ('data_vars' in group and 'coords' in group
                     and 'dims' in group['coords'])
+
+
+def dataarray_to_hdf(data_array: xr.DataArray,
+                     path_or_buf: Union[str, Path, BytesIO,
+                                        BufferedWriter], key: str) -> None:
+    """Write the contained data to an HDF5 file.
+        
+        In order to add another DataFrame or Series to an existing HDF file please
+        use a different key.
+
+        Parameters:
+            path_or_buf: Path to the HDF file or an open file-like object.
+            key (str): Identifier for the group in the store.
+        """
+    with h5py.File(path_or_buf, 'a') as file:
+        _dataarray_to_hdf(data_array, file, key)
+
+
+def dataarray_from_hdf(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
+                       key: str) -> DataArray:
+    """Read from the store, close it if we opened it.
+
+        Retrieve DataArray object stored in file.
+
+        Parameters:
+            path_or_buf: Path to the HDF file or an open file-like object.
+            key (str): Identifier for the group in the store.
+
+        Returns:
+            DataArray: The DataArray object.
+        """
+    with h5py.File(path_or_buf, 'r') as file:
+        if _group_is_dataarray(file[key]):
+            return _dataarray_from_hdf_group(file[key])
+        else:
+            raise ValueError(f"Cannot convert hdf group '{key}' to xarray.")
+
+
+def is_dataarray(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
+                 key: str) -> bool:
+    """Check if the group is an xarray group.
+
+        Parameters:
+            path_or_buf: Path to the HDF file or an open file-like object.
+            key (str): Identifier for the group in the store.
+
+        Returns:
+            bool: True if the group is an xarray group.
+        """
+    with h5py.File(path_or_buf, 'r') as file:
+        return _group_is_dataarray(file[key])
+
+
+def dataset_to_hdf(dataset: xr.Dataset, path_or_buf: Union[str, Path, BytesIO,
+                                                           BufferedWriter],
+                   key: str) -> None:
+    """Write the contained data to an HDF file.
+        
+        In order to add another DataFrame or Series to an existing HDF file please
+        use a different key.
+
+        Parameters:
+            path_or_buf: Path to the HDF file or an open file-like object.
+            key (str): Identifier for the group in the store.
+        """
+    with h5py.File(path_or_buf, 'a') as file:
+        _dataset_to_hdf(dataset, file, key)
+
+
+def dataset_from_hdf(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
+                     key: str) -> Dataset:
+    """Read from the store, close it if we opened it.
+
+        Retrieve Dataset object stored in file.
+
+        Parameters:
+            path_or_buf: Path to the HDF file or an open file-like object.
+            key (str): Identifier for the group in the store.
+
+        Returns:
+            DataArray: The Dataset object.
+        """
+    with h5py.File(path_or_buf, 'r') as file:
+        if _group_is_dataset(file[key]):
+            return _dataset_from_hdf_group(file[key])
+        else:
+            raise ValueError(f"Cannot convert hdf group '{key}' to xarray.")
+
+
+def is_dataset(path_or_buf: Union[str, Path, BytesIO, BufferedReader],
+               key: str) -> bool:
+    """Check if the group is an xarray group.
+
+        Parameters:
+            path_or_buf: Path to the HDF file or an open file-like object.
+            key (str): Identifier for the group in the store.
+
+        Returns:
+            bool: True if the group is an xarray group.
+        """
+    with h5py.File(path_or_buf, 'r') as file:
+        return _group_is_dataset(file[key])
+
+
+DataArray = xr.DataArray
+Dataset = xr.Dataset
+
+DataArray.to_hdf = dataarray_to_hdf
+DataArray.from_hdf = staticmethod(dataarray_from_hdf)
+DataArray.is_xarray = staticmethod(is_dataarray)
+Dataset.to_hdf = dataset_to_hdf
+Dataset.from_hdf = staticmethod(dataset_from_hdf)
+Dataset.is_xarray = staticmethod(is_dataset)
