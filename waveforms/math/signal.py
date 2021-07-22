@@ -183,15 +183,15 @@ def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
     return ret
 
 
-def lorentz(x, x0, gamma):
-    """lorentz peak"""
+def lorentzianAmp(x, x0, gamma):
+    """lorentzian peak"""
     return 1 / (1 + ((x - x0) / gamma)**2)
 
 
-def lorentzComplex(x, x0, gamma):
-    """complex lorentz peak
+def lorentzian(x, x0, gamma):
+    """complex lorentzian peak
     
-    lorentz(x, x0, gamma) = lorentzComplex(x, x0, gamma) * conj(lorentzComplex(x, x0, gamma))
+    lorentzianAmp(x, x0, gamma) = lorentzian(x, x0, gamma) * conj(lorentzian(x, x0, gamma))
     """
     return 1 / (1 + 1j * (x - x0) / gamma)
 
@@ -201,18 +201,33 @@ def gaussian(x, x0, sigma):
     return np.exp(-0.5 * ((x - x0) / sigma)**2)
 
 
+def lorentzianGaussian(x, x0, gamma, sigma):
+    """complex lorentzian peak
+    """
+    if gamma == 0:
+        return gaussian(x, x0, sigma)
+    elif sigma == 0:
+        return lorentzian(x, x0, gamma)
+    else:
+        return np.convolve(lorentzian(x, x0, gamma),
+                           gaussian(x, x0, sigma),
+                           mode='same')
+
+
 def peaks(x, peaks, background=0):
     """
     peaks: list of (center, width, amp, shape)
-           shape should be either 'gaussian' or 'lorentz'
+           shape should be either 'gaussian' or 'lorentzian'
     background: a float, complex or ndarray with the same shape of `x`
     """
     ret = np.zeros_like(x)
     for center, width, amp, shape in peaks:
         if shape == 'gaussian':
             ret += amp * gaussian(x, center, width)
+        elif shape == 'lorentzian':
+            ret += amp * lorentzian(x, center, width)
         else:
-            ret += amp * lorentz(x, center, width)
+            ret += amp * lorentzian(x, center, width)
 
     return ret + background
 
@@ -224,7 +239,7 @@ def complexPeaks(x, peaks, background=0):
     """
     ret = np.zeros_like(x, dtype=np.complex)
     for x0, gamma, A, *_ in peaks:
-        ret += A * lorentzComplex(x, x0, gamma)
+        ret += A * lorentzian(x, x0, gamma)
     return ret + background
 
 
