@@ -102,6 +102,9 @@ class App(ABC):
     def check_state(self):
         raise NotImplementedError()
 
+    def analize(self, data) -> CalibrationResult:
+        raise NotImplementedError()
+
     def run_subtask(self, subtask):
         subtask.parent = self.id
         subtask._runtime.sub_index = self._runtime.step

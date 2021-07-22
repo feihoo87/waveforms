@@ -243,9 +243,17 @@ class Scheduler():
 
     def calibrate(self, task: Task) -> CalibrationResult:
         raise NotImplementedError()
+        task.calibration_level = 0
+        self.submit(task)
+        self.join(task)
+        return task.analyze(task.result())
 
     def check_data(self, task: Task) -> CalibrationResult:
         raise NotImplementedError()
+        task.calibration_level = 100
+        self.submit(task)
+        self.join(task)
+        return task.analyze(task.result())
 
     def maintain(self, task: Task):
         # recursive maintain
