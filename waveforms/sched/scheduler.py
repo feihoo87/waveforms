@@ -9,7 +9,8 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 
-from .task import CalibrationResult, Task
+from .task import App as Task
+from .task import CalibrationResult
 
 _COMMANDS = uuid.UUID('urn:uuid:308c54dc-c13d-4e52-9caa-3a05a7bc7fa8')
 
