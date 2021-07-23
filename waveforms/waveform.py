@@ -242,11 +242,11 @@ def _calc(wav, x):
 class Waveform:
     __slots__ = ('bounds', 'seq', 'max', 'min')
 
-    def __init__(self, bounds=(+inf, ), seq=(_zero, )):
+    def __init__(self, bounds=(+inf, ), seq=(_zero, ), min=-inf, max=inf):
         self.bounds = bounds
         self.seq = seq
-        self.max = inf
-        self.min = -inf
+        self.max = max
+        self.min = min
 
     def simplify(self):
         seq = [_simplify(self.seq[0])]
