@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 
 @dataclass
-class AppRuntime():
+class TaskRuntime():
     step: int = 0
     sub_index: int = 0
     status: str = 'not submited'
@@ -33,14 +33,14 @@ class CalibrationResult():
     parameters: dict = field(default_factory=dict)
 
 
-class App(ABC):
+class Task(ABC):
     def __init__(self, signal='count', calibration_level=0):
         self.parent = None
         self.id = None
         self.kernel = None
         self.signal = signal
         self.calibration_level = calibration_level
-        self._runtime = AppRuntime()
+        self._runtime = TaskRuntime()
 
     def __del__(self):
         try:
@@ -156,3 +156,8 @@ class App(ABC):
 
     def result(self):
         return self.standard_result()
+
+
+class App(Task):
+    def plot(self, fig, result):
+        raise NotImplementedError()
