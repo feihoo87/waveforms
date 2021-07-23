@@ -1,7 +1,9 @@
 import asyncio
 import functools
+import importlib
 import itertools
 import logging
+import sys
 import threading
 import time
 import uuid
@@ -9,8 +11,7 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 
-from .task import App as Task
-from .task import CalibrationResult
+from .task import CalibrationResult, Task
 
 _COMMANDS = uuid.UUID('urn:uuid:308c54dc-c13d-4e52-9caa-3a05a7bc7fa8')
 
@@ -351,4 +352,10 @@ class Scheduler():
         return task
 
     def _getAppClass(self, name):
-        pass
+        *module, name = name.split('.')
+        if len(module) == 0:
+            module = sys.modules['__main__']
+        else:
+            module = '.'.join(module)
+            module = importlib.import_module(module)
+        return getattr(module, name)
