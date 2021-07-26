@@ -33,7 +33,7 @@ class Executor(ABC):
         pass
 
     @abstractmethod
-    def result(self, task_id, skip=0):
+    def fetch(self, task_id, skip=0):
         pass
 
     @abstractmethod
@@ -313,7 +313,7 @@ class Scheduler():
 
     def result(self, task, skip=0):
         logging.info(f'result({task.id})')
-        return self.excuter.result(task.id, skip)
+        return self.excuter.fetch(task.id, skip)
 
     def submit(self, task):
         taskID = self.generate_task_id()

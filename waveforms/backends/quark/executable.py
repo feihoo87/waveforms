@@ -182,7 +182,7 @@ class QuarkExcutor(Executor):
     def submit(self, task_id, data_template):
         self.conn.submit(task_id, data_template)
 
-    def result(self, task_id, skip=0):
+    def fetch(self, task_id, skip=0):
         """get results of task
 
         Args:
@@ -192,7 +192,7 @@ class QuarkExcutor(Executor):
         Returns:
             list: list of results.
         """
-        ret = self.conn.result(task_id, skip)
+        ret = self.conn.fetch(task_id, skip)
         if ret is None:
             return []
         return ret
