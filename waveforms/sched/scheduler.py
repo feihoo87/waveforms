@@ -180,6 +180,11 @@ class Scheduler():
         return i & ((1 << 64) - 1)
 
     def scan(self, task):
+        """Yield from task.scan_range().
+
+        :param task: task to scan
+        :return: a generator yielding step arguments.
+        """
         task._runtime.step = 0
         for args in task.scan_range():
             try:
@@ -200,6 +205,7 @@ class Scheduler():
             task._runtime.step += 1
 
     def _exec(self, task, circuit, lib=None, cfg=None, signal='state'):
+        """Execute a circuit."""
         from waveforms import compile, stdlib
         from waveforms.backends.quark.executable import getCommands
 
@@ -217,6 +223,18 @@ class Scheduler():
         task._runtime.cmds.extend(cmds)
 
     def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
+        """Execute a circuit.
+        
+        Parameters:
+            circuit: a QLisp Circuit.
+            lib: a Library used by compiler,default is stdlib.
+            cfg: configuration of system.
+            signal: a str of the name of the signal type to be returned.
+            cmds: additional commands.
+
+        Returns:
+            A Task.
+        """
         from waveforms.sched import App
 
         class A(App):
@@ -264,13 +282,15 @@ class Scheduler():
         return task.analyze(task.result())
 
     def maintain(self, task: Task):
+        """Maintain a task.
+        """
         # recursive maintain
         for n in task.depends():
             self.maintain(self.create_task(*n))
 
         # check state
-        result = task.chech_state()
-        if result.success:
+        success = task.chech_state()
+        if success:
             return
 
         # check data
@@ -279,18 +299,20 @@ class Scheduler():
             return
         elif result.bad_data:
             for n in task.depends():
-                self.diagnose(self.create_task(*n))
+                self._diagnose(self.create_task(*n))
 
         # calibrate
         result = self.calibrate(task)
         self.update_parameters(result)
         return
 
-    def diagnose(self, task: Task) -> bool:
-        '''
+    def _diagnose(self, task: Task) -> bool:
+        """
+        Diagnose a task.
+
         Returns: True if node
         or dependent recalibrated.
-        '''
+        """
         # check data
         result = task.check_data()
 
@@ -301,7 +323,7 @@ class Scheduler():
         # bad data case
         if result.bad_data:
             recalibrated = [
-                self.diagnose(self.create_task(*n)) for n in task.depends()
+                self._diagnose(self.create_task(*n)) for n in task.depends()
             ]
         if not any(recalibrated):
             return False

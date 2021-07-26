@@ -109,7 +109,11 @@ class Task(ABC):
         """
         return []
 
-    def check_state(self):
+    def check_state(self) -> bool:
+        """
+        return True only if the task is finished successfully
+        in ttl and the result is valid, otherwise return False.
+        """
         raise NotImplementedError()
 
     def analyze(self, data) -> CalibrationResult:
