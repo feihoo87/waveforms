@@ -108,8 +108,8 @@ class QuarkConfig(ConfigProxy):
         elif q in self._cached_keys:
             u = _foldDict(_query(q, self._cache))
         ret = self.conn.query(q)[0]
-        self._cache_result(q, ret)
         _update(ret, u)
+        self._cache_result(q, ret)
         return ret
 
     def _cache_result(self, q, ret, record_history=False):
