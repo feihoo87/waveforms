@@ -150,6 +150,9 @@ class QuarkExcutor(Executor):
                                                            host=self.host)
             return self._conn_pool.actived[tid]
 
+    def start(self):
+        self.conn.start()
+
     def feed(self, task_id, task_step, keys, values):
         """feed api of quark
 
