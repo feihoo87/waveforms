@@ -343,6 +343,17 @@ class Scheduler():
         self.join(task)
         return task.analyze(task.result())
 
+    def chech_state(self, task: Task) -> bool:
+        last_succeed = task.check()
+        if last_succeed < 0:
+            return False
+        dependents = task.depends()
+        if len(dependents) > 0:
+            return all(0 < dependent.check() < last_succeed
+                       for dependent in dependents)
+        else:
+            return True
+
     def maintain(self, task: Task):
         """Maintain a task.
         """
@@ -351,7 +362,7 @@ class Scheduler():
             self.maintain(self.create_task(*n))
 
         # check state
-        success = task.chech_state()
+        success = self.chech_state(task)
         if success:
             return
 
@@ -395,11 +406,25 @@ class Scheduler():
         self.update_parameters(result)
         return True
 
-    def fetch(self, task, skip=0):
+    def fetch(self, task: Task, skip: int = 0) -> list[dict]:
+        """Fetch result of task from the executor, skip the
+        first `skip` steps.
+
+        Args:
+            task: a task.
+            skip: the number of steps to skip.
+
+        Returns:
+            A list of dicts.
+        """
         logging.info(f'fetch({task.id}, {skip})')
         return self.excuter.fetch(task.id, skip)
 
-    def submit(self, task):
+    def submit(self, task: Task) -> Task:
+        """Submit a task.
+        """
+        self.executer.submit(task.id)
+        self.cfg.clear_buffer()
         taskID = self.generate_task_id()
         task.id = taskID
         task.kernel = self
@@ -412,8 +437,11 @@ class Scheduler():
 
         self._task_pool[task.id] = weakref.ref(
             task, functools.partial(delete, dct=self._task_pool, key=task.id))
+        return task
 
     def get_config(self):
+        """Get configuration of the system.
+        """
         return self.cfg
 
     def query(self, key):

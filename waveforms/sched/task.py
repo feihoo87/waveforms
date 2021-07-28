@@ -133,10 +133,10 @@ class Task(ABC):
         """
         return []
 
-    def check_state(self) -> bool:
+    def check(self) -> bool:
         """
-        return True only if the task is finished successfully
-        in ttl and the result is valid, otherwise return False.
+        return the last sucessful calibration time,
+        otherwise return -1
         """
         raise NotImplementedError()
 
