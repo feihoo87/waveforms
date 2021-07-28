@@ -1,7 +1,8 @@
+import re
 import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
-from abc import ABC, abstractmethod
 
 
 @dataclass
@@ -33,11 +34,16 @@ class CalibrationResult():
     parameters: dict = field(default_factory=dict)
 
 
+def _is_feedable(key):
+    return re.match(r'[QCM]\d+\.(setting|waveform)\..+', key)
+
+
 class Task(ABC):
     def __init__(self, signal='count', calibration_level=0):
         self.parent = None
         self.id = None
         self.kernel = None
+        self.db = None
         self.signal = signal
         self.calibration_level = calibration_level
         self._runtime = TaskRuntime()
@@ -48,6 +54,10 @@ class Task(ABC):
         except:
             pass
 
+    @property
+    def app_name(self):
+        return f"{self.__class__.__module__}.{self.__class__.__name__}"
+
     def is_children_of(self, task):
         return self.parent is not None and self.parent == task.id
 
@@ -56,11 +66,15 @@ class Task(ABC):
             return self.kernel.get_task_by_id(self.parent)
         return None
 
-    def set(self, key, value, cache=True):
-        self._runtime.cmds.append((key, value))
+    def set(self, key: str, value: Any, cache: bool = False):
+        if not cache and _is_feedable(key):
+            self._runtime.cmds.append((key, value))
         self.kernel.get_config().update(key, value, cache=cache)
 
-    def get(self, key):
+    def get(self, key: str):
+        """
+        return the value of the key in the kernel config
+        """
         return self.kernel.query(key)
 
     def exec(self, circuit, lib=None, cfg=None):
@@ -69,8 +83,13 @@ class Task(ABC):
     def measure(self, keys, labels=None):
         self.kernel._measure(self, keys, labels)
 
-    def trigger(self):
-        pass
+    def trig(self):
+        from waveforms.sched.scheduler import TRIG
+        cmds = self.get('station.triggercmds')
+        for cmd in cmds:
+            self._runtime.cmds.append((cmd, TRIG))
+        # except:
+        #     self._runtime.cmds.append(('TRIG.CH8.TriggerA', TRIG))
 
     def scan(self):
         yield from self.kernel.scan(self)
@@ -90,11 +109,16 @@ class Task(ABC):
             ])
             return name
         else:
-            file_name = self.get('sampleID')
-            time_str = time.strftime('%Y-%m-%d-%H-%M-%S',
-                                     self._runtime.started_time)
-            name = f"{self.__class__.__name__}_{time_str}"
+            file_name = self.get('station.sample')
+            file_name = 'Test'
+            time_str = time.strftime(
+                '%Y-%m-%d-%H-%M-%S',
+                time.localtime(self._runtime.started_time))
+            name = f"{self.__class__.__name__}_{time_str}_{self.id}"
             return f"{file_name}:/{name}"
+
+    def clean_side_effects(self):
+        self.kernel.clean_side_effects()
 
     @abstractmethod
     def scan_range(self):
@@ -117,6 +141,9 @@ class Task(ABC):
         raise NotImplementedError()
 
     def analyze(self, data) -> CalibrationResult:
+        """
+        return a CalibrationResult object
+        """
         raise NotImplementedError()
 
     def run_subtask(self, subtask):
@@ -133,7 +160,7 @@ class Task(ABC):
 
         try:
             i = len(self._runtime.data)
-            a = self.kernel.result(self, i)
+            a = self.kernel.fetch(self, i)
             for raw_data, dataMap in zip(a, self._runtime.dataMaps[i:]):
                 result = assymblyData(raw_data, dataMap, self.signal)
                 self._runtime.data.append(result['data'])

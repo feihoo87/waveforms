@@ -3,6 +3,7 @@ import functools
 import importlib
 import itertools
 import logging
+import os
 import sys
 import threading
 import time
@@ -10,6 +11,10 @@ import uuid
 import weakref
 from abc import ABC, abstractmethod
 from collections import deque
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from waveforms.storage.models import create_tables
 
 from .task import CalibrationResult, Task
 
@@ -51,7 +56,21 @@ class _ThreadWithKill(threading.Thread):
 
 
 class Scheduler():
-    def __init__(self, excuter):
+    def __init__(self, excuter: Executor, url: str = 'sqlite:///:memory:'):
+        """
+        Parameters
+        ----------
+        excuter : Executor
+            The executor to use to submit tasks
+        url : str
+            The url of the database. These URLs follow RFC-1738, and usually
+            can include username, password, hostname, database name as well
+            as optional keyword arguments for additional configuration.
+            In some cases a file path is accepted, and in others a "data
+            source name" replaces the "host" and "database" portions. The
+            typical form of a database URL is:
+                `dialect+driver://username:password@host:port/database`
+        """
         from waveforms import getConfig
 
         self.counter = itertools.count()
@@ -61,6 +80,11 @@ class Scheduler():
         self._waiting_result = {}
         self._submit_stack = []
         self.excuter = excuter
+        self.db = url
+        self.eng = create_engine(url)
+        if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
+                and not os.path.exists(self.db.removeprefix('sqlite:///'))):
+            create_tables(self.eng)
         self.cfg = getConfig()
 
         self._read_data_thread = threading.Thread(target=self._read_data_loop,
@@ -70,6 +94,9 @@ class Scheduler():
         self._submit_thread = threading.Thread(target=self._submit_loop,
                                                daemon=True)
         self._submit_thread.start()
+
+    def session(self):
+        return sessionmaker(bind=self.eng)()
 
     def _get_next_task(self):
         try:
@@ -128,6 +155,11 @@ class Scheduler():
         import numpy as np
 
         while True:
+            try:
+                if threading.current_thread()._kill_event.is_set():
+                    break
+            except AttributeError:
+                pass
             time.sleep(1)
             try:
                 if len(task.result()['data']) == task._runtime.step:
@@ -138,9 +170,10 @@ class Scheduler():
                         for key, value in task.result().items()
                         if key not in ['counts', 'diags']
                     }
-                    self.excuter.save(task.data_path(), task.id, result)
+                    self.excuter.save(task.data_path(), task.id, {})
                     self.excuter.free(task.id)
                     task._runtime.finished_time = time.time()
+                    break
             except:
                 raise
 
@@ -196,13 +229,16 @@ class Scheduler():
             task._runtime.dataMaps.append({})
             task._runtime.cmds.clear()
             yield args
-            task.trigger()
+            task.trig()
             cmds = task._runtime.cmds
             self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
             logging.info(
                 f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
             )
             task._runtime.step += 1
+
+    def clean_side_effects(self):
+        pass
 
     def _exec(self, task, circuit, lib=None, cfg=None, signal='state'):
         """Execute a circuit."""
@@ -333,14 +369,15 @@ class Scheduler():
         self.update_parameters(result)
         return True
 
-    def result(self, task, skip=0):
-        logging.info(f'result({task.id})')
+    def fetch(self, task, skip=0):
+        logging.info(f'fetch({task.id}, {skip})')
         return self.excuter.fetch(task.id, skip)
 
     def submit(self, task):
         taskID = self.generate_task_id()
         task.id = taskID
         task.kernel = self
+        task.db = self.session()
         task._runtime.status = 'pending'
         self._queue.append(task)
 
