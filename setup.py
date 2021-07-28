@@ -2,7 +2,8 @@ import platform
 from codecs import open
 from os import path
 
-from setuptools import find_packages, setup
+#from Cython.Build import cythonize
+from setuptools import Extension, find_packages, setup
 
 here = path.abspath(path.dirname(__file__))
 
@@ -39,6 +40,7 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     packages = find_packages(),
+    #ext_modules = cythonize("waveforms/math/prime.pyx"),
     include_package_data = True,
     package_data={
         'waveforms': ['libs/*.inc']
@@ -60,7 +62,7 @@ setup(
             'sphinxcontrib-zopeext',
         ],
     },
-    python_requires='>=3.7',
+    python_requires='>=3.8',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
@@ -71,7 +73,6 @@ setup(
         'Operating System :: MacOS :: MacOS X',
         'Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
     ],
