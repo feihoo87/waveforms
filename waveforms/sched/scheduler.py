@@ -244,13 +244,11 @@ class Scheduler():
         from .task import _is_feedable
         keys = []
         values = []
-        print('side_effects', task._runtime.side_effects)
         for k, v in task._runtime.side_effects.items():
             if _is_feedable(k):
                 keys.append(k)
                 values.append(v)
             self.update(k, v)
-        print('feed', keys, values)
         self.excuter.feed(task.id, -1, keys, values)
         task._runtime.side_effects.clear()
         self.cfg.clear_buffer()
