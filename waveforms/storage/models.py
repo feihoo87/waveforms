@@ -1,17 +1,18 @@
 import hashlib
+import itertools
 import pickle
 import time
 import zipfile
-import itertools
 from datetime import datetime
-from typing import Any, Optional
 from pathlib import Path
+from typing import Any, Optional
+
 import numpy as np
 import pandas as pd
 import xarray as xr
-from sqlalchemy import (BLOB, DECIMAL, Column, DateTime, Float, ForeignKey,
-                        ForeignKeyConstraint, Integer, Sequence, String, Table,
-                        Text, create_engine)
+from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer,
+                        LargeBinary, Sequence, String, Table, Text,
+                        create_engine)
 from sqlalchemy.orm import (backref, declarative_base, relationship,
                             sessionmaker)
 from sqlalchemy.orm.session import Session
@@ -29,6 +30,11 @@ record_reports = Table(
     'record_reports', Base.metadata,
     Column('record_id', ForeignKey('records.id'), primary_key=True),
     Column('report_id', ForeignKey('reports.id'), primary_key=True))
+
+comment_tags = Table(
+    'comment_tags', Base.metadata,
+    Column('comment_id', ForeignKey('comments.id'), primary_key=True),
+    Column('tag_id', ForeignKey('tags.id'), primary_key=True))
 
 record_tags = Table(
     'record_tags', Base.metadata,
@@ -55,6 +61,26 @@ sample_records = Table(
     Column('sample_id', ForeignKey('samples.id'), primary_key=True),
     Column('record_id', ForeignKey('records.id'), primary_key=True))
 
+sample_comments = Table(
+    'sample_comments', Base.metadata,
+    Column('sample_id', ForeignKey('samples.id'), primary_key=True),
+    Column('comment_id', ForeignKey('comments.id'), primary_key=True))
+
+sample_transfer_comments = Table(
+    'sample_transfer_comments', Base.metadata,
+    Column('transfer_id', ForeignKey('sample_transfer.id'), primary_key=True),
+    Column('comment_id', ForeignKey('comments.id'), primary_key=True))
+
+report_comments = Table(
+    'report_comments', Base.metadata,
+    Column('report_id', ForeignKey('reports.id'), primary_key=True),
+    Column('comment_id', ForeignKey('comments.id'), primary_key=True))
+
+record_comments = Table(
+    'record_comments', Base.metadata,
+    Column('record_id', ForeignKey('records.id'), primary_key=True),
+    Column('comment_id', ForeignKey('comments.id'), primary_key=True))
+
 
 class Role(Base):
     __tablename__ = 'roles'
@@ -73,10 +99,12 @@ class User(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True)
-    hashed_password = Column(String(64))
+    hashed_password = Column(LargeBinary(64))
     fullname = Column(String)
 
     roles = relationship('Role', secondary=user_roles, back_populates='users')
+    attachments = relationship('Attachment', back_populates='user')
+    comments = relationship('Comment', back_populates='user')
 
     def setPassword(self, password):
         self.hashed_password = encryptPassword(password)
@@ -98,6 +126,9 @@ class Tag(Base):
     id = Column(Integer, primary_key=True)
     text = Column(String, unique=True)
 
+    comments = relationship('Comment',
+                            secondary=comment_tags,
+                            back_populates='tags')
     records = relationship('Record',
                            secondary=record_tags,
                            back_populates='tags')
@@ -112,11 +143,45 @@ class Tag(Base):
         return f"Tag(text='{self.text}')"
 
 
+class Comment(Base):
+    __tablename__ = 'comments'
+
+    id = Column(Integer, primary_key=True)
+    text = Column(String)
+    user_id = Column(Integer, ForeignKey('users.id'))
+    ctime = Column(DateTime, default=datetime.utcnow)
+    parent_id = Column(Integer, ForeignKey('comments.id'))
+
+    replies = relationship("Comment", lazy="joined", join_depth=2)
+    user = relationship('User', back_populates='comments')
+    tags = relationship('Tag',
+                        secondary=comment_tags,
+                        back_populates='comments')
+    attachments = relationship('Attachment', back_populates='comment')
+
+
+class Attachment(Base):
+    __tablename__ = 'attachments'
+
+    id = Column(Integer, primary_key=True)
+    filename = Column(String)
+    mime_type = Column(String, default='application/octet-stream')
+    user_id = Column(Integer, ForeignKey('users.id'))
+    comment_id = Column(Integer, ForeignKey('comments.id'))
+    ctime = Column(DateTime, default=datetime.utcnow)
+    size = Column(Integer)
+    sha256 = Column(String)
+    description = Column(Text)
+
+    user = relationship('User', back_populates='attachments')
+    comment = relationship('Comment', back_populates='attachments')
+
+
 class InputText(Base):
     __tablename__ = 'inputs'
 
     id = Column(Integer, primary_key=True)
-    hash = Column(String(20))
+    hash = Column(LargeBinary(20))
     text_field = Column(Text, unique=True)
 
     @property
@@ -161,7 +226,6 @@ class Sample(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String)
-    description = Column(Text)
 
     account_id = Column(Integer, ForeignKey("sample_accounts.id"))
 
@@ -174,6 +238,7 @@ class Sample(Base):
                            back_populates="samples")
     transfers = relationship("SampleTransfer", back_populates="sample")
     account = relationship("SampleAccount", back_populates="samples")
+    comments = relationship("Comment", secondary=sample_comments)
 
 
 class SampleAccount(Base):
@@ -199,6 +264,7 @@ class SampleTransfer(Base):
     sample = relationship("Sample", back_populates="transfers")
     debtor = relationship("SampleAccount", foreign_keys=[debtor_id])
     creditor = relationship("SampleAccount", foreign_keys=[creditor_id])
+    comments = relationship("Comment", secondary=sample_transfer_comments)
 
 
 class Record(Base):
@@ -214,7 +280,6 @@ class Record(Base):
     file = Column(String)
     key = Column(String)
     config = Column(String)
-    comment = Column(Text)
 
     user = relationship("User")
     samples = relationship("Sample",
@@ -225,6 +290,7 @@ class Record(Base):
                            secondary=record_reports,
                            back_populates='records')
     tags = relationship('Tag', secondary=record_tags, back_populates='records')
+    comments = relationship('Comment', secondary=record_comments)
 
     def __init__(self,
                  file: str = 'test.h5',
@@ -350,6 +416,7 @@ class Report(Base):
                            back_populates='reports')
 
     tags = relationship('Tag', secondary=report_tags, back_populates='reports')
+    comments = relationship('Comment', secondary=report_comments)
 
     @property
     def data(self):
