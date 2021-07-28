@@ -2,7 +2,7 @@ import bisect
 import functools
 import itertools
 import random
-from math import ceil, floor, inf, log, sqrt
+from math import ceil, floor, inf, isqrt, log
 from typing import Generator, Iterator, List, Optional, Set, Union
 
 
@@ -11,8 +11,9 @@ def __sieve(lst: List[int], p_lst: List[int]) -> None:
     p = next(lst)
     p_lst.append(p)
     for num in lst:
-        if all(num % p != 0 for p in itertools.takewhile(
-                lambda x, lim=floor(sqrt(num)): x <= lim, p_lst)):
+        if all(num % p != 0
+               for p in itertools.takewhile(lambda x, lim=isqrt(num): x <= lim,
+                                            p_lst)):
             p_lst.append(num)
 
 
@@ -247,22 +248,22 @@ def prime(n: int) -> int:
 
 def _Phi(m: int, b: int) -> int:
     if b == 0:
-        return floor(m)
+        return m
     elif b == 1:
-        return floor(m) - floor(m / 2)
-    elif floor(m) == 0:
+        return m - m // 2
+    elif m == 0:
         return 0
-    elif floor(m) in [1, 2, 3, 4]:
+    elif m in [1, 2, 3, 4]:
         return 1
     else:
-        return _cached_Phi(floor(m), b)
+        return _cached_Phi(m, b)
 
 
 @functools.lru_cache(maxsize=None)
 def _cached_Phi(m: int, b: int) -> int:
     ret = m
     for i in range(b):
-        ret -= _Phi(floor(m / prime(i + 1)), i)
+        ret -= _Phi(m // prime(i + 1), i)
     return ret
 
 
@@ -276,7 +277,7 @@ def _primePi(m: int) -> int:
         q = y + 1
     else:
         q = y + 2
-    while q <= m**(1 / 2):
+    while q <= isqrt(m):
         if is_prime(q):
             P2 += primePi(m / q) - primePi(q) + 1
         q += 2
