@@ -197,6 +197,15 @@ class QuarkExcutor(Executor):
             return []
         return ret
 
+    def update(self, key, value):
+        """update key to value
+
+        Args:
+            key (str): key to update
+            value (Any): value to update
+        """
+        self.conn.update(key, value)
+
     def save(self, path, task_id, data):
         return self.conn.save(path, task_id, data)
 
