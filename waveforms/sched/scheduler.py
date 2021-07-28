@@ -11,10 +11,12 @@ import uuid
 import weakref
 from abc import ABC, abstractmethod
 from collections import deque
+from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from waveforms.storage.models import create_tables
+from waveforms.waveform import Waveform
 
 from .task import CalibrationResult, Task
 
@@ -154,14 +156,11 @@ class Scheduler():
     def _join(self, task):
         import numpy as np
 
-        while True:
-            try:
+        try:
+            while True:
                 if threading.current_thread()._kill_event.is_set():
                     break
-            except AttributeError:
-                pass
-            time.sleep(1)
-            try:
+                time.sleep(1)
                 if len(task.result()['data']) == task._runtime.step:
                     result = {
                         key: {
@@ -171,11 +170,11 @@ class Scheduler():
                         if key not in ['counts', 'diags']
                     }
                     self.excuter.save(task.data_path(), task.id, {})
-                    self.excuter.free(task.id)
                     task._runtime.finished_time = time.time()
                     break
-            except:
-                raise
+        finally:
+            self.excuter.free(task.id)
+            self.clean_side_effects(task)
 
     def get_task_by_id(self, task_id):
         try:
@@ -232,13 +231,29 @@ class Scheduler():
             task.trig()
             cmds = task._runtime.cmds
             self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
+            task._runtime.side_effects.update(self.cfg._history)
+            for k, v in task._runtime.cmds:
+                if isinstance(v, Waveform):
+                    task._runtime.side_effects[k] = 'zero()'
             logging.info(
                 f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
             )
             task._runtime.step += 1
 
-    def clean_side_effects(self):
-        pass
+    def clean_side_effects(self, task):
+        from .task import _is_feedable
+        keys = []
+        values = []
+        print('side_effects', task._runtime.side_effects)
+        for k, v in task._runtime.side_effects.items():
+            if _is_feedable(k):
+                keys.append(k)
+                values.append(v)
+            self.update(k, v)
+        print('feed', keys, values)
+        self.excuter.feed(task.id, -1, keys, values)
+        task._runtime.side_effects.clear()
+        self.cfg.clear_buffer()
 
     def _exec(self, task, circuit, lib=None, cfg=None, signal='state'):
         """Execute a circuit."""
@@ -299,11 +314,24 @@ class Scheduler():
     def measure(self, keys, labels=None, cmds=[]):
         pass
 
-    def update_parameters(self, result: CalibrationResult):
-        for key, value in result.parameters.item():
+    def update_parameters(self, parameters: dict[str, Any]):
+        """Update parameters.
+
+        Args:
+            parameters: a dict of parameters.
+        """
+        for key, value in parameters.item():
             self.update(key, value)
+        self.cfg.clear_buffer()
 
     def calibrate(self, task: Task) -> CalibrationResult:
+        """Calibrate a task.
+
+        Args:
+            task: a task to be calibrated.
+        Returns:
+            A CalibrationResult.
+        """
         raise NotImplementedError()
         task.calibration_level = 0
         self.submit(task)
@@ -339,7 +367,7 @@ class Scheduler():
 
         # calibrate
         result = self.calibrate(task)
-        self.update_parameters(result)
+        self.update_parameters(result.parameters)
         return
 
     def _diagnose(self, task: Task) -> bool:

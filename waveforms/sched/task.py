@@ -118,7 +118,7 @@ class Task(ABC):
             return f"{file_name}:/{name}"
 
     def clean_side_effects(self):
-        self.kernel.clean_side_effects()
+        self.kernel.clean_side_effects(self)
 
     @abstractmethod
     def scan_range(self):
