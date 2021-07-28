@@ -65,13 +65,10 @@ def getCommands(code, signal='state'):
         if signal == 'trace':
             cmds.append((channel + '.TraceIQ', READ))
             cmds.append((channel + '.CaptureMode', 'raw'))
-            cmds.append(
-                (channel + '.StartCapture', random.randint(0, 2**16 - 1)))
         else:
             cmds.append((channel + '.IQ', READ))
             cmds.append((channel + '.CaptureMode', 'alg'))
-            cmds.append(
-                (channel + '.StartCapture', random.randint(0, 2**16 - 1)))
+        cmds.append((channel + '.StartCapture', random.randint(0, 2**16 - 1)))
 
     return cmds, dataMap
 
