@@ -1,18 +1,23 @@
+import logging
 import random
+import re
 import threading
 import time
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.sched.scheduler import Executor
-from waveforms.sched.task import READ, WRITE, TRIG
+from waveforms.sched.task import COMMAND, READ, WRITE
+
 from quark import connect
 
 from .quarkconfig import QuarkConfig
 from .quarkcontext import QuarkContext
+
+log = logging.getLogger(__name__)
 
 
 def set_up_backend(host='127.0.0.1'):
@@ -111,6 +116,10 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     return result
 
 
+def _is_feedable(key):
+    return re.match(r'[QCM]\d+\.(setting|waveform)\..+', key)
+
+
 class _connection_pool(NamedTuple):
     actived: dict
     disactived: list
@@ -157,10 +166,15 @@ class QuarkExcutor(Executor):
                                                            host=self.host)
             return self._conn_pool.actived[tid]
 
-    def start(self):
-        self.conn.start()
+    def start(self, *args):
+        self.conn.start(*args)
+        self.log.debug(f'start({args})')
 
-    def feed(self, task_id, task_step, cmds, extra={}):
+    def feed(self,
+             task_id: int,
+             task_step: int,
+             cmds: list[COMMAND],
+             extra: dict = {}):
         """feed api of quark
 
         Args:
@@ -174,31 +188,33 @@ class QuarkExcutor(Executor):
         values = []
 
         for cmd in cmds:
-            keys.append(cmd.key)
-            cmd_type = {
-                READ: 'READ',
-                WRITE: 'WRITE',
-                TRIG: 'TRIG',
-            }[type(cmd)]
-            values.append((cmd_type, cmd.value))
+            if _is_feedable(cmd.key):
+                keys.append(cmd.key)
+                values.append((type(cmd).__name__, cmd.value))
 
         self.conn.feed(task_id, task_step, keys, values, extra=extra)
+        self.log.debug(f'feed({task_id}, {task_step}, {keys}, {values})')
 
-    def free(self, task_id):
+    def free(self, task_id: int) -> None:
         """release resources of task
 
         Args:
             task_id (int): uuid of task
         """
         self.conn.free(task_id)
+        self.log.debug(f'free({task_id})')
 
-    def free_all(self):
-        return self.free(-1000)
+    def free_all(self) -> None:
+        """release all resources
+        """
+        self.free(-1000)
+        self.log.debug('free(-1000)')
 
-    def submit(self, task_id, data_template):
+    def submit(self, task_id: int, data_template: dict) -> None:
         self.conn.submit(task_id, data_template)
+        self.log.debug(f'submit({task_id}, {data_template})')
 
-    def fetch(self, task_id, skip=0):
+    def fetch(self, task_id: int, skip: int = 0) -> list:
         """get results of task
 
         Args:
@@ -209,11 +225,12 @@ class QuarkExcutor(Executor):
             list: list of results.
         """
         ret = self.conn.fetch(task_id, skip)
+        self.log.debug(f'fetch({task_id}, {skip})')
         if ret is None:
             return []
         return ret
 
-    def update(self, key, value):
+    def update(self, key: str, value: Any) -> None:
         """update key to value
 
         Args:
@@ -221,12 +238,24 @@ class QuarkExcutor(Executor):
             value (Any): value to update
         """
         self.conn.update(key, value)
+        self.log.debug(f'update({key}, {value})')
 
-    def save(self, path, task_id, data):
-        return self.conn.save(path, task_id, data)
+    def save(self, path: str, task_id: int, data: dict) -> None:
+        """save data to file
+        """
+        ret = self.conn.save(path, task_id, data)
+        self.log.debug(f'save({path}, {task_id}, {data})')
+        return ret
 
-    def query(self, key):
-        return self.conn.query(key)[0]
+    def query(self, key: str) -> Any:
+        """query key
+        """
+        ret = self.conn.query(key)
+        self.log.debug(f'query({key})')
+        return ret
 
-    def cancel(self):
+    def cancel(self) -> None:
+        """cancel all tasks
+        """
         self.conn.cancel()
+        self.log.debug('cancel()')

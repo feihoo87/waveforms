@@ -1,8 +1,13 @@
-import re
+from __future__ import annotations
+
+import logging
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Generator, Iterable, Literal, Optional, Union
+
+from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
+from waveforms.quantum.circuit.qlisp.library import Library
 
 
 class COMMAND():
@@ -67,13 +72,23 @@ class CalibrationResult():
     parameters: dict = field(default_factory=dict)
 
 
-def _is_feedable(key):
-    return re.match(r'[QCM]\d+\.(setting|waveform)\..+', key)
+SIGNAL = Literal['trace', 'raw', 'state', 'count', 'diag']
+QLisp = list[tuple]
 
 
 class Task(ABC):
-    def __init__(self, signal='count', shots=1024, calibration_level=0):
+    def __init__(self,
+                 signal: SIGNAL = 'count',
+                 shots: int = 1024,
+                 calibration_level: int = 0):
+        """
+        Args:
+            signal: the signal to be measured
+            shots: the number of shots to be measured
+            calibration_level: calibration level (0~100)
+        """
         self.parent = None
+        self.container = None
         self.id = None
         self.kernel = None
         self.db = None
@@ -93,54 +108,63 @@ class Task(ABC):
         return f"{self.__class__.__module__}.{self.__class__.__name__}"
 
     @property
+    def log(self):
+        return logging.getLogger(f"{self.app_name}")
+
+    @property
     def status(self):
         return self._runtime.status
 
-    def is_children_of(self, task):
+    def is_children_of(self, task: Task) -> bool:
         return self.parent is not None and self.parent == task.id
 
-    def get_parent(self):
+    def get_parent(self) -> Optional[Task]:
         if self.parent is not None:
             return self.kernel.get_task_by_id(self.parent)
         return None
 
-    def set(self, key: str, value: Any, cache: bool = False):
-        if not cache and _is_feedable(key):
+    def set(self, key: str, value: Any, cache: bool = False) -> None:
+        if not cache:
             self._runtime.cmds.append(WRITE(key, value))
         self.kernel.get_config().update(key, value, cache=cache)
 
-    def get(self, key: str):
+    def get(self, key: str) -> Any:
         """
         return the value of the key in the kernel config
         """
         return self.kernel.query(key)
 
-    def exec(self, circuit, lib=None, cfg=None, compile_once=False):
-        self.kernel._exec(self,
-                          circuit,
-                          lib=lib,
-                          cfg=cfg,
-                          signal=self.signal,
-                          compile_once=compile_once)
+    def exec(self,
+             circuit: QLisp,
+             lib: Optional[Library] = None,
+             cfg: Union[Config, ConfigProxy, None] = None,
+             compile_once: bool = False):
+        step = self.kernel._exec(self,
+                                 circuit,
+                                 lib=lib,
+                                 cfg=cfg,
+                                 signal=self.signal,
+                                 compile_once=compile_once)
+        return step
 
     def measure(self, keys, labels=None):
         self.kernel._measure(self, keys, labels)
 
-    def trig(self):
+    def trig(self) -> None:
         cmds = self.get('station.triggercmds')
         for cmd in cmds:
             self._runtime.cmds.append(TRIG(cmd))
 
-    def scan(self):
+    def scan(self) -> Generator:
         yield from self.kernel.scan(self)
 
-    def feedback(self, obj):
+    def feedback(self, obj: Any) -> None:
         self.kernel.feedback(self, obj)
 
-    def get_feedback(self):
+    def get_feedback(self) -> Any:
         return self.kernel.get_feedback(self)
 
-    def data_path(self):
+    def data_path(self) -> str:
         if self.parent:
             name = '/'.join([
                 self.kernel.get_task_by_id(self.parent).data_path(),
@@ -157,11 +181,11 @@ class Task(ABC):
             name = f"{self.__class__.__name__}_{time_str}_{self.id}"
             return f"{file_name}:/{name}"
 
-    def clean_side_effects(self):
+    def clean_side_effects(self) -> None:
         self.kernel.clean_side_effects(self)
 
     @abstractmethod
-    def scan_range(self):
+    def scan_range(self) -> Union[Iterable, Generator]:
         pass
 
     @abstractmethod
@@ -175,8 +199,8 @@ class Task(ABC):
 
     def check(self) -> bool:
         """
-        return the last sucessful calibration time,
-        otherwise return -1
+        If the latest scan was finished sucessfully in life time,
+        then return the finished time, otherwise return -1
         """
         raise NotImplementedError()
 
@@ -227,6 +251,12 @@ class Task(ABC):
 
     def result(self):
         return self.standard_result()
+
+
+class ContainerTask(Task):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.elements = None
 
 
 class App(Task):

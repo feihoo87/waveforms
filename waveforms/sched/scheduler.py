@@ -18,28 +18,38 @@ from sqlalchemy.orm import sessionmaker
 from waveforms.storage.models import create_tables
 from waveforms.waveform import Waveform
 
-from .task import CalibrationResult, Task, _is_feedable, READ, WRITE
+from .task import COMMAND, READ, WRITE, CalibrationResult, Task
+
+log = logging.getLogger(__name__)
 
 
 class Executor(ABC):
+    @property
+    def log(self):
+        return logging.getLogger(
+            f"{self.__module__}.{self.__class__.__name__}")
+
     @abstractmethod
-    def feed(self, task_id, task_step, keys, values):
+    def feed(self, task_id: int, task_step: int, cmds: list[COMMAND],
+             extra: dict):
+        """
+        """
         pass
 
     @abstractmethod
-    def free(self, task_id):
+    def free(self, task_id: int) -> None:
         pass
 
     @abstractmethod
-    def submit(self, task_id, data_template):
+    def submit(self, task_id: int, data_template: dict) -> None:
         pass
 
     @abstractmethod
-    def fetch(self, task_id, skip=0):
+    def fetch(self, task_id: int, skip: int = 0) -> list:
         pass
 
     @abstractmethod
-    def save(self, path, task_id, data):
+    def save(self, path: str, task_id: int, data: dict) -> str:
         pass
 
 
@@ -109,11 +119,7 @@ class Scheduler():
                 if thread.is_alive():
                     self._submit_stack.append((current_task, thread))
                 else:
-                    t = _ThreadWithKill(target=self._join,
-                                        args=(current_task, ))
-                    t.start()
                     current_task._runtime.status = 'running'
-                    self._waiting_result[current_task.id] = current_task, t
 
             task = self._get_next_task()
             if task is None:
@@ -128,14 +134,16 @@ class Scheduler():
 
     def _submit(self, task):
         self.excuter.free(task.id)
-        logging.info(f'free({task.id})')
         self.excuter.submit(task.id, {})
-        logging.info(f'submit({task.id}, dict())')
         task._runtime.status = 'submiting'
-        thread = _ThreadWithKill(target=task.main)
-        self._submit_stack.append((task, thread))
+        submit_thread = _ThreadWithKill(target=task.main)
+        self._submit_stack.append((task, submit_thread))
         task._runtime.started_time = time.time()
-        thread.start()
+        submit_thread.start()
+
+        fetch_data_thread = _ThreadWithKill(target=self._join, args=(task, ))
+        self._waiting_result[task.id] = task, fetch_data_thread
+        fetch_data_thread.start()
 
     def _read_data_loop(self):
         while True:
@@ -198,7 +206,7 @@ class Scheduler():
 
     def set(self, key: str, value: Any, cache: bool = False):
         cmds = []
-        if not cache and _is_feedable(key):
+        if not cache:
             cmds.append(WRITE(key, value))
         if len(cmds) > 0:
             self.excuter.feed(0, -1, cmds)
@@ -248,20 +256,15 @@ class Scheduler():
                               extra={
                                   'hello': 'world',
                               })
-            logging.info(
-                f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
-            )
             for cmd in task._runtime.cmds:
                 if isinstance(cmd.value, Waveform):
                     task._runtime.side_effects[cmd.key] = 'zero()'
             task._runtime.step += 1
 
     def clean_side_effects(self, task):
-        from .task import _is_feedable
         cmds = []
         for k, v in task._runtime.side_effects.items():
-            if _is_feedable(k):
-                cmds.append(WRITE(k, v))
+            cmds.append(WRITE(k, v))
             self.update(k, v)
         self.excuter.feed(task.id, -1, cmds)
         task._runtime.side_effects.clear()
@@ -297,6 +300,7 @@ class Scheduler():
                         or cmd.key.endswith('.CaptureMode')):
                     task._runtime.cmds.append(cmd)
             task._runtime.dataMaps[-1] = task._runtime.dataMaps[0]
+        return task._runtime.step
 
     def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
         """Execute a circuit.
@@ -444,7 +448,6 @@ class Scheduler():
         Returns:
             A list of dicts.
         """
-        logging.info(f'fetch({task.id}, {skip})')
         return self.excuter.fetch(task.id, skip)
 
     def submit(self, task: Task) -> Task:
