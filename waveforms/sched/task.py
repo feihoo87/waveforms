@@ -92,6 +92,10 @@ class Task(ABC):
     def app_name(self):
         return f"{self.__class__.__module__}.{self.__class__.__name__}"
 
+    @property
+    def status(self):
+        return self._runtime.status
+
     def is_children_of(self, task):
         return self.parent is not None and self.parent == task.id
 
