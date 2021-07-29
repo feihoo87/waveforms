@@ -18,12 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from waveforms.storage.models import create_tables
 from waveforms.waveform import Waveform
 
-from .task import CalibrationResult, Task
-
-_COMMANDS = uuid.UUID('urn:uuid:308c54dc-c13d-4e52-9caa-3a05a7bc7fa8')
-
-READ = uuid.uuid3(_COMMANDS, "READ")
-TRIG = uuid.uuid3(_COMMANDS, "TRIG")
+from .task import CalibrationResult, Task, _is_feedable, READ, WRITE
 
 
 class Executor(ABC):
@@ -201,6 +196,21 @@ class Scheduler():
                 break
             time.sleep(1)
 
+    def set(self, key: str, value: Any, cache: bool = False):
+        cmds = []
+        if not cache and _is_feedable(key):
+            cmds.append(WRITE(key, value))
+        if len(cmds) > 0:
+            self.excuter.feed(0, -1, cmds)
+            self.excuter.free(0)
+        self.get_config().update(key, value, cache=cache)
+
+    def get(self, key: str):
+        """
+        return the value of the key in the kernel config
+        """
+        return self.query(key)
+
     async def join_async(self, task):
         while True:
             if task._runtime.status == 'finished':
@@ -226,34 +236,44 @@ class Scheduler():
                 pass
             task._runtime.result['index'].append(args)
             task._runtime.dataMaps.append({})
-            task._runtime.cmds.clear()
+            task._runtime.cmds = []
             yield args
             task.trig()
             cmds = task._runtime.cmds
-            self.excuter.feed(task.id, task._runtime.step, *zip(*cmds))
+            task._runtime.cmds_list.append(task._runtime.cmds)
             task._runtime.side_effects.update(self.cfg._history)
-            for k, v in task._runtime.cmds:
-                if isinstance(v, Waveform):
-                    task._runtime.side_effects[k] = 'zero()'
+            self.excuter.feed(task.id,
+                              task._runtime.step,
+                              cmds,
+                              extra={
+                                  'hello': 'world',
+                              })
             logging.info(
                 f'feed({task.id}, {task._runtime.step}, <{len(cmds)} commands ...>)'
             )
+            for cmd in task._runtime.cmds:
+                if isinstance(cmd.value, Waveform):
+                    task._runtime.side_effects[cmd.key] = 'zero()'
             task._runtime.step += 1
 
     def clean_side_effects(self, task):
         from .task import _is_feedable
-        keys = []
-        values = []
+        cmds = []
         for k, v in task._runtime.side_effects.items():
             if _is_feedable(k):
-                keys.append(k)
-                values.append(v)
+                cmds.append(WRITE(k, v))
             self.update(k, v)
-        self.excuter.feed(task.id, -1, keys, values)
+        self.excuter.feed(task.id, -1, cmds)
         task._runtime.side_effects.clear()
         self.cfg.clear_buffer()
 
-    def _exec(self, task, circuit, lib=None, cfg=None, signal='state'):
+    def _exec(self,
+              task,
+              circuit,
+              lib=None,
+              cfg=None,
+              signal='state',
+              compile_once=False):
         """Execute a circuit."""
         from waveforms import compile, stdlib
         from waveforms.backends.quark.executable import getCommands
@@ -266,10 +286,17 @@ class Scheduler():
             except AttributeError:
                 pass
             cfg = self.cfg
-        code = compile(circuit, lib=lib, cfg=cfg)
-        cmds, dataMap = getCommands(code, signal=signal)
-        task._runtime.dataMaps[-1].update(dataMap)
-        task._runtime.cmds.extend(cmds)
+        if task._runtime.step == 0 or not compile_once:
+            code = compile(circuit, lib=lib, cfg=cfg)
+            cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
+            task._runtime.cmds.extend(cmds)
+            task._runtime.dataMaps[-1].update(dataMap)
+        else:
+            for cmd in task._runtime.cmds_list[-1]:
+                if (isinstance(cmd, READ) or cmd.key.endswith('.StartCapture')
+                        or cmd.key.endswith('.CaptureMode')):
+                    task._runtime.cmds.append(cmd)
+            task._runtime.dataMaps[-1] = task._runtime.dataMaps[0]
 
     def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
         """Execute a circuit.
@@ -423,8 +450,6 @@ class Scheduler():
     def submit(self, task: Task) -> Task:
         """Submit a task.
         """
-        self.executer.submit(task.id)
-        self.cfg.clear_buffer()
         taskID = self.generate_task_id()
         task.id = taskID
         task.kernel = self

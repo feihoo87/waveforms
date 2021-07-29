@@ -123,6 +123,7 @@ def create_cell(session: Session, notebook: Notebook, input_text: str) -> Cell:
     cell.input = create_input_text(session, input_text)
     cell.index = len(notebook.cells)
     session.add(cell)
+    notebook.atime = cell.ctime
     return cell
 
 
@@ -139,10 +140,19 @@ def create_input_text(session: Session, input_text: str) -> InputText:
     return input
 
 
+def create_sample_account(session: Session,
+                          account_name: str) -> SampleAccount:
+    """Create a sample account in the database."""
+    account = SampleAccount(name=account_name)
+    session.add(account)
+    return account
+
+
 def transform_sample(session: Session, sample: Sample, source: SampleAccount,
                      dest: SampleAccount) -> None:
     """Transform a sample from one account to another."""
-    if sample.account_id != source.id:
+    if (sample.account_id is None and
+            source.type.name != 'factory') or sample.account_id != source.id:
         raise ValueError('Sample is not in the source account.')
     try:
         sample.account = dest
@@ -156,4 +166,3 @@ def transform_sample(session: Session, sample: Sample, source: SampleAccount,
     except:
         session.rollback()
         raise
-    

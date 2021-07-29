@@ -5,6 +5,38 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class COMMAND():
+    """Commands for the scheduler"""
+    __slots__ = ('key', 'value')
+
+    def __init__(self, key: str, value: Any):
+        self.key = key
+        self.value = value
+
+
+class READ(COMMAND):
+    """Read a value from the scheduler"""
+    def __init__(self, key: str):
+        super().__init__(key, 'READ')
+
+    def __repr__(self) -> str:
+        return f"READ({self.key})"
+
+
+class WRITE(COMMAND):
+    def __repr__(self) -> str:
+        return f"WRITE({self.key}, {self.value})"
+
+
+class TRIG(COMMAND):
+    """Trigger the system"""
+    def __init__(self, key: str):
+        super().__init__(key, 0)
+
+    def __repr__(self) -> str:
+        return f"TRIG({self.key})"
+
+
 @dataclass
 class TaskRuntime():
     step: int = 0
@@ -16,6 +48,7 @@ class TaskRuntime():
     dataMaps: list = field(default_factory=list)
     data: list = field(default_factory=list)
     cmds: list = field(default_factory=list)
+    cmds_list: list = field(default_factory=list)
     feedback_buffer: Any = None
     side_effects: dict = field(default_factory=dict)
     result: dict = field(default_factory=lambda: {
@@ -39,12 +72,13 @@ def _is_feedable(key):
 
 
 class Task(ABC):
-    def __init__(self, signal='count', calibration_level=0):
+    def __init__(self, signal='count', shots=1024, calibration_level=0):
         self.parent = None
         self.id = None
         self.kernel = None
         self.db = None
         self.signal = signal
+        self.shots = shots
         self.calibration_level = calibration_level
         self._runtime = TaskRuntime()
 
@@ -68,7 +102,7 @@ class Task(ABC):
 
     def set(self, key: str, value: Any, cache: bool = False):
         if not cache and _is_feedable(key):
-            self._runtime.cmds.append((key, value))
+            self._runtime.cmds.append(WRITE(key, value))
         self.kernel.get_config().update(key, value, cache=cache)
 
     def get(self, key: str):
@@ -77,19 +111,21 @@ class Task(ABC):
         """
         return self.kernel.query(key)
 
-    def exec(self, circuit, lib=None, cfg=None):
-        self.kernel._exec(self, circuit, lib=lib, cfg=cfg, signal=self.signal)
+    def exec(self, circuit, lib=None, cfg=None, compile_once=False):
+        self.kernel._exec(self,
+                          circuit,
+                          lib=lib,
+                          cfg=cfg,
+                          signal=self.signal,
+                          compile_once=compile_once)
 
     def measure(self, keys, labels=None):
         self.kernel._measure(self, keys, labels)
 
     def trig(self):
-        from waveforms.sched.scheduler import TRIG
         cmds = self.get('station.triggercmds')
         for cmd in cmds:
-            self._runtime.cmds.append((cmd, TRIG))
-        # except:
-        #     self._runtime.cmds.append(('TRIG.CH8.TriggerA', TRIG))
+            self._runtime.cmds.append(TRIG(cmd))
 
     def scan(self):
         yield from self.kernel.scan(self)

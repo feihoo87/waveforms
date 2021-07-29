@@ -7,8 +7,8 @@ import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
-from waveforms.sched.scheduler import READ, TRIG, Executor
-
+from waveforms.sched.scheduler import Executor
+from waveforms.sched.task import READ, WRITE, TRIG
 from quark import connect
 
 from .quarkconfig import QuarkConfig
@@ -23,8 +23,10 @@ def set_up_backend(host='127.0.0.1'):
     set_context_factory(QuarkContext)
 
 
-def getCommands(code, signal='state'):
-    cmds = list(code.waveforms.items())
+def getCommands(code, signal='state', shots=1024):
+    cmds = []
+    for key, wav in code.waveforms.items():
+        cmds.append(WRITE(key, wav))
 
     ADInfo = {}
     dataMap = {}
@@ -58,17 +60,21 @@ def getCommands(code, signal='state'):
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
-        cmds.append((channel + '.coefficient', coefficient))
-        cmds.append((channel + '.pointNum', coefficient.shape[-1]))
+        cmds.append(WRITE(channel + '.coefficient', coefficient))
+        cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
+        cmds.append(WRITE(channel + '.shots', shots))
 
     for channel in readChannels:
         if signal == 'trace':
-            cmds.append((channel + '.TraceIQ', READ))
-            cmds.append((channel + '.CaptureMode', 'raw'))
+            cmds.append(READ(channel + '.TraceIQ'))
+            cmds.append(WRITE(channel + '.CaptureMode', 'raw'))
         else:
-            cmds.append((channel + '.IQ', READ))
-            cmds.append((channel + '.CaptureMode', 'alg'))
-        cmds.append((channel + '.StartCapture', random.randint(0, 2**16 - 1)))
+            cmds.append(READ(channel + '.IQ'))
+            cmds.append(WRITE(channel + '.CaptureMode', 'alg'))
+
+    for channel in readChannels:
+        cmds.append(
+            WRITE(channel + '.StartCapture', random.randint(0, 2**16 - 1)))
 
     return cmds, dataMap
 
@@ -78,6 +84,7 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     gate_list = []
     result = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
 
+    min_shots = np.inf
     for cbit in sorted(dataMap):
         ch, i, Delta, params = dataMap[cbit]
         gate_list.append({'params': params})
@@ -87,6 +94,9 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
         except KeyError:
             key = f'{ch}.TraceIQ'
             ret.append(result[key])
+        min_shots = min(min_shots, ret[-1].shape[0])
+
+    ret = [r[:min_shots] for r in ret]
 
     result = {}
     result['data'] = np.asarray(ret).T
@@ -150,23 +160,29 @@ class QuarkExcutor(Executor):
     def start(self):
         self.conn.start()
 
-    def feed(self, task_id, task_step, keys, values):
+    def feed(self, task_id, task_step, cmds, extra={}):
         """feed api of quark
 
         Args:
             task_id (int): uuid of task
             task_step (int): step of task (start from 0)
-            keys (list[str]): a list of keys to set or read
-            values (list[Any]): a list of values to set, if value is 'EMPTY', read the key
+            cmds (list): commands to be executed
+            extra (dict): extra data
         """
-        conv = {
-            READ: 'READ',
-            TRIG: 'TRIG',
-        }
 
-        self.conn.feed(
-            task_id, task_step, keys,
-            [conv.get(v) if isinstance(v, type(READ)) else v for v in values])
+        keys = []
+        values = []
+
+        for cmd in cmds:
+            keys.append(cmd.key)
+            cmd_type = {
+                READ: 'READ',
+                WRITE: 'WRITE',
+                TRIG: 'TRIG',
+            }[type(cmd)]
+            values.append((cmd_type, cmd.value))
+
+        self.conn.feed(task_id, task_step, keys, values, extra=extra)
 
     def free(self, task_id):
         """release resources of task

@@ -10,7 +10,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
-from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer,
+from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, Boolean,
                         LargeBinary, Sequence, String, Table, Text,
                         create_engine)
 from sqlalchemy.orm import (backref, declarative_base, relationship,
@@ -236,9 +236,20 @@ class Sample(Base):
     reports = relationship("Report",
                            secondary=sample_reports,
                            back_populates="samples")
-    transfers = relationship("SampleTransfer", back_populates="sample")
+    transfers = relationship("SampleTransfer",
+                             order_by="SampleTransfer.ctime",
+                             back_populates="sample")
     account = relationship("SampleAccount", back_populates="samples")
     comments = relationship("Comment", secondary=sample_comments)
+
+
+class SampleAccountType(Base):
+    __tablename__ = 'sample_account_types'
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    description = Column(String)
+
+    accounts = relationship("SampleAccount", back_populates="type")
 
 
 class SampleAccount(Base):
@@ -246,6 +257,10 @@ class SampleAccount(Base):
 
     id = Column(Integer, primary_key=True)
     name = Column(String)
+    type_id = Column(Integer, ForeignKey("sample_account_types.id"))
+    description = Column(String)
+
+    type = relationship("SampleAccountType", back_populates="accounts")
 
     samples = relationship("Sample", back_populates="account")
 
@@ -453,8 +468,16 @@ def create_tables(engine):
     root_user.roles.append(root_role)
     root_user.roles.append(admin_role)
 
+    t1 = SampleAccountType(name='factory')
+    t2 = SampleAccountType(name='destroyed')
+    t3 = SampleAccountType(name='storage')
+    t4 = SampleAccountType(name='fridge')
+    a = SampleAccount(name='destroyed')
+    a.type = t2
+
     Session = sessionmaker(bind=engine)
     session = Session()
 
     session.add(root_user)
+    session.add_all([t1, t2, t3, t4, a])
     session.commit()
