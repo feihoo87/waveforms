@@ -1,7 +1,21 @@
 language: python
-python:
-  - "3.8"
-  - "3.9"
+jobs:
+  include:
+    - name: "Python 3.8 on Linux"
+      python: 3.8
+    - name: "Python 3.9 on Linux"
+      python: 3.9
+    - name: "Python 3.9 on Windows"
+      os: windows
+      language: shell
+      before_install:
+        - choco install python --version 3.9.0
+        - python -m pip install --upgrade pip
+      env: PATH=/c/Python39:/c/Python39/Scripts:$PATH
+    - name: "Python 3.9 on macOS"
+      os: osx
+      osx_image: xcode12.5
+      language: shell
 install:
 - pip3 install pytest-cov
 - pip3 install coveralls
