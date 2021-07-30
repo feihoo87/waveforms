@@ -10,7 +10,7 @@ from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.sched.scheduler import Executor
-from waveforms.sched.task import COMMAND, READ, WRITE
+from waveforms.sched.task import COMMAND, READ, TRIG, WRITE
 
 from quark import connect
 
@@ -116,8 +116,14 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     return result
 
 
-def _is_feedable(key):
-    return re.match(r'[QCM]\d+\.(setting|waveform)\..+', key)
+def _is_feedable(cmd):
+    if isinstance(cmd, WRITE):
+        if re.match(r'[QCM]\d+\..+', cmd.key) and not re.match(
+                r'[QCM]\d+\.(setting|waveform)\..+', cmd.key):
+            return False
+        if cmd.key.startswith('gate.'):
+            return False
+    return True
 
 
 class _connection_pool(NamedTuple):
@@ -129,9 +135,11 @@ class _connection_pool(NamedTuple):
 
 class QuarkExcutor(Executor):
     def __init__(self, host='127.0.0.1'):
+        from waveforms import getConfig
 
         self.host = host
         set_up_backend(self.host)
+        self.cfg = getConfig()
 
         self._conn_pool = _connection_pool({}, [], threading.Lock())
         self._gc_thread = threading.Thread(target=self._gc, daemon=True)
@@ -188,7 +196,7 @@ class QuarkExcutor(Executor):
         values = []
 
         for cmd in cmds:
-            if _is_feedable(cmd.key):
+            if _is_feedable(cmd):
                 keys.append(cmd.key)
                 values.append((type(cmd).__name__, cmd.value))
 
@@ -230,14 +238,14 @@ class QuarkExcutor(Executor):
             return []
         return ret
 
-    def update(self, key: str, value: Any) -> None:
+    def update(self, key: str, value: Any, cache:bool=False) -> None:
         """update key to value
 
         Args:
             key (str): key to update
             value (Any): value to update
         """
-        self.conn.update(key, value)
+        self.cfg.update(key, value, cache=cache)
         self.log.debug(f'update({key}, {value})')
 
     def save(self, path: str, task_id: int, data: dict) -> None:
@@ -250,7 +258,7 @@ class QuarkExcutor(Executor):
     def query(self, key: str) -> Any:
         """query key
         """
-        ret = self.conn.query(key)
+        ret = self.cfg.query(key)
         self.log.debug(f'query({key})')
         return ret
 

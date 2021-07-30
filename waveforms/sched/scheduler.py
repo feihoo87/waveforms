@@ -78,8 +78,6 @@ class Scheduler():
             typical form of a database URL is:
                 `dialect+driver://username:password@host:port/database`
         """
-        from waveforms import getConfig
-
         self.counter = itertools.count()
         self.uuid = uuid.uuid1()
         self._task_pool = {}
@@ -92,7 +90,7 @@ class Scheduler():
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
-        self.cfg = getConfig()
+        self.cfg = self.excuter.cfg
 
         self._read_data_thread = threading.Thread(target=self._read_data_loop,
                                                   daemon=True)
@@ -130,7 +128,7 @@ class Scheduler():
                     or task.is_children_of(self._submit_stack[-1][0])):
                 self._submit(task)
             else:
-                self._queue.append(task)
+                self._queue.appendleft(task)
 
     def _submit(self, task):
         self.excuter.free(task.id)
@@ -164,7 +162,12 @@ class Scheduler():
                 if threading.current_thread()._kill_event.is_set():
                     break
                 time.sleep(1)
-                if len(task.result()['data']) == task._runtime.step:
+                if task._runtime.status not in [
+                        'submiting', 'pending'
+                ] and len(task.result()['data']
+                          ) == task._runtime.step or task._runtime.status in [
+                              'canceled', 'finished'
+                          ]:
                     result = {
                         key: {
                             'data': np.asarray(value).tolist(),
@@ -349,7 +352,7 @@ class Scheduler():
         Args:
             parameters: a dict of parameters.
         """
-        for key, value in parameters.item():
+        for key, value in parameters.items():
             self.update(key, value)
         self.cfg.clear_buffer()
 
@@ -361,20 +364,20 @@ class Scheduler():
         Returns:
             A CalibrationResult.
         """
-        raise NotImplementedError()
+        #raise NotImplementedError()
         task.calibration_level = 0
         self.submit(task)
         self.join(task)
         return task.analyze(task.result())
 
     def check_data(self, task: Task) -> CalibrationResult:
-        raise NotImplementedError()
+        #raise NotImplementedError()
         task.calibration_level = 100
         self.submit(task)
         self.join(task)
         return task.analyze(task.result())
 
-    def chech_state(self, task: Task) -> bool:
+    def check_state(self, task: Task) -> bool:
         last_succeed = task.check()
         if last_succeed < 0:
             return False
@@ -385,7 +388,7 @@ class Scheduler():
         else:
             return True
 
-    def maintain(self, task: Task):
+    def maintain(self, task: Task) -> Task:
         """Maintain a task.
         """
         # recursive maintain
@@ -393,14 +396,14 @@ class Scheduler():
             self.maintain(self.create_task(*n))
 
         # check state
-        success = self.chech_state(task)
+        success = self.check_state(task)
         if success:
-            return
+            return task
 
         # check data
-        result = self.chech_data(task)
+        result = self.check_data(task)
         if result.in_spec:
-            return
+            return task
         elif result.bad_data:
             for n in task.depends():
                 self._diagnose(self.create_task(*n))
@@ -408,7 +411,7 @@ class Scheduler():
         # calibrate
         result = self.calibrate(task)
         self.update_parameters(result.parameters)
-        return
+        return task
 
     def _diagnose(self, task: Task) -> bool:
         """
@@ -475,8 +478,8 @@ class Scheduler():
     def query(self, key):
         return self.cfg.query(key)
 
-    def update(self, key, value):
-        self.excuter.update(key, value)
+    def update(self, key, value, cache=False):
+        self.excuter.update(key, value, cache=cache)
 
     def feedback(self, task, obj):
         task._runtime.feedback_buffer = obj

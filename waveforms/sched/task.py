@@ -234,6 +234,7 @@ class Task(ABC):
                     'count', None))
                 self._runtime.result['diags'].append(result.get('diag', None))
             return {
+                'calibration_level': self.calibration_level,
                 'index': self._runtime.result['index'],
                 'data': self._runtime.data,
                 'states': self._runtime.result['states'],
@@ -242,6 +243,7 @@ class Task(ABC):
             }
         except:
             return {
+                'calibration_level': self.calibration_level,
                 'index': [],
                 'data': [],
                 'states': [],
