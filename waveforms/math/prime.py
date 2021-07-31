@@ -45,7 +45,6 @@ def _MillerRabin(n: int, a: int) -> bool:
     return t == n - 1 or (d & 1) == 1
 
 
-@functools.lru_cache()
 def millerRabinTest(q: int) -> bool:
     if q < 1373653:
         return all(_MillerRabin(q, a) for a in [2, 3])
@@ -224,6 +223,7 @@ def previous_prime(x: int) -> Optional[int]:
             x -= 2
 
 
+@functools.lru_cache(maxsize=None)
 def _prime(n: int) -> int:
     a = floor(n * (log(n) + log(log(n)) - 1 + (log(log(n)) - 2.1) / log(n)))
     if a % 2 == 0:
@@ -279,7 +279,7 @@ def _primePi(m: int) -> int:
         q = y + 2
     while q <= isqrt(m):
         if is_prime(q):
-            P2 += primePi(m / q) - primePi(q) + 1
+            P2 += primePi(m // q) - primePi(q) + 1
         q += 2
 
     return _Phi(m, n) + n - 1 - P2
@@ -289,7 +289,7 @@ def primePi(m: int) -> int:
     if m <= __least_primes[-1]:
         return bisect.bisect(__least_primes, m)
 
-    return _primePi(floor(m))
+    return _primePi(m)
 
 
 Primes = _Primes()
