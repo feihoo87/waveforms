@@ -252,7 +252,8 @@ class Scheduler():
             task.trig()
             cmds = task._runtime.cmds
             task._runtime.cmds_list.append(task._runtime.cmds)
-            task._runtime.side_effects.update(self.cfg._history)
+            for k, v in self.cfg._history.items():
+                self._runtime.side_effects.setdefault(k, v)
             self.excuter.feed(task.id,
                               task._runtime.step,
                               cmds,
