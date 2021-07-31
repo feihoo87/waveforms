@@ -336,13 +336,32 @@ class Record(Base):
                 self._df_to_ds()
             return
 
+        def getitem(y, s):
+            ret = y
+            for i in s:
+                ret = ret[i]
+            return ret
+
         self.mtime = datetime.utcnow()
         self.atime = datetime.utcnow()
-        index, values = self._buff
+        if self.coords is None:
+            index, values = self._buff
+        else:
+            index = []
+            values = []
+            shape = [len(v) for v in self.coords.values()]
+            for i, v in zip(*self._buff):
+                for n, c in enumerate(
+                        itertools.product(*self.coords.values())):
+                    s = np.unravel_index(n, shape)
+                    index.append(tuple(i) + c)
+                    values.append(tuple(getitem(y, s) for y in v))
+
         df = pd.DataFrame(values,
                           index=pd.MultiIndex.from_tuples(index,
                                                           names=self.dims),
                           columns=self.vars)
+
         if self.df is None:
             self.df = df
         else:
@@ -358,24 +377,8 @@ class Record(Base):
             self.ds[dim].attrs['units'] = units
 
     def append(self, index, values):
-        if self.coords is None:
-            self._buff[0].extend(index)
-            self._buff[1].extend(values)
-        else:
-
-            def getitem(y, s):
-                ret = y
-                for i in s:
-                    ret = ret[i]
-                return ret
-
-            shape = [len(v) for v in self.coords.values()]
-            for i, v in zip(index, values):
-                for n, c in enumerate(
-                        itertools.product(*self.coords.values())):
-                    s = np.unravel_index(n, shape)
-                    self._buff[0].append(tuple(i) + c)
-                    self._buff[1].append(tuple(getitem(y, s) for y in v))
+        self._buff[0].extend(index)
+        self._buff[1].extend(values)
 
         if len(self._buff[0]) > 1000:
             self.flush()
