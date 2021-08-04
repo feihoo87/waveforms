@@ -123,9 +123,8 @@ class Task(ABC):
             return self.kernel.get_task_by_id(self.parent)
         return None
 
-    def set(self, key: str, value: Any, cache: bool = False) -> None:
-        if not cache:
-            self._runtime.cmds.append(WRITE(key, value))
+    def set(self, key: str, value: Any, cache: bool = True) -> None:
+        self._runtime.cmds.append(WRITE(key, value))
         self.kernel.get_config().update(key, value, cache=cache)
 
     def get(self, key: str) -> Any:
