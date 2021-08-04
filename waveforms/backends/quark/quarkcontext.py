@@ -100,4 +100,4 @@ class QuarkContext(Context):
         return {'type': type, 'params': params}
 
     def _getAllQubitLabels(self) -> list[str]:
-        return self.cfg.query('AllQubit')
+        return self.cfg.keys('Q*')

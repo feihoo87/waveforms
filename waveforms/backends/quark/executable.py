@@ -171,7 +171,8 @@ class QuarkExcutor(Executor):
                         tid] = self._conn_pool.disactived.pop()
                 except IndexError:
                     self._conn_pool.actived[tid] = connect('QuarkServer',
-                                                           host=self.host)
+                                                           host=self.host,
+                                                           verbose=False)
             return self._conn_pool.actived[tid]
 
     def start(self, *args):
@@ -238,7 +239,7 @@ class QuarkExcutor(Executor):
             return []
         return ret
 
-    def update(self, key: str, value: Any, cache:bool=False) -> None:
+    def update(self, key: str, value: Any, cache: bool = False) -> None:
         """update key to value
 
         Args:

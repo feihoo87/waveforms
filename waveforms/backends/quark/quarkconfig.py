@@ -16,24 +16,53 @@ class QuarkConfig(ConfigProxy):
     def connect(self):
         """Connect to the quark server."""
         from quark import connect
-        self.conn = connect('QuarkServer', host=self.host)
+        self.conn = connect('QuarkServer', host=self.host, verbose=False)
 
     def newGate(self, name, *qubits):
         """Create a new gate."""
         qubits = '_'.join(qubits)
-        self.conn.alter(f"+gate.{name}.{qubits}")
+        self.conn.create(f"gate.{name}.{qubits}", {
+            'type': 'default',
+            'params': {}
+        })
 
     def newQubit(self, q):
         """Create a new qubit."""
-        self.conn.alter(f"+{q}")
+        self.conn.create(
+            f"{q}", {
+                'probe': 'M0',
+                'couplers': [],
+                'setting': {
+                    'LO': 4350000000.0,
+                    'POW': 21,
+                    'OFFSET': 0.0
+                },
+                'waveform': {
+                    'SR': 2000000000.0,
+                    'LEN': 99e-06,
+                    'SW': 'zero()',
+                    'TRIG': 'zero()',
+                    'RF': 'zero()',
+                    'Z': 'zero()'
+                },
+                'channel': {
+                    'I': 'AWG23.CH1',
+                    'Q': None,
+                    'LO': 'PSG105.CH1',
+                    'DDS': None,
+                    'SW': None,
+                    'TRIG': None,
+                    'Z': None
+                }
+            })
 
     def newCoupler(self, c):
         """Create a new coupler."""
-        self.conn.alter(f"+{c}")
+        self.conn.create(f"{c}", {})
 
     def newReadout(self, r):
         """Create a new readout."""
-        self.conn.alter(f"+{r}")
+        self.conn.create(f"{r}", {})
 
     def getQubit(self, q):
         """Get a qubit."""
@@ -56,33 +85,24 @@ class QuarkConfig(ConfigProxy):
 
     def getGate(self, name, *qubits):
         """Get a gate."""
-        # if name not in self['gates']:
-        #     raise KeyError(f'"{name}" gate not defined.')
-        # if name == 'rfUnitary':
-        #     return self.getObject(f"gates.{name}.{','.join(qubits)}",
-        #                           cls='rfUnitary')
-        # elif name == 'Measure':
-        #     return self.getObject(f"gates.{name}.{','.join(qubits)}",
-        #                           cls='Measure')
-        # if ('__order_senstive__' in self['gates'][name]
-        #         and self['gates'][name]['__order_senstive__']):
-        #     return self.getObject(f"gates.{name}.{','.join(qubits)}",
-        #                           cls='Gate')
-        # else:
-        #     for qlist in permutations(qubits):
-        #         try:
-        #             return self.getObject(f"gates.{name}.{','.join(qlist)}",
-        #                                   cls='Gate')
-        #         except:
-        #             pass
-        #     else:
-        #         raise KeyError(f'Could not find "{name}" gate for {qubits}')
-
-        qubits = '_'.join(qubits)
-        ret = self.query(f"gate.{name}.{qubits}")
-        if isinstance(ret, dict):
-            return ret
+        order_senstive = self.query(f"gate.{name}.__order_senstive__")
+        if order_senstive is None:
+            order_senstive = True
+        if len(qubits) == 1 or order_senstive:
+            qubits = '_'.join(qubits)
+            ret = self.query(f"gate.{name}.{qubits}")
+            if isinstance(ret, dict):
+                return ret
+            else:
+                raise Exception(f"gate {name} of {qubits} not calibrated.")
         else:
+            for qlist in permutations(qubits):
+                try:
+                    ret = self.query(f"gate.{name}.{'_'.join(qlist)}")
+                    if isinstance(ret, dict):
+                        return ret
+                except:
+                    break
             raise Exception(f"gate {name} of {qubits} not calibrated.")
 
     def getChannel(self, name):
@@ -111,6 +131,22 @@ class QuarkConfig(ConfigProxy):
         _update(ret, u)
         self._cache_result(q, ret)
         return ret
+
+    def keys(self, pattern='*'):
+        """Get keys."""
+        if pattern == '*' or pattern == '.*':
+            namespace = '.'
+            keyword = '*'
+        else:
+            *namespace, keyword = pattern.split('.')
+            if keyword[-1] == '*' and keyword != '*':
+                keyword = keyword[:-1]
+            else:
+                keyword = '*'
+            namespace = '.'.join(namespace)
+        if namespace == '':
+            namespace = '.'
+        return self.conn.query(namespace, keyword=keyword)[0]
 
     def _cache_result(self, q, ret, record_history=False):
         """Cache the result."""
