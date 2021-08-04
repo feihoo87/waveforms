@@ -1,10 +1,8 @@
 import asyncio
 import functools
-import importlib
 import itertools
 import logging
 import os
-import sys
 import threading
 import time
 import uuid
@@ -18,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from waveforms.storage.models import create_tables
 from waveforms.waveform import Waveform
 
-from .task import COMMAND, READ, WRITE, CalibrationResult, Task
+from .task import COMMAND, READ, WRITE, CalibrationResult, Task, create_task
 
 log = logging.getLogger(__name__)
 
@@ -395,7 +393,7 @@ class Scheduler():
         """
         # recursive maintain
         for n in task.depends():
-            self.maintain(self.create_task(*n))
+            self.maintain(create_task(*n))
 
         # check state
         success = self.check_state(task)
@@ -408,7 +406,7 @@ class Scheduler():
             return task
         elif result.bad_data:
             for n in task.depends():
-                self._diagnose(self.create_task(*n))
+                self._diagnose(create_task(*n))
 
         # calibrate
         result = self.calibrate(task)
@@ -432,7 +430,7 @@ class Scheduler():
         # bad data case
         if result.bad_data:
             recalibrated = [
-                self._diagnose(self.create_task(*n)) for n in task.depends()
+                self._diagnose(create_task(*n)) for n in task.depends()
             ]
         if not any(recalibrated):
             return False
@@ -492,16 +490,15 @@ class Scheduler():
         return obj
 
     def create_task(self, app, args=(), kwds={}):
-        if isinstance(app, str):
-            app = self._getAppClass(app)
-        task = app(*args, **kwds)
-        return task
+        """
+        create a task from a string or a class
 
-    def _getAppClass(self, name):
-        *module, name = name.split('.')
-        if len(module) == 0:
-            module = sys.modules['__main__']
-        else:
-            module = '.'.join(module)
-            module = importlib.import_module(module)
-        return getattr(module, name)
+        Args:
+            app: a string or a class
+            args: arguments for the class
+            kwds: keyword arguments for the class
+        
+        Returns:
+            a task
+        """
+        return create_task(app, args, kwds)

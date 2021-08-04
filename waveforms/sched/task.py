@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import logging
+import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Generator, Iterable, Literal, Optional, Union
+from typing import Any, Generator, Iterable, Literal, Optional, Type, Union
 
 import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
@@ -263,3 +265,31 @@ class ContainerTask(Task):
 class App(Task):
     def plot(self, fig, result):
         raise NotImplementedError()
+
+
+def _getAppClass(name: str) -> Type[App]:
+    *module, name = name.split('.')
+    if len(module) == 0:
+        module = sys.modules['__main__']
+    else:
+        module = '.'.join(module)
+        module = importlib.import_module(module)
+    return getattr(module, name)
+
+
+def create_task(app: Union[str, Type[App]], args=(), kwds={}) -> Task:
+    """
+    create a task from a string or a class
+
+    Args:
+        app: a string or a class
+        args: arguments for the class
+        kwds: keyword arguments for the class
+        
+    Returns:
+        a task
+    """
+    if isinstance(app, str):
+        app = _getAppClass(app)
+    task = app(*args, **kwds)
+    return task
