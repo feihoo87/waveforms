@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Generator, Iterable, Literal, Optional, Union
 
+import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
 
@@ -66,7 +67,6 @@ class TaskRuntime():
 
 @dataclass
 class CalibrationResult():
-    success: bool = False
     bad_data: bool = True
     in_spec: bool = False
     parameters: dict = field(default_factory=dict)
@@ -235,10 +235,10 @@ class Task(ABC):
             return {
                 'calibration_level': self.calibration_level,
                 'index': self._runtime.result['index'],
-                'data': self._runtime.data,
-                'states': self._runtime.result['states'],
+                'data': np.asarray(self._runtime.data),
+                'states': np.asarray(self._runtime.result['states']),
                 'counts': self._runtime.result['counts'],
-                'diags': self._runtime.result['diags']
+                'diags': np.asarray(self._runtime.result['diags'])
             }
         except:
             return {

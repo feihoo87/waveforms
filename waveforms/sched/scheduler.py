@@ -178,8 +178,9 @@ class Scheduler():
                     self.excuter.save(task.data_path(), task.id, {})
                     task._runtime.finished_time = time.time()
                     break
-        finally:
+        except:
             self.excuter.free(task.id)
+        finally:
             self.clean_side_effects(task)
 
     def get_task_by_id(self, task_id):
