@@ -1,5 +1,7 @@
+import copy
+
 from .scheduler import Scheduler
-from .task import CalibrationResult, Task, create_task, TaskRuntime
+from .task import CalibrationResult, Task, TaskRuntime, create_task
 
 
 class CalibrationError(RuntimeError):
@@ -60,7 +62,7 @@ def maintain(scheduler: Scheduler, task: Task) -> Task:
                 diagnose(scheduler, create_task(*n))
             result.suggested_calibration_level = 0
         else:
-            task._runtime = TaskRuntime()
+            task = copy.deepcopy(task, {id(task._runtime): TaskRuntime()})
             result = calibrate(scheduler, task,
                                result.suggested_calibration_level)
 
@@ -92,7 +94,7 @@ def diagnose(scheduler: Scheduler, task: Task) -> bool:
     # calibrate
     result.suggested_calibration_level = 0
     while result.suggested_calibration_level < 100:
-        task._runtime = TaskRuntime()
+        task = copy.deepcopy(task, {id(task._runtime): TaskRuntime()})
         result = calibrate(scheduler, task, result.suggested_calibration_level)
         if result.suggested_calibration_level < 0:
             raise CalibrationError(
