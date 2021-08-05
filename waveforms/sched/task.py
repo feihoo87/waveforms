@@ -7,11 +7,14 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Generator, Iterable, Literal, Optional, Type, Union
+from functools import cached_property
+from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
+                    Type, Union)
 
 import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
+from waveforms.storage.models import Record
 
 
 class COMMAND():
@@ -66,6 +69,7 @@ class TaskRuntime():
         'counts': [],
         'diags': []
     })
+    record: Optional[Record] = None
 
 
 @dataclass
@@ -101,7 +105,7 @@ class Task(ABC):
 
     def __del__(self):
         try:
-            self.kernel.executer.free(self.id)
+            self.kernel.executor.free(self.id)
         except:
             pass
 
@@ -131,6 +135,21 @@ class Task(ABC):
         if self.parent is not None:
             return self.kernel.get_task_by_id(self.parent)
         return None
+
+    def set_record(self, dims: list[tuple[str, str]], vars: list[tuple[str,
+                                                                       str]],
+                   coords: dict[str, Sequence]) -> None:
+        if self._runtime.record is not None:
+            return
+        dims, dims_units = list(zip(*dims))
+        vars, vars_units = list(zip(*vars))
+        file, key = self.data_path.split(':/')
+        file = self.kernel.data_path / file
+        self._runtime.record = Record(str(file), key, dims, vars, dims_units,
+                                      vars_units, coords)
+        self._runtime.record.app = self.app_name
+        self.db.add(self._runtime.record)
+        self.db.commit()
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
         self._runtime.cmds.append(WRITE(key, value))
@@ -172,17 +191,16 @@ class Task(ABC):
     def get_feedback(self) -> Any:
         return self.kernel.get_feedback(self)
 
+    @cached_property
     def data_path(self) -> str:
         if self.parent:
             name = '/'.join([
-                self.kernel.get_task_by_id(self.parent).data_path(),
-                'sub_data',
+                self.kernel.get_task_by_id(self.parent).data_path, 'sub_data',
                 f"{self.__class__.__name__}_{self._runtime.sub_index}"
             ])
             return name
         else:
             file_name = self.get('station.sample')
-            file_name = 'Test'
             time_str = time.strftime(
                 '%Y-%m-%d-%H-%M-%S',
                 time.localtime(self._runtime.started_time))
@@ -272,6 +290,29 @@ class ContainerTask(Task):
 class App(Task):
     def plot(self, fig, result):
         raise NotImplementedError()
+
+
+class UserInput(App):
+    def __init__(self, *keys):
+        super().__init__()
+        self.elements = None
+        self.keys = keys
+
+    def check(self):
+        return -1
+
+    def analyze(self, data) -> CalibrationResult:
+        return CalibrationResult(in_spec=True, bad_data=False)
+
+    def scan_range(self) -> Union[Iterable, Generator]:
+        return []
+
+    def main(self):
+        for key in self.keys:
+            self.set(key, input(f"{key} = "), cache=False)
+
+    def result(self):
+        return None
 
 
 def _getAppClass(name: str) -> Type[App]:

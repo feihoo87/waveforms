@@ -10,7 +10,8 @@ import warnings
 import weakref
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any
+from pathlib import Path
+from typing import Any, Union
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -62,8 +63,6 @@ class _ThreadWithKill(threading.Thread):
 
 
 def join_task(task: Task, executor: Executor):
-    import numpy as np
-
     try:
         while True:
             if threading.current_thread()._kill_event.is_set():
@@ -74,15 +73,11 @@ def join_task(task: Task, executor: Executor):
                 ['data']) == task._runtime.step or task._runtime.status in [
                     'canceled', 'finished'
                 ]:
-                result = {
-                    key: {
-                        'data': np.asarray(value).tolist(),
-                    }
-                    for key, value in task.result().items()
-                    if key not in ['counts', 'diags']
-                }
-                executor.save(task.data_path(), task.id)
+                executor.save(task.data_path, task.id)
                 task._runtime.finished_time = time.time()
+                if task._runtime.record is not None:
+                    task._runtime.record.save()
+                    task.db.commit()
                 break
     except:
         executor.free(task.id)
@@ -122,7 +117,7 @@ def exec_circuit(task, circuit, lib, cfg, signal, compile_once):
 def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
                                                              _ThreadWithKill]],
                 running_pool: dict[int, tuple[Task, _ThreadWithKill]],
-                executer: Executor):
+                executor: Executor):
     while True:
         if len(current_stack) > 0:
             current_task, thread = current_stack.pop()
@@ -140,16 +135,16 @@ def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
 
         if (len(current_stack) == 0
                 or task.is_children_of(current_stack[-1][0])):
-            submit(task, current_stack, running_pool, executer)
+            submit(task, current_stack, running_pool, executor)
         else:
             task_queue.appendleft(task)
 
 
 def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
            running_pool: dict[int, tuple[Task, _ThreadWithKill]],
-           executer: Executor):
-    executer.free(task.id)
-    executer.submit(task.id, {})
+           executor: Executor):
+    executor.free(task.id)
+    executor.submit(task.id, {})
     task._runtime.status = 'submiting'
     submit_thread = _ThreadWithKill(target=task.main)
     current_stack.append((task, submit_thread))
@@ -157,7 +152,7 @@ def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
     submit_thread.start()
 
     fetch_data_thread = _ThreadWithKill(target=join_task,
-                                        args=(task, executer))
+                                        args=(task, executor))
     running_pool[task.id] = task, fetch_data_thread
     fetch_data_thread.start()
 
@@ -176,7 +171,7 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
         time.sleep(0.01)
 
 
-def expand_task(task: Task, executer: Executor):
+def expand_task(task: Task, executor: Executor):
     task._runtime.step = 0
     for args in task.scan_range():
         try:
@@ -193,7 +188,7 @@ def expand_task(task: Task, executer: Executor):
         task._runtime.cmds_list.append(task._runtime.cmds)
         for k, v in task.cfg._history.items():
             task._runtime.side_effects.setdefault(k, v)
-        executer.feed(task.id,
+        executor.feed(task.id,
                       task._runtime.step,
                       cmds,
                       extra={
@@ -207,13 +202,14 @@ def expand_task(task: Task, executer: Executor):
 
 class Scheduler():
     def __init__(self,
-                 executer: Executor,
+                 executor: Executor,
                  url: str = 'sqlite:///:memory:',
+                 data_path: Union[str, Path] = Path.home() / 'data',
                  debug_mode: bool = False):
         """
         Parameters
         ----------
-        executer : Executor
+        executor : Executor
             The executor to use to submit tasks
         url : str
             The url of the database. These URLs follow RFC-1738, and usually
@@ -230,8 +226,9 @@ class Scheduler():
         self._queue = deque()
         self._waiting_pool = {}
         self._submit_stack = []
-        self.executer = executer
+        self.executor = executor
         self.db = url
+        self.data_path = Path(data_path)
         self.eng = create_engine(url)
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
@@ -246,13 +243,20 @@ class Scheduler():
         self._submit_thread = threading.Thread(
             target=submit_loop,
             args=(self._queue, self._submit_stack, self._waiting_pool,
-                  self.executer),
+                  self.executor),
             daemon=True)
         self._submit_thread.start()
 
     @property
     def cfg(self):
-        return self.executer.cfg
+        return self.executor.cfg
+
+    @property
+    def executer(self):
+        warnings.warn(
+            'kernel.executer is deprecated, use kernel.executor instead',
+            DeprecationWarning)
+        return self.executor
 
     def session(self):
         return sessionmaker(bind=self.eng)()
@@ -264,7 +268,7 @@ class Scheduler():
             return None
 
     def cancel(self):
-        self.executer.cancel()
+        self.executor.cancel()
         self._queue.clear()
         while self._submit_stack:
             task, thread = self._submit_stack.pop()
@@ -287,8 +291,8 @@ class Scheduler():
         if not cache:
             cmds.append(WRITE(key, value))
         if len(cmds) > 0:
-            self.executer.feed(0, -1, cmds)
-            self.executer.free(0)
+            self.executor.feed(0, -1, cmds)
+            self.executor.free(0)
         self.cfg.update(key, value, cache=cache)
 
     def get(self, key: str):
@@ -313,7 +317,7 @@ class Scheduler():
         :param task: task to scan
         :return: a generator yielding step arguments.
         """
-        yield from expand_task(task, self.executer)
+        yield from expand_task(task, self.executor)
 
     def _exec(self,
               task,
@@ -416,7 +420,7 @@ class Scheduler():
         Returns:
             A list of dicts.
         """
-        return self.executer.fetch(task.id, skip)
+        return self.executor.fetch(task.id, skip)
 
     def submit(self, task: Task) -> Task:
         """Submit a task.
@@ -439,7 +443,7 @@ class Scheduler():
         return self.cfg.query(key)
 
     def update(self, key, value, cache=False):
-        self.executer.update(key, value, cache=cache)
+        self.executor.update(key, value, cache=cache)
 
     def feedback(self, task, obj):
         task._runtime.feedback_buffer = obj
