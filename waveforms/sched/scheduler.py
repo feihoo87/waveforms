@@ -119,6 +119,92 @@ def exec_circuit(task, circuit, lib, cfg, signal, compile_once):
     return task._runtime.step
 
 
+def check_state(task: Task) -> bool:
+    last_succeed = task.check()
+    if last_succeed < 0:
+        return False
+    dependents = task.depends()
+    if len(dependents) > 0:
+        return all(0 < dependent.check() < last_succeed
+                   for dependent in dependents)
+    else:
+        return True
+
+
+def calibrate(scheduler, task: Task,
+              calibration_level: int) -> CalibrationResult:
+    """Calibrate a task.
+
+    Args:
+        scheduler: a scheduler
+        task: a task to be calibrated.
+        calibration_level: the calibration level.
+
+    Returns:
+        A CalibrationResult.
+    """
+    #raise NotImplementedError()
+    task.calibration_level = calibration_level
+    scheduler.submit(task)
+    scheduler.join(task)
+    return task.analyze(task.result())
+
+
+def maintain(scheduler, task: Task) -> Task:
+    """Maintain a task.
+        """
+    # recursive maintain
+    for n in task.depends():
+        maintain(scheduler, create_task(*n))
+
+    # check state
+    success = check_state(task)
+    if success:
+        return task
+
+    # check data
+    result = calibrate(scheduler, task, calibration_level=100)
+
+    while result.suggested_calibration_level < 100:
+        if result.suggested_calibration_level < 0:
+            for n in task.depends():
+                diagnose(scheduler, create_task(*n))
+            result.suggested_calibration_level = 0
+        else:
+            result = calibrate(scheduler, task,
+                               result.suggested_calibration_level)
+
+    scheduler.update_parameters(result.parameters)
+    return task
+
+
+def diagnose(scheduler, task: Task) -> bool:
+    """
+    Diagnose a task.
+
+    Returns: True if node or dependent recalibrated.
+    """
+    # check data
+    result = task.check_data()
+
+    # in spec case
+    if result.suggested_calibration_level == 100:
+        return False
+
+    # bad data case
+    if result.suggested_calibration_level < 0:
+        recalibrated = [
+            diagnose(scheduler, create_task(*n)) for n in task.depends()
+        ]
+    if not any(recalibrated):
+        return False
+
+    # calibrate
+    result = calibrate(scheduler, task, result.suggested_calibration_level)
+    scheduler.update_parameters(result)
+    return True
+
+
 class Scheduler():
     def __init__(self, executer: Executor, url: str = 'sqlite:///:memory:'):
         """
@@ -375,89 +461,19 @@ class Scheduler():
             self.update(key, value)
         self.cfg.clear_buffer()
 
-    def calibrate(self, task: Task) -> CalibrationResult:
-        """Calibrate a task.
-
-        Args:
-            task: a task to be calibrated.
-        Returns:
-            A CalibrationResult.
-        """
-        #raise NotImplementedError()
-        task.calibration_level = 0
-        self.submit(task)
-        self.join(task)
-        return task.analyze(task.result())
-
-    def check_data(self, task: Task) -> CalibrationResult:
-        #raise NotImplementedError()
-        task.calibration_level = 100
-        self.submit(task)
-        self.join(task)
-        return task.analyze(task.result())
-
-    def check_state(self, task: Task) -> bool:
-        last_succeed = task.check()
-        if last_succeed < 0:
-            return False
-        dependents = task.depends()
-        if len(dependents) > 0:
-            return all(0 < dependent.check() < last_succeed
-                       for dependent in dependents)
-        else:
-            return True
-
     def maintain(self, task: Task) -> Task:
         """Maintain a task.
         """
-        # recursive maintain
-        for n in task.depends():
-            self.maintain(create_task(*n))
+        return maintain(self, task)
 
-        # check state
-        success = self.check_state(task)
-        if success:
-            return task
-
-        # check data
-        result = self.check_data(task)
-        if result.in_spec:
-            return task
-        elif result.bad_data:
-            for n in task.depends():
-                self._diagnose(create_task(*n))
-
-        # calibrate
-        result = self.calibrate(task)
-        self.update_parameters(result.parameters)
-        return task
-
-    def _diagnose(self, task: Task) -> bool:
+    def diagnose(self, task: Task) -> bool:
         """
         Diagnose a task.
 
         Returns: True if node
         or dependent recalibrated.
         """
-        # check data
-        result = task.check_data()
-
-        # in spec case
-        if result.in_spec:
-            return False
-
-        # bad data case
-        if result.bad_data:
-            recalibrated = [
-                self._diagnose(create_task(*n)) for n in task.depends()
-            ]
-        if not any(recalibrated):
-            return False
-
-        # calibrate
-        result = self.calibrate(task)
-        self.update_parameters(result)
-        return True
+        return diagnose(self, task)
 
     def fetch(self, task: Task, skip: int = 0) -> list[dict]:
         """Fetch result of task from the executor, skip the

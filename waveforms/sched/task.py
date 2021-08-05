@@ -69,8 +69,7 @@ class TaskRuntime():
 
 @dataclass
 class CalibrationResult():
-    bad_data: bool = True
-    in_spec: bool = False
+    suggested_calibration_level: int = 0
     parameters: dict = field(default_factory=dict)
 
 
