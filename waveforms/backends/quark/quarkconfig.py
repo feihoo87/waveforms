@@ -169,3 +169,14 @@ class QuarkConfig(ConfigProxy):
         self._cache_result(q, v, record_history=True)
         if not cache:
             self.conn.update(q, v)
+
+    def update_all(self, data, cache=False):
+        """Update all config."""
+        for k, v in data:
+            self._cache_result(k, v, record_history=True)
+        if not cache:
+            self.conn.batchup(data)
+
+    def checkpoint(self):
+        """Checkpoint."""
+        return self.conn.checkpoint()

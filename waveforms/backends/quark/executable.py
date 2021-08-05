@@ -244,6 +244,12 @@ class QuarkExecutor(Executor):
         self.cfg.update(key, value, cache=cache)
         self.log.debug(f'update({key}, {value})')
 
+    def update_all(self, data: list[tuple[str, Any]]) -> None:
+        """update all keys to values
+        """
+        self.cfg.update_all(data)
+        self.log.debug(f'update_all({data})')
+
     def save(self, path: str, task_id: int, data: dict) -> None:
         """save data to file
         """
