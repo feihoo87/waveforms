@@ -81,7 +81,7 @@ def join_task(task: Task, executor: Executor):
                     for key, value in task.result().items()
                     if key not in ['counts', 'diags']
                 }
-                executor.save(task.data_path(), task.id, {})
+                executor.save(task.data_path(), task.id)
                 task._runtime.finished_time = time.time()
                 break
     except:
