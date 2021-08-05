@@ -357,9 +357,8 @@ class Scheduler():
                 yield 0
 
             def main(self):
-                for f in self.scan():
-                    for cmd in cmds:
-                        self.set(*cmd)
+                for _ in self.scan():
+                    self._runtime.cmds.extend(cmds)
                     self.exec(circuit, lib=lib, cfg=cfg)
 
         t = A()
