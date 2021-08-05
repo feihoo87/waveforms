@@ -174,6 +174,35 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]]):
         time.sleep(0.01)
 
 
+def expand_task(task: Task, executer: Executor):
+    task._runtime.step = 0
+    for args in task.scan_range():
+        try:
+            if threading.current_thread()._kill_event.is_set():
+                break
+        except AttributeError:
+            pass
+        task._runtime.result['index'].append(args)
+        task._runtime.dataMaps.append({})
+        task._runtime.cmds = []
+        yield args
+        task.trig()
+        cmds = task._runtime.cmds
+        task._runtime.cmds_list.append(task._runtime.cmds)
+        for k, v in task.cfg._history.items():
+            task._runtime.side_effects.setdefault(k, v)
+        executer.feed(task.id,
+                      task._runtime.step,
+                      cmds,
+                      extra={
+                          'hello': 'world',
+                      })
+        for cmd in task._runtime.cmds:
+            if isinstance(cmd.value, Waveform):
+                task._runtime.side_effects[cmd.key] = 'zero()'
+        task._runtime.step += 1
+
+
 class Scheduler():
     def __init__(self, executer: Executor, url: str = 'sqlite:///:memory:'):
         """
@@ -218,14 +247,6 @@ class Scheduler():
     @property
     def cfg(self):
         return self.executer.cfg
-
-    @property
-    def excuter(self):
-        warnings.warn(
-            '`kernel.excuter` is no longer used and is being '
-            'deprecated, use `kernel.executer` instead.', DeprecationWarning,
-            2)
-        return self.executer
 
     def session(self):
         return sessionmaker(bind=self.eng)()
@@ -286,32 +307,7 @@ class Scheduler():
         :param task: task to scan
         :return: a generator yielding step arguments.
         """
-        task._runtime.step = 0
-        for args in task.scan_range():
-            try:
-                if threading.current_thread()._kill_event.is_set():
-                    break
-            except AttributeError:
-                pass
-            task._runtime.result['index'].append(args)
-            task._runtime.dataMaps.append({})
-            task._runtime.cmds = []
-            yield args
-            task.trig()
-            cmds = task._runtime.cmds
-            task._runtime.cmds_list.append(task._runtime.cmds)
-            for k, v in self.cfg._history.items():
-                task._runtime.side_effects.setdefault(k, v)
-            self.executer.feed(task.id,
-                               task._runtime.step,
-                               cmds,
-                               extra={
-                                   'hello': 'world',
-                               })
-            for cmd in task._runtime.cmds:
-                if isinstance(cmd.value, Waveform):
-                    task._runtime.side_effects[cmd.key] = 'zero()'
-            task._runtime.step += 1
+        yield from expand_task(task, self.executer)
 
     def _exec(self,
               task,
