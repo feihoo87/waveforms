@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import logging
 import sys
@@ -299,3 +300,15 @@ def create_task(app: Union[str, Type[App]], args=(), kwds={}) -> Task:
         app = _getAppClass(app)
     task = app(*args, **kwds)
     return task
+
+
+def copy_task(task: Task) -> Task:
+    memo = {
+        id(task._runtime): TaskRuntime(),
+        id(task.kernel): None,
+        id(task.parent): None,
+        id(task.container): None,
+        id(task.id): None,
+        id(task.db): None,
+    }
+    return copy.deepcopy(task, memo)
