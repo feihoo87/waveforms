@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import uuid
+import warnings
 import weakref
 from abc import ABC, abstractmethod
 from collections import deque
@@ -60,12 +61,70 @@ class _ThreadWithKill(threading.Thread):
         self._kill_event.set()
 
 
+def join_task(task: Task, executor: Executor):
+    import numpy as np
+
+    try:
+        while True:
+            if threading.current_thread()._kill_event.is_set():
+                break
+            time.sleep(1)
+            if task._runtime.status not in ['submiting', 'pending'] and len(
+                    task.result()
+                ['data']) == task._runtime.step or task._runtime.status in [
+                    'canceled', 'finished'
+                ]:
+                result = {
+                    key: {
+                        'data': np.asarray(value).tolist(),
+                    }
+                    for key, value in task.result().items()
+                    if key not in ['counts', 'diags']
+                }
+                executor.save(task.data_path(), task.id, {})
+                task._runtime.finished_time = time.time()
+                break
+    except:
+        executor.free(task.id)
+    finally:
+        clean_side_effects(task, executor)
+
+
+def clean_side_effects(task: Task, executor: Executor):
+    cmds = []
+    for k, v in task._runtime.side_effects.items():
+        cmds.append(WRITE(k, v))
+        executor.update(k, v, cache=False)
+    executor.feed(task.id, -1, cmds)
+    task._runtime.side_effects.clear()
+    task.cfg.clear_buffer()
+
+
+def exec_circuit(task, circuit, lib, cfg, signal, compile_once):
+    """Execute a circuit."""
+    from waveforms import compile
+    from waveforms.backends.quark.executable import getCommands
+
+    if task._runtime.step == 0 or not compile_once:
+        code = compile(circuit, lib=lib, cfg=cfg)
+        cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
+        task._runtime.cmds.extend(cmds)
+        task._runtime.dataMaps[-1].update(dataMap)
+    else:
+        for cmd in task._runtime.cmds_list[-1]:
+            if (isinstance(cmd, READ) or cmd.key.endswith('.StartCapture')
+                    or cmd.key.endswith('.CaptureMode')):
+                task._runtime.cmds.append(cmd)
+        task._runtime.dataMaps[-1] = task._runtime.dataMaps[0]
+    return task._runtime.step
+
+
 class Scheduler():
-    def __init__(self, excuter: Executor, url: str = 'sqlite:///:memory:'):
+    def __init__(self, executer: Executor, url: str = 'sqlite:///:memory:'):
         """
         Parameters
         ----------
-        excuter : Executor
+        executer : Executor
             The executor to use to submit tasks
         url : str
             The url of the database. These URLs follow RFC-1738, and usually
@@ -82,13 +141,13 @@ class Scheduler():
         self._queue = deque()
         self._waiting_result = {}
         self._submit_stack = []
-        self.excuter = excuter
+        self.executer = executer
         self.db = url
         self.eng = create_engine(url)
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
-        self.cfg = self.excuter.cfg
+        self.cfg = self.executer.cfg
 
         self._read_data_thread = threading.Thread(target=self._read_data_loop,
                                                   daemon=True)
@@ -97,6 +156,14 @@ class Scheduler():
         self._submit_thread = threading.Thread(target=self._submit_loop,
                                                daemon=True)
         self._submit_thread.start()
+
+    @property
+    def excuter(self):
+        warnings.warn(
+            '`kernel.excuter` is no longer used and is being '
+            'deprecated, use `kernel.executer` instead.', DeprecationWarning,
+            2)
+        return self.executer
 
     def session(self):
         return sessionmaker(bind=self.eng)()
@@ -129,15 +196,16 @@ class Scheduler():
                 self._queue.appendleft(task)
 
     def _submit(self, task):
-        self.excuter.free(task.id)
-        self.excuter.submit(task.id, {})
+        self.executer.free(task.id)
+        self.executer.submit(task.id, {})
         task._runtime.status = 'submiting'
         submit_thread = _ThreadWithKill(target=task.main)
         self._submit_stack.append((task, submit_thread))
         task._runtime.started_time = time.time()
         submit_thread.start()
 
-        fetch_data_thread = _ThreadWithKill(target=self._join, args=(task, ))
+        fetch_data_thread = _ThreadWithKill(target=join_task,
+                                            args=(task, self.executer))
         self._waiting_result[task.id] = task, fetch_data_thread
         fetch_data_thread.start()
 
@@ -152,35 +220,6 @@ class Scheduler():
                     task._runtime.status = 'finished'
             time.sleep(0.01)
 
-    def _join(self, task):
-        import numpy as np
-
-        try:
-            while True:
-                if threading.current_thread()._kill_event.is_set():
-                    break
-                time.sleep(1)
-                if task._runtime.status not in [
-                        'submiting', 'pending'
-                ] and len(task.result()['data']
-                          ) == task._runtime.step or task._runtime.status in [
-                              'canceled', 'finished'
-                          ]:
-                    result = {
-                        key: {
-                            'data': np.asarray(value).tolist(),
-                        }
-                        for key, value in task.result().items()
-                        if key not in ['counts', 'diags']
-                    }
-                    self.excuter.save(task.data_path(), task.id, {})
-                    task._runtime.finished_time = time.time()
-                    break
-        except:
-            self.excuter.free(task.id)
-        finally:
-            self.clean_side_effects(task)
-
     def get_task_by_id(self, task_id):
         try:
             return self._task_pool.get(task_id)()
@@ -188,7 +227,7 @@ class Scheduler():
             return None
 
     def cancel(self):
-        self.excuter.cancel()
+        self.executer.cancel()
         self._queue.clear()
         while self._submit_stack:
             task, thread = self._submit_stack.pop()
@@ -211,8 +250,8 @@ class Scheduler():
         if not cache:
             cmds.append(WRITE(key, value))
         if len(cmds) > 0:
-            self.excuter.feed(0, -1, cmds)
-            self.excuter.free(0)
+            self.executer.feed(0, -1, cmds)
+            self.executer.free(0)
         self.get_config().update(key, value, cache=cache)
 
     def get(self, key: str):
@@ -253,25 +292,16 @@ class Scheduler():
             task._runtime.cmds_list.append(task._runtime.cmds)
             for k, v in self.cfg._history.items():
                 self._runtime.side_effects.setdefault(k, v)
-            self.excuter.feed(task.id,
-                              task._runtime.step,
-                              cmds,
-                              extra={
-                                  'hello': 'world',
-                              })
+            self.executer.feed(task.id,
+                               task._runtime.step,
+                               cmds,
+                               extra={
+                                   'hello': 'world',
+                               })
             for cmd in task._runtime.cmds:
                 if isinstance(cmd.value, Waveform):
                     task._runtime.side_effects[cmd.key] = 'zero()'
             task._runtime.step += 1
-
-    def clean_side_effects(self, task):
-        cmds = []
-        for k, v in task._runtime.side_effects.items():
-            cmds.append(WRITE(k, v))
-            self.update(k, v)
-        self.excuter.feed(task.id, -1, cmds)
-        task._runtime.side_effects.clear()
-        self.cfg.clear_buffer()
 
     def _exec(self,
               task,
@@ -281,8 +311,7 @@ class Scheduler():
               signal='state',
               compile_once=False):
         """Execute a circuit."""
-        from waveforms import compile, stdlib
-        from waveforms.backends.quark.executable import getCommands
+        from waveforms import stdlib
 
         if lib is None:
             lib = stdlib
@@ -292,18 +321,8 @@ class Scheduler():
             except AttributeError:
                 pass
             cfg = self.cfg
-        if task._runtime.step == 0 or not compile_once:
-            code = compile(circuit, lib=lib, cfg=cfg)
-            cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
-            task._runtime.cmds.extend(cmds)
-            task._runtime.dataMaps[-1].update(dataMap)
-        else:
-            for cmd in task._runtime.cmds_list[-1]:
-                if (isinstance(cmd, READ) or cmd.key.endswith('.StartCapture')
-                        or cmd.key.endswith('.CaptureMode')):
-                    task._runtime.cmds.append(cmd)
-            task._runtime.dataMaps[-1] = task._runtime.dataMaps[0]
-        return task._runtime.step
+
+        return exec_circuit(task, circuit, lib, cfg, signal, compile_once)
 
     def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
         """Execute a circuit.
@@ -451,7 +470,7 @@ class Scheduler():
         Returns:
             A list of dicts.
         """
-        return self.excuter.fetch(task.id, skip)
+        return self.executer.fetch(task.id, skip)
 
     def submit(self, task: Task) -> Task:
         """Submit a task.
@@ -479,7 +498,7 @@ class Scheduler():
         return self.cfg.query(key)
 
     def update(self, key, value, cache=False):
-        self.excuter.update(key, value, cache=cache)
+        self.executer.update(key, value, cache=cache)
 
     def feedback(self, task, obj):
         task._runtime.feedback_buffer = obj

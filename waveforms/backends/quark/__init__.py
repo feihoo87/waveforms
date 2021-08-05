@@ -1,1 +1,1 @@
-from .executable import QuarkExcutor
+from .executable import QuarkExecutor

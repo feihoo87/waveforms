@@ -101,7 +101,7 @@ class Task(ABC):
 
     def __del__(self):
         try:
-            self.kernel.excuter.free(self.id)
+            self.kernel.executer.free(self.id)
         except:
             pass
 
@@ -116,6 +116,10 @@ class Task(ABC):
     @property
     def status(self):
         return self._runtime.status
+
+    @property
+    def cfg(self) -> Config:
+        return self.kernel.get_config()
 
     def is_children_of(self, task: Task) -> bool:
         return self.parent is not None and self.parent == task.id

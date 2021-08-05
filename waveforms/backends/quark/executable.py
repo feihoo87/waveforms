@@ -133,7 +133,7 @@ class _connection_pool(NamedTuple):
     max_unused: int = 10
 
 
-class QuarkExcutor(Executor):
+class QuarkExecutor(Executor):
     def __init__(self, host='127.0.0.1'):
         from waveforms import getConfig
 
