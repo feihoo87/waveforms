@@ -162,12 +162,14 @@ def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
     fetch_data_thread.start()
 
 
-def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]]):
+def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
+                 debug_mode: bool = False):
     while True:
         for taskID, (task, thread) in list(running_pool.items()):
             if not thread.is_alive():
                 try:
-                    del running_pool[taskID]
+                    if not debug_mode:
+                        del running_pool[taskID]
                 except:
                     pass
                 task._runtime.status = 'finished'
@@ -204,7 +206,10 @@ def expand_task(task: Task, executer: Executor):
 
 
 class Scheduler():
-    def __init__(self, executer: Executor, url: str = 'sqlite:///:memory:'):
+    def __init__(self,
+                 executer: Executor,
+                 url: str = 'sqlite:///:memory:',
+                 debug_mode: bool = False):
         """
         Parameters
         ----------
@@ -233,7 +238,8 @@ class Scheduler():
             create_tables(self.eng)
 
         self._read_data_thread = threading.Thread(target=waiting_loop,
-                                                  args=(self._waiting_pool, ),
+                                                  args=(self._waiting_pool,
+                                                        debug_mode),
                                                   daemon=True)
         self._read_data_thread.start()
 
