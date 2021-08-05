@@ -119,6 +119,61 @@ def exec_circuit(task, circuit, lib, cfg, signal, compile_once):
     return task._runtime.step
 
 
+def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
+                                                             _ThreadWithKill]],
+                running_pool: dict[int, tuple[Task, _ThreadWithKill]],
+                executer: Executor):
+    while True:
+        if len(current_stack) > 0:
+            current_task, thread = current_stack.pop()
+
+            if thread.is_alive():
+                current_stack.append((current_task, thread))
+            else:
+                current_task._runtime.status = 'running'
+
+        try:
+            task = task_queue.popleft()
+        except IndexError:
+            time.sleep(1)
+            continue
+
+        if (len(current_stack) == 0
+                or task.is_children_of(current_stack[-1][0])):
+            submit(task, current_stack, running_pool, executer)
+        else:
+            task_queue.appendleft(task)
+
+
+def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
+           running_pool: dict[int, tuple[Task, _ThreadWithKill]],
+           executer: Executor):
+    executer.free(task.id)
+    executer.submit(task.id, {})
+    task._runtime.status = 'submiting'
+    submit_thread = _ThreadWithKill(target=task.main)
+    current_stack.append((task, submit_thread))
+    task._runtime.started_time = time.time()
+    submit_thread.start()
+
+    fetch_data_thread = _ThreadWithKill(target=join_task,
+                                        args=(task, executer))
+    running_pool[task.id] = task, fetch_data_thread
+    fetch_data_thread.start()
+
+
+def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]]):
+    while True:
+        for taskID, (task, thread) in list(running_pool.items()):
+            if not thread.is_alive():
+                try:
+                    del running_pool[taskID]
+                except:
+                    pass
+                task._runtime.status = 'finished'
+        time.sleep(0.01)
+
+
 class Scheduler():
     def __init__(self, executer: Executor, url: str = 'sqlite:///:memory:'):
         """
@@ -139,7 +194,7 @@ class Scheduler():
         self.uuid = uuid.uuid1()
         self._task_pool = {}
         self._queue = deque()
-        self._waiting_result = {}
+        self._waiting_pool = {}
         self._submit_stack = []
         self.executer = executer
         self.db = url
@@ -148,12 +203,16 @@ class Scheduler():
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
 
-        self._read_data_thread = threading.Thread(target=self._read_data_loop,
+        self._read_data_thread = threading.Thread(target=waiting_loop,
+                                                  args=(self._waiting_pool, ),
                                                   daemon=True)
         self._read_data_thread.start()
 
-        self._submit_thread = threading.Thread(target=self._submit_loop,
-                                               daemon=True)
+        self._submit_thread = threading.Thread(
+            target=submit_loop,
+            args=(self._queue, self._submit_stack, self._waiting_pool,
+                  self.executer),
+            daemon=True)
         self._submit_thread.start()
 
     @property
@@ -170,58 +229,6 @@ class Scheduler():
 
     def session(self):
         return sessionmaker(bind=self.eng)()
-
-    def _get_next_task(self):
-        try:
-            return self._queue.popleft()
-        except IndexError:
-            return None
-
-    def _submit_loop(self):
-        while True:
-            if len(self._submit_stack) > 0:
-                current_task, thread = self._submit_stack.pop()
-
-                if thread.is_alive():
-                    self._submit_stack.append((current_task, thread))
-                else:
-                    current_task._runtime.status = 'running'
-
-            task = self._get_next_task()
-            if task is None:
-                time.sleep(1)
-                continue
-
-            if (len(self._submit_stack) == 0
-                    or task.is_children_of(self._submit_stack[-1][0])):
-                self._submit(task)
-            else:
-                self._queue.appendleft(task)
-
-    def _submit(self, task):
-        self.executer.free(task.id)
-        self.executer.submit(task.id, {})
-        task._runtime.status = 'submiting'
-        submit_thread = _ThreadWithKill(target=task.main)
-        self._submit_stack.append((task, submit_thread))
-        task._runtime.started_time = time.time()
-        submit_thread.start()
-
-        fetch_data_thread = _ThreadWithKill(target=join_task,
-                                            args=(task, self.executer))
-        self._waiting_result[task.id] = task, fetch_data_thread
-        fetch_data_thread.start()
-
-    def _read_data_loop(self):
-        while True:
-            for taskID, (task, thread) in list(self._waiting_result.items()):
-                if not thread.is_alive():
-                    try:
-                        del self._waiting_result[taskID]
-                    except:
-                        pass
-                    task._runtime.status = 'finished'
-            time.sleep(0.01)
 
     def get_task_by_id(self, task_id):
         try:
@@ -294,7 +301,7 @@ class Scheduler():
             cmds = task._runtime.cmds
             task._runtime.cmds_list.append(task._runtime.cmds)
             for k, v in self.cfg._history.items():
-                self._runtime.side_effects.setdefault(k, v)
+                task._runtime.side_effects.setdefault(k, v)
             self.executer.feed(task.id,
                                task._runtime.step,
                                cmds,
