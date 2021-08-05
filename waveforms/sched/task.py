@@ -104,6 +104,9 @@ class Task(ABC):
         except:
             pass
 
+    def __repr__(self):
+        return f"{self.app_name}({self.id}, calibration_level={self.calibration_level})"
+
     @property
     def app_name(self):
         return f"{self.__class__.__module__}.{self.__class__.__name__}"
@@ -118,7 +121,7 @@ class Task(ABC):
 
     @property
     def cfg(self) -> Config:
-        return self.kernel.get_config()
+        return self.kernel.cfg
 
     def is_children_of(self, task: Task) -> bool:
         return self.parent is not None and self.parent == task.id
@@ -130,7 +133,7 @@ class Task(ABC):
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
         self._runtime.cmds.append(WRITE(key, value))
-        self.kernel.get_config().update(key, value, cache=cache)
+        self.cfg.update(key, value, cache=cache)
 
     def get(self, key: str) -> Any:
         """

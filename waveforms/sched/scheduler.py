@@ -17,7 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from waveforms.storage.models import create_tables
 from waveforms.waveform import Waveform
 
-from .task import COMMAND, READ, WRITE, CalibrationResult, Task, create_task
+from .task import COMMAND, READ, WRITE, Task, create_task
 
 log = logging.getLogger(__name__)
 
@@ -119,92 +119,6 @@ def exec_circuit(task, circuit, lib, cfg, signal, compile_once):
     return task._runtime.step
 
 
-def check_state(task: Task) -> bool:
-    last_succeed = task.check()
-    if last_succeed < 0:
-        return False
-    dependents = task.depends()
-    if len(dependents) > 0:
-        return all(0 < dependent.check() < last_succeed
-                   for dependent in dependents)
-    else:
-        return True
-
-
-def calibrate(scheduler, task: Task,
-              calibration_level: int) -> CalibrationResult:
-    """Calibrate a task.
-
-    Args:
-        scheduler: a scheduler
-        task: a task to be calibrated.
-        calibration_level: the calibration level.
-
-    Returns:
-        A CalibrationResult.
-    """
-    #raise NotImplementedError()
-    task.calibration_level = calibration_level
-    scheduler.submit(task)
-    scheduler.join(task)
-    return task.analyze(task.result())
-
-
-def maintain(scheduler, task: Task) -> Task:
-    """Maintain a task.
-        """
-    # recursive maintain
-    for n in task.depends():
-        maintain(scheduler, create_task(*n))
-
-    # check state
-    success = check_state(task)
-    if success:
-        return task
-
-    # check data
-    result = calibrate(scheduler, task, calibration_level=100)
-
-    while result.suggested_calibration_level < 100:
-        if result.suggested_calibration_level < 0:
-            for n in task.depends():
-                diagnose(scheduler, create_task(*n))
-            result.suggested_calibration_level = 0
-        else:
-            result = calibrate(scheduler, task,
-                               result.suggested_calibration_level)
-
-    scheduler.update_parameters(result.parameters)
-    return task
-
-
-def diagnose(scheduler, task: Task) -> bool:
-    """
-    Diagnose a task.
-
-    Returns: True if node or dependent recalibrated.
-    """
-    # check data
-    result = task.check_data()
-
-    # in spec case
-    if result.suggested_calibration_level == 100:
-        return False
-
-    # bad data case
-    if result.suggested_calibration_level < 0:
-        recalibrated = [
-            diagnose(scheduler, create_task(*n)) for n in task.depends()
-        ]
-    if not any(recalibrated):
-        return False
-
-    # calibrate
-    result = calibrate(scheduler, task, result.suggested_calibration_level)
-    scheduler.update_parameters(result)
-    return True
-
-
 class Scheduler():
     def __init__(self, executer: Executor, url: str = 'sqlite:///:memory:'):
         """
@@ -233,7 +147,6 @@ class Scheduler():
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
-        self.cfg = self.executer.cfg
 
         self._read_data_thread = threading.Thread(target=self._read_data_loop,
                                                   daemon=True)
@@ -242,6 +155,10 @@ class Scheduler():
         self._submit_thread = threading.Thread(target=self._submit_loop,
                                                daemon=True)
         self._submit_thread.start()
+
+    @property
+    def cfg(self):
+        return self.executer.cfg
 
     @property
     def excuter(self):
@@ -338,7 +255,7 @@ class Scheduler():
         if len(cmds) > 0:
             self.executer.feed(0, -1, cmds)
             self.executer.free(0)
-        self.get_config().update(key, value, cache=cache)
+        self.cfg.update(key, value, cache=cache)
 
     def get(self, key: str):
         """
@@ -402,13 +319,14 @@ class Scheduler():
         if lib is None:
             lib = stdlib
         if cfg is None:
-            try:
-                self.cfg.clear_buffer()
-            except AttributeError:
-                pass
             cfg = self.cfg
 
-        return exec_circuit(task, circuit, lib, cfg, signal, compile_once)
+        return exec_circuit(task,
+                            circuit,
+                            lib=lib,
+                            cfg=cfg,
+                            signal=signal,
+                            compile_once=compile_once)
 
     def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
         """Execute a circuit.
@@ -464,6 +382,8 @@ class Scheduler():
     def maintain(self, task: Task) -> Task:
         """Maintain a task.
         """
+        from ._bigbrother import maintain
+
         return maintain(self, task)
 
     def diagnose(self, task: Task) -> bool:
@@ -473,6 +393,8 @@ class Scheduler():
         Returns: True if node
         or dependent recalibrated.
         """
+        from ._bigbrother import diagnose
+
         return diagnose(self, task)
 
     def fetch(self, task: Task, skip: int = 0) -> list[dict]:
@@ -504,11 +426,6 @@ class Scheduler():
         self._task_pool[task.id] = weakref.ref(
             task, functools.partial(delete, dct=self._task_pool, key=task.id))
         return task
-
-    def get_config(self):
-        """Get configuration of the system.
-        """
-        return self.cfg
 
     def query(self, key):
         return self.cfg.query(key)
