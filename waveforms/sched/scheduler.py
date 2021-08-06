@@ -7,6 +7,8 @@ import threading
 import time
 import uuid
 import warnings
+from waveforms.quantum.circuit.qlisp.config import Config
+from waveforms.quantum.circuit.qlisp.library import Library
 import weakref
 from abc import ABC, abstractmethod
 from collections import deque
@@ -95,7 +97,8 @@ def clean_side_effects(task: Task, executor: Executor):
     task.cfg.clear_buffer()
 
 
-def exec_circuit(task, circuit, lib, cfg, signal, compile_once):
+def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
+                 cfg: Config, signal: str, compile_once: bool) -> int:
     """Execute a circuit."""
     from waveforms import compile
     from waveforms.backends.quark.executable import getCommands
