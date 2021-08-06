@@ -1,5 +1,8 @@
 """
 BIG BROTHER IS WATCHING YOU
+
+Reference:
+    arXiv:1803.03226v1
 """
 
 from collections import defaultdict
