@@ -1,6 +1,8 @@
 from .scheduler import Scheduler
 from .task import CalibrationResult, Task, copy_task, create_task
 
+from collections import defaultdict
+
 
 class CalibrationError(RuntimeError):
     pass
@@ -18,8 +20,8 @@ def check_state(task: Task) -> bool:
         return True
 
 
-def calibrate(scheduler: Scheduler, task: Task,
-              calibration_level: int) -> CalibrationResult:
+def scan(scheduler: Scheduler, task: Task,
+         calibration_level: int) -> CalibrationResult:
     """Calibrate a task.
 
     Args:
@@ -36,6 +38,51 @@ def calibrate(scheduler: Scheduler, task: Task,
     return task.analyze(task.result())
 
 
+def check_data(scheduler: Scheduler, task: Task) -> bool:
+    """
+    Check data of a task.
+
+    Args:
+        scheduler: a scheduler
+        task: a task to be checked.
+
+    Returns:
+        A CalibrationResult.
+    """
+    return scan(scheduler, task, 100)
+
+
+def calibrate(scheduler: Scheduler, task: Task,
+              calibration_level: int) -> CalibrationResult:
+    """Calibrate a task.
+
+    Args:
+        scheduler: a scheduler
+        task: a task to be calibrated.
+        calibration_level: the calibration level.
+
+    Returns:
+        A CalibrationResult.
+    """
+    calibration_level = min(max(calibration_level, 0), 100)
+    history = defaultdict(lambda: 0)
+
+    while True:
+        result = scan(scheduler, task, calibration_level)
+        calibration_level = int(result.suggested_calibration_level)
+        if calibration_level < 0:
+            raise CalibrationError(
+                f'bad data for task {task}, but all previous tasks were passed.'
+            )
+        if history[calibration_level] >= 2:
+            raise CalibrationError(f'Calibration {task} failed, '
+                                   'but all previous tasks were passed.')
+        history[calibration_level] += 1
+        if calibration_level >= 100:
+            break
+    return result
+
+
 def maintain(scheduler: Scheduler, task: Task) -> Task:
     """Maintain a task.
         """
@@ -49,21 +96,17 @@ def maintain(scheduler: Scheduler, task: Task) -> Task:
         return task
 
     # check data
-    result = calibrate(scheduler, task, calibration_level=100)
+    result = check_data(scheduler, task)
+    if result.suggested_calibration_level >= 100:
+        return task
+    elif result.suggested_calibration_level < 0:
+        if len(task.depends()) == 0:
+            raise CalibrationError(f'bad data for independent task {task}.')
+        for taskInfo in task.depends():
+            diagnose(scheduler, create_task(taskInfo))
 
-    while result.suggested_calibration_level < 100:
-        if result.suggested_calibration_level < 0:
-            if len(task.depends()) == 0:
-                raise CalibrationError(
-                    f'bad data for independent task {task}.')
-            for taskInfo in task.depends():
-                diagnose(scheduler, create_task(taskInfo))
-            result.suggested_calibration_level = 0
-        else:
-            task = copy_task(task)
-            result = calibrate(scheduler, task,
-                               result.suggested_calibration_level)
-
+    # calibrate
+    result = calibrate(scheduler, task, result.suggested_calibration_level)
     scheduler.update_parameters(result.parameters)
     return task
 
@@ -84,18 +127,13 @@ def diagnose(scheduler: Scheduler, task: Task) -> bool:
     # bad data case
     if result.suggested_calibration_level < 0:
         recalibrated = [
-            diagnose(scheduler, create_task(taskInfo)) for taskInfo in task.depends()
+            diagnose(scheduler, create_task(taskInfo))
+            for taskInfo in task.depends()
         ]
     if not any(recalibrated):
         return False
 
     # calibrate
-    result.suggested_calibration_level = 0
-    while result.suggested_calibration_level < 100:
-        task = copy_task(task)
-        result = calibrate(scheduler, task, result.suggested_calibration_level)
-        if result.suggested_calibration_level < 0:
-            raise CalibrationError(
-                f'previous tasks were passed, but {task} failured.')
+    result = calibrate(scheduler, task, result.suggested_calibration_level)
     scheduler.update_parameters(result)
     return True
