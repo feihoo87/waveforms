@@ -299,10 +299,12 @@ class UserInput(App):
         self.keys = keys
 
     def check(self):
+        # never pass
         return -1
 
     def analyze(self, data) -> CalibrationResult:
-        return CalibrationResult(in_spec=True, bad_data=False)
+        # always pass
+        return CalibrationResult(suggested_calibration_level=100)
 
     def scan_range(self) -> Union[Iterable, Generator]:
         return []
