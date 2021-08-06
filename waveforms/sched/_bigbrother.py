@@ -12,8 +12,8 @@ def check_state(task: Task) -> bool:
         return False
     dependents = task.depends()
     if len(dependents) > 0:
-        return all(0 < dependent.check() < last_succeed
-                   for dependent in dependents)
+        return all(0 < create_task(taskInfo).check() < last_succeed
+                   for taskInfo in dependents)
     else:
         return True
 
@@ -40,8 +40,8 @@ def maintain(scheduler: Scheduler, task: Task) -> Task:
     """Maintain a task.
         """
     # recursive maintain
-    for n in task.depends():
-        maintain(scheduler, create_task(*n))
+    for taskInfo in task.depends():
+        maintain(scheduler, create_task(taskInfo))
 
     # check state
     success = check_state(task)
@@ -56,8 +56,8 @@ def maintain(scheduler: Scheduler, task: Task) -> Task:
             if len(task.depends()) == 0:
                 raise CalibrationError(
                     f'bad data for independent task {task}.')
-            for n in task.depends():
-                diagnose(scheduler, create_task(*n))
+            for taskInfo in task.depends():
+                diagnose(scheduler, create_task(taskInfo))
             result.suggested_calibration_level = 0
         else:
             task = copy_task(task)
@@ -84,7 +84,7 @@ def diagnose(scheduler: Scheduler, task: Task) -> bool:
     # bad data case
     if result.suggested_calibration_level < 0:
         recalibrated = [
-            diagnose(scheduler, create_task(*n)) for n in task.depends()
+            diagnose(scheduler, create_task(taskInfo)) for taskInfo in task.depends()
         ]
     if not any(recalibrated):
         return False

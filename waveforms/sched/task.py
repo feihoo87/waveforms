@@ -325,20 +325,34 @@ def _getAppClass(name: str) -> Type[App]:
     return getattr(module, name)
 
 
-def create_task(app: Union[str, Type[App]], args=(), kwds={}) -> Task:
+def create_task(taskInfo: Union[tuple, Task]) -> Task:
     """
     create a task from a string or a class
 
     Args:
-        app: a string or a class
-        args: arguments for the class
-        kwds: keyword arguments for the class
+        taskInfo: a task or tuple of (app, [args, [kargs,]])
+
+            app: a string or a subclass of Task
+            args: arguments for the class
+            kwds: keyword arguments for the class
         
     Returns:
         a task
     """
+    if isinstance(taskInfo, Task):
+        return copy_task(taskInfo)
+
+    app, *other = taskInfo
     if isinstance(app, str):
         app = _getAppClass(app)
+    if len(other) >= 1:
+        args = other[0]
+    else:
+        args = ()
+    if len(other) >= 2:
+        kwds = other[1]
+    else:
+        kwds = {}
     task = app(*args, **kwds)
     return task
 
