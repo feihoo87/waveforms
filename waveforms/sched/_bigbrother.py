@@ -1,7 +1,11 @@
-from .scheduler import Scheduler
-from .task import CalibrationResult, Task, copy_task, create_task
+"""
+BIG BROTHER IS WATCHING YOU
+"""
 
 from collections import defaultdict
+
+from .scheduler import Scheduler
+from .task import CalibrationResult, Task, copy_task, create_task
 
 
 class CalibrationError(RuntimeError):
@@ -32,6 +36,7 @@ def scan(scheduler: Scheduler, task: Task,
     Returns:
         A CalibrationResult.
     """
+    task = copy_task(task)
     task.calibration_level = calibration_level
     scheduler.submit(task)
     scheduler.join(task)
