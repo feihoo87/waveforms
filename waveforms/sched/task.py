@@ -259,23 +259,17 @@ class Task(ABC):
                 self._runtime.result['counts'].append(result.get(
                     'count', None))
                 self._runtime.result['diags'].append(result.get('diag', None))
-            return {
-                'calibration_level': self.calibration_level,
-                'index': self._runtime.result['index'],
-                'data': np.asarray(self._runtime.data),
-                'states': np.asarray(self._runtime.result['states']),
-                'counts': self._runtime.result['counts'],
-                'diags': np.asarray(self._runtime.result['diags'])
-            }
         except:
-            return {
-                'calibration_level': self.calibration_level,
-                'index': [],
-                'data': [],
-                'states': [],
-                'counts': [],
-                'diags': []
-            }
+            pass
+
+        return {
+            'calibration_level': self.calibration_level,
+            'index': self._runtime.result['index'],
+            'data': np.asarray(self._runtime.data),
+            'states': np.asarray(self._runtime.result['states']),
+            'counts': self._runtime.result['counts'],
+            'diags': np.asarray(self._runtime.result['diags'])
+        }
 
     def result(self):
         return self.standard_result()
