@@ -144,7 +144,7 @@ class Task(ABC):
         dims, dims_units = list(zip(*dims))
         vars, vars_units = list(zip(*vars))
         file, key = self.data_path.split(':/')
-        file = self.kernel.data_path / file
+        file = self.kernel.data_path / (file + '.hdf5')
         self._runtime.record = Record(str(file), key, dims, vars, dims_units,
                                       vars_units, coords)
         self._runtime.record.app = self.app_name
@@ -183,6 +183,11 @@ class Task(ABC):
             self._runtime.cmds.append(TRIG(cmd))
 
     def scan(self) -> Generator:
+        self.set_record(dims=[('index', ''), ('shots', ''), ('cbits', '')],
+                        vars=[('data', ''), ('state', '')],
+                        coords={
+                            'shots': np.arange(self.shots),
+                        })
         yield from self.kernel.scan(self)
 
     def feedback(self, obj: Any) -> None:
@@ -251,7 +256,10 @@ class Task(ABC):
         try:
             i = len(self._runtime.data)
             a = self.kernel.fetch(self, i)
-            for raw_data, dataMap in zip(a, self._runtime.dataMaps[i:]):
+            for step, (raw_data,
+                       dataMap) in enumerate(zip(a,
+                                                 self._runtime.dataMaps[i:]),
+                                             start=i):
                 result = assymblyData(raw_data, dataMap, self.signal)
                 self._runtime.data.append(result['data'])
                 self._runtime.result['states'].append(result.get(
@@ -259,6 +267,13 @@ class Task(ABC):
                 self._runtime.result['counts'].append(result.get(
                     'count', None))
                 self._runtime.result['diags'].append(result.get('diag', None))
+                if self._runtime.record is not None:
+                    cbits = result['data'].shape[-1]
+                    if 'cbits' in self._runtime.record.dims and 'cbits' not in self._runtime.record.coords:
+                        self._runtime.record.coords['cbits'] = np.arange(cbits)
+                    self._runtime.record.append(
+                        [(self._runtime.result['index'][step], )],
+                        [(result['data'], result.get('state', None))])
         except:
             pass
 

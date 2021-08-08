@@ -391,16 +391,34 @@ class Record(Base):
 
     def save(self):
         self.flush()
-        Path(self.file).parent.mkdir(parents=True, exist_ok=True)
+        buf = pickle.dumps(self.ds)
+        hashstr = hashlib.sha1(buf).hexdigest()
+        file = Path(self.file).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
+        file.parent.mkdir(parents=True, exist_ok=True)
+        with open(file, 'wb') as f:
+            f.write(buf)
+        self.file = str(file)
+        return
+
+        if Path(self.file).exists():
+            mode = 'a'
+        else:
+            mode = 'w'
+
         self.ds.to_netcdf(self.file,
                           group=self.key,
-                          mode='a',
+                          mode=mode,
                           format='NETCDF4',
                           engine='netcdf4')
 
     def data(self):
         self.atime = datetime.utcnow()
         self.flush()
+        if self.ds is None:
+            with open(self.file, 'rb') as f:
+                self.ds = pickle.load(f)
+        return self.ds
+        
         if self.ds is None:
             self.ds = xr.open_dataset(self.file,
                                       group=self.key,

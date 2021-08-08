@@ -13,7 +13,7 @@ import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -70,6 +70,7 @@ def join_task(task: Task, executor: Executor):
             if threading.current_thread()._kill_event.is_set():
                 break
             time.sleep(1)
+
             if task._runtime.status not in ['submiting', 'pending'] and len(
                     task.result()
                 ['data']) == task._runtime.step or task._runtime.status in [
@@ -78,12 +79,19 @@ def join_task(task: Task, executor: Executor):
                 executor.save(task.data_path, task.id)
                 task._runtime.finished_time = time.time()
                 if task._runtime.record is not None:
-                    task._runtime.record.save()
-                    task.db.commit()
+                    try:
+                        task._runtime.record.save()
+                        task.db.commit()
+                    except Exception as e:
+                        log.error(f"Failed to save record: {e}")
+                else:
+                    log.warning(f"No record for task {task.id}")
                 break
     except:
+        log.error(f"{task.id} is failed")
         executor.free(task.id)
     finally:
+        log.debug(f'{task.id} is finished')
         clean_side_effects(task, executor)
 
 
@@ -206,7 +214,7 @@ def expand_task(task: Task, executor: Executor):
 class Scheduler():
     def __init__(self,
                  executor: Executor,
-                 url: str = 'sqlite:///:memory:',
+                 url: Optional[str] = None,
                  data_path: Union[str, Path] = Path.home() / 'data',
                  debug_mode: bool = False):
         """
@@ -231,6 +239,8 @@ class Scheduler():
         self._submit_stack = []
         self.mutex = set()
         self.executor = executor
+        if url is None:
+            url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
         self.db = url
         self.data_path = Path(data_path)
         self.eng = create_engine(url)

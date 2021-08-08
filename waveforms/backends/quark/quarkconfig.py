@@ -12,11 +12,25 @@ class QuarkConfig(ConfigProxy):
         self._history = {}
         self._cached_keys = set()
         self.connect()
+        self.init_namespace()
 
     def connect(self):
         """Connect to the quark server."""
         from quark import connect
         self.conn = connect('QuarkServer', host=self.host, verbose=False)
+
+    def init_namespace(self):
+        self.conn.create('dev', {})
+        self.conn.create(
+            'etc', {
+                'checkpoint_path': './checkpoint.dat',
+                'data_path': './data',
+                'driver_paths': [],
+            })
+        self.conn.create('station', {'sample': 'Test', 'triggercmds': []})
+        self.conn.create('tmp', {})
+        self.conn.create('apps', {})
+        self.conn.create('gate', {})
 
     def newGate(self, name, *qubits):
         """Create a new gate."""
@@ -30,8 +44,22 @@ class QuarkConfig(ConfigProxy):
         """Create a new qubit."""
         self.conn.create(
             f"{q}", {
+                'index': [-9, -9],
+                'color': 'green',
                 'probe': 'M0',
                 'couplers': [],
+                'qubit': {
+                    'Ej': 10000000000.0,
+                    'Ec': 250000000.0,
+                    'f01': 5000000000.0,
+                    'f12': 4750000000.0,
+                    'fr': 6000000000.0,
+                    'T1': 1e-05,
+                    'Tr': 5000000.0,
+                    'Te': 1.5e-05,
+                    'test': 100,
+                    'testdep': 200
+                },
                 'setting': {
                     'LO': 4350000000.0,
                     'POW': 21,
@@ -39,7 +67,7 @@ class QuarkConfig(ConfigProxy):
                 },
                 'waveform': {
                     'SR': 2000000000.0,
-                    'LEN': 99e-06,
+                    'LEN': 9.9e-05,
                     'SW': 'zero()',
                     'TRIG': 'zero()',
                     'RF': 'zero()',
@@ -53,16 +81,143 @@ class QuarkConfig(ConfigProxy):
                     'SW': None,
                     'TRIG': None,
                     'Z': None
+                },
+                'calibration': {
+                    'I': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'Q': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'Z': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'DDS': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'TRIG': {
+                        'delay': 0,
+                        'distortion': 0
+                    }
                 }
             })
 
     def newCoupler(self, c):
         """Create a new coupler."""
-        self.conn.create(f"{c}", {})
+        self.conn.create(
+            f"{c}", {
+                'index': [-9, -9],
+                'color': 'green',
+                'qubits': [],
+                'setting': {
+                    'LO': 0,
+                    'POW': 0,
+                    'OFFSET': 0.0
+                },
+                'waveform': {
+                    'SR': 2000000000.0,
+                    'LEN': 9.9e-05,
+                    'SW': 'zero()',
+                    'TRIG': 'zero()',
+                    'RF': 'zero()',
+                    'Z': 'zero()'
+                },
+                'channel': {
+                    'I': None,
+                    'Q': None,
+                    'LO': None,
+                    'DDS': None,
+                    'SW': None,
+                    'TRIG': None,
+                    'Z': 'AWG68.CH2'
+                },
+                'calibration': {
+                    'I': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'Q': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'Z': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'DDS': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'TRIG': {
+                        'delay': 0,
+                        'distortion': 0
+                    }
+                },
+                'qubit': {
+                    'test': 100,
+                    'testdep': 200
+                }
+            })
 
     def newReadout(self, r):
         """Create a new readout."""
-        self.conn.create(f"{r}", {})
+        self.conn.create(
+            f"{r}", {
+                'index': [-9, -9],
+                'color': 'green',
+                'qubits': [],
+                'adcsr': 1000000000.0,
+                'setting': {
+                    'LO': 6758520000.0,
+                    'POW': 19,
+                    'PNT': 4096,
+                    'SHOT': 1024,
+                    'TRIGD': 5e-07
+                },
+                'waveform': {
+                    'SR': 2000000000.0,
+                    'LEN': 9.9e-05,
+                    'SW': 'zero()',
+                    'TRIG': 'zero()',
+                    'RF': 'zero()'
+                },
+                'channel': {
+                    'I': 'AWG142.CH3',
+                    'Q': 'AWG142.CH4',
+                    'LO': 'PSG128.CH1',
+                    'DDS': None,
+                    'SW': None,
+                    'TRIG': 'AWG142.CH3.Marker1',
+                    'ADC': 'AD3.CH1'
+                },
+                'calibration': {
+                    'I': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'Q': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'Z': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'DDS': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'TRIG': {
+                        'delay': 0,
+                        'distortion': 0
+                    },
+                    'drange': [100, 2000]
+                }
+            })
 
     def getQubit(self, q):
         """Get a qubit."""
@@ -127,7 +282,9 @@ class QuarkConfig(ConfigProxy):
             return self._cache[q]
         elif q in self._cached_keys:
             u = _foldDict(_query(q, self._cache))
-        ret = self.conn.query(q)[0]
+        ret, error = self.conn.query(q)
+        #if error != 'None':
+        #    raise KeyError(f"{q} not found")
         _update(ret, u)
         self._cache_result(q, ret)
         return ret
