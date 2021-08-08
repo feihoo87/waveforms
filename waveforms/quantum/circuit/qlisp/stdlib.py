@@ -1,9 +1,9 @@
 from pathlib import Path
-from waveforms.math import signal
 
 from numpy import mod, pi
-from waveforms.waveform import (cos, cosPulse, gaussian, mixing, square,
-                                wave_eval, zero)
+from waveforms.math import signal
+from waveforms.waveform import cos, cosPulse, gaussian, mixing, square, zero
+from waveforms.waveform_parser import wave_eval
 
 from .library import Library
 from .qlisp import MeasurementTask
@@ -208,7 +208,7 @@ def barrier(ctx, qubits):
 @std.opaque('Measure')
 def measure(ctx, qubits, cbit=None):
     import numpy as np
-    from waveforms import step, exp
+    from waveforms import exp, step
 
     qubit, = qubits
 
