@@ -229,6 +229,7 @@ class Scheduler():
         self._queue = deque()
         self._waiting_pool = {}
         self._submit_stack = []
+        self.mutex = set()
         self.executor = executor
         self.db = url
         self.data_path = Path(data_path)
@@ -400,17 +401,6 @@ class Scheduler():
         from ._bigbrother import maintain
 
         return maintain(self, task)
-
-    def diagnose(self, task: Task) -> bool:
-        """
-        Diagnose a task.
-
-        Returns: True if node
-        or dependent recalibrated.
-        """
-        from ._bigbrother import diagnose
-
-        return diagnose(self, task)
 
     def fetch(self, task: Task, skip: int = 0) -> list[dict]:
         """Fetch result of task from the executor, skip the
