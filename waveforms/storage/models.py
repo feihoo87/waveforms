@@ -330,101 +330,121 @@ class Record(Base):
 
         self._buff = ([], [])
 
-    def flush(self):
-        if len(self._buff[0]) == 0:
-            if self.df is not None and self.ds is None:
-                self._df_to_ds()
-            return
-
-        def getitem(y, s):
-            ret = y
-            for i in s:
-                ret = ret[i]
-            return ret
-
-        self.mtime = datetime.utcnow()
+    @property
+    def data(self):
         self.atime = datetime.utcnow()
-        if self.coords is None:
-            index, values = self._buff
-        else:
-            index = []
-            values = []
-            shape = [len(v) for v in self.coords.values()]
-            for i, v in zip(*self._buff):
-                for n, c in enumerate(
-                        itertools.product(*self.coords.values())):
-                    s = np.unravel_index(n, shape)
-                    index.append(tuple(i) + c)
-                    values.append(tuple(getitem(y, s) for y in v))
+        with open(self.file, 'rb') as f:
+            data = pickle.load(f)
+        return data
 
-        df = pd.DataFrame(values,
-                          index=pd.MultiIndex.from_tuples(index,
-                                                          names=self.dims),
-                          columns=self.vars)
-
-        if self.df is None:
-            self.df = df
-        else:
-            self.df = self.df.append(df)
-        self._df_to_ds()
-        self._buff = ([], [])
-
-    def _df_to_ds(self):
-        self.ds = xr.Dataset.from_dataframe(self.df)
-        for units, var in zip(self.vars_units, self.vars):
-            self.ds[var].attrs['units'] = units
-        for dim, units in zip(self.dims, self.dims_units):
-            self.ds[dim].attrs['units'] = units
-
-    def append(self, index, values):
-        self._buff[0].extend(index)
-        self._buff[1].extend(values)
-
-        if len(self._buff[0]) > 1000:
-            self.flush()
-
-    def set_values(self, *values):
-        self.df = pd.DataFrame(dict(zip(self.columnLabels, values)))
-
-    def __getitem__(self, label):
-        return self.ds[label]
-
-    def save(self):
-        self.flush()
-        buf = pickle.dumps(self.ds)
+    @data.setter
+    def data(self, data):
+        buf = pickle.dumps(data)
         hashstr = hashlib.sha1(buf).hexdigest()
-        file = Path(self.file).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
+        file = Path(
+            self.file
+        ).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
         file.parent.mkdir(parents=True, exist_ok=True)
         with open(file, 'wb') as f:
             f.write(buf)
         self.file = str(file)
         return
 
-        if Path(self.file).exists():
-            mode = 'a'
-        else:
-            mode = 'w'
+    # def flush(self):
+    #     if len(self._buff[0]) == 0:
+    #         if self.df is not None and self.ds is None:
+    #             self._df_to_ds()
+    #         return
 
-        self.ds.to_netcdf(self.file,
-                          group=self.key,
-                          mode=mode,
-                          format='NETCDF4',
-                          engine='netcdf4')
+    #     def getitem(y, s):
+    #         ret = y
+    #         for i in s:
+    #             ret = ret[i]
+    #         return ret
 
-    def data(self):
-        self.atime = datetime.utcnow()
-        self.flush()
-        if self.ds is None:
-            with open(self.file, 'rb') as f:
-                self.ds = pickle.load(f)
-        return self.ds
-        
-        if self.ds is None:
-            self.ds = xr.open_dataset(self.file,
-                                      group=self.key,
-                                      mode='r',
-                                      engine='netcdf4')
-        return self.ds
+    #     self.mtime = datetime.utcnow()
+    #     self.atime = datetime.utcnow()
+    #     if self.coords is None:
+    #         index, values = self._buff
+    #     else:
+    #         index = []
+    #         values = []
+    #         shape = [len(v) for v in self.coords.values()]
+    #         for i, v in zip(*self._buff):
+    #             for n, c in enumerate(
+    #                     itertools.product(*self.coords.values())):
+    #                 s = np.unravel_index(n, shape)
+    #                 index.append(tuple(i) + c)
+    #                 values.append(tuple(getitem(y, s) for y in v))
+
+    #     df = pd.DataFrame(values,
+    #                       index=pd.MultiIndex.from_tuples(index,
+    #                                                       names=self.dims),
+    #                       columns=self.vars)
+
+    #     if self.df is None:
+    #         self.df = df
+    #     else:
+    #         self.df = self.df.append(df)
+    #     self._df_to_ds()
+    #     self._buff = ([], [])
+
+    # def _df_to_ds(self):
+    #     self.ds = xr.Dataset.from_dataframe(self.df)
+    #     for units, var in zip(self.vars_units, self.vars):
+    #         self.ds[var].attrs['units'] = units
+    #     for dim, units in zip(self.dims, self.dims_units):
+    #         self.ds[dim].attrs['units'] = units
+
+    # def append(self, index, values):
+    #     self._buff[0].extend(index)
+    #     self._buff[1].extend(values)
+
+    #     if len(self._buff[0]) > 1000:
+    #         self.flush()
+
+    # def set_values(self, *values):
+    #     self.df = pd.DataFrame(dict(zip(self.columnLabels, values)))
+
+    # def __getitem__(self, label):
+    #     return self.ds[label]
+
+    # def save(self):
+    #     self.flush()
+    #     buf = pickle.dumps(self.ds)
+    #     hashstr = hashlib.sha1(buf).hexdigest()
+    #     file = Path(self.file).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
+    #     file.parent.mkdir(parents=True, exist_ok=True)
+    #     with open(file, 'wb') as f:
+    #         f.write(buf)
+    #     self.file = str(file)
+    #     return
+
+    #     if Path(self.file).exists():
+    #         mode = 'a'
+    #     else:
+    #         mode = 'w'
+
+    #     self.ds.to_netcdf(self.file,
+    #                       group=self.key,
+    #                       mode=mode,
+    #                       format='NETCDF4',
+    #                       engine='netcdf4')
+
+    # def data(self):
+    #     self.atime = datetime.utcnow()
+    #     self.flush()
+    #     if self.ds is None:
+    #         with open(self.file, 'rb') as f:
+    #             self.ds = pickle.load(f)
+    #     return self.ds
+
+    #     if self.ds is None:
+    #         self.ds = xr.open_dataset(self.file,
+    #                                   group=self.key,
+    #                                   mode='r',
+    #                                   engine='netcdf4')
+    #     return self.ds
 
 
 class Report(Base):

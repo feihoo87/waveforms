@@ -144,7 +144,8 @@ class Task(ABC):
         dims, dims_units = list(zip(*dims))
         vars, vars_units = list(zip(*vars))
         file, key = self.data_path.split(':/')
-        file = self.kernel.data_path / (file + '.hdf5')
+        # file = self.kernel.data_path / (file + '.hdf5')
+        file = self.kernel.data_path / (file + '.zip')
         self._runtime.record = Record(str(file), key, dims, vars, dims_units,
                                       vars_units, coords)
         self._runtime.record.app = self.app_name
@@ -271,9 +272,9 @@ class Task(ABC):
                     cbits = result['data'].shape[-1]
                     if 'cbits' in self._runtime.record.dims and 'cbits' not in self._runtime.record.coords:
                         self._runtime.record.coords['cbits'] = np.arange(cbits)
-                    self._runtime.record.append(
-                        [(self._runtime.result['index'][step], )],
-                        [(result['data'], result.get('state', None))])
+                    # self._runtime.record.append(
+                    #     [(self._runtime.result['index'][step], )],
+                    #     [(result['data'], result.get('state', None))])
         except:
             pass
 
