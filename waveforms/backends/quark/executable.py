@@ -250,11 +250,11 @@ class QuarkExecutor(Executor):
         self.cfg.update_all(data)
         self.log.debug(f'update_all({data})')
 
-    def save(self, path: str, task_id: int, data: dict) -> None:
+    def save(self, path: str, task_id: int) -> None:
         """save data to file
         """
-        ret = self.conn.save(path, task_id, data)
-        self.log.debug(f'save({path}, {task_id}, {data})')
+        ret = self.conn.save(path, task_id)
+        self.log.debug(f'save({path}, {task_id})')
         return ret
 
     def query(self, key: str) -> Any:
