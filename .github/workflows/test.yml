@@ -30,8 +30,8 @@ jobs:
       run: |
         pytest --cov=waveforms --verbose
     - name: Coveralls
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          python -m pip install coveralls==2.2
-          coveralls --service=github
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        python -m pip install coveralls==2.2
+        coveralls --service=github
