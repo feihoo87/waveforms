@@ -139,8 +139,12 @@ class Tag(Base):
                            secondary=sample_tags,
                            back_populates='tags')
 
+    def __init__(self, text) -> None:
+        super().__init__()
+        self.text = text
+
     def __repr__(self):
-        return f"Tag(text='{self.text}')"
+        return f"Tag('{self.text}')"
 
 
 class Comment(Base):
@@ -170,11 +174,24 @@ class Attachment(Base):
     comment_id = Column(Integer, ForeignKey('comments.id'))
     ctime = Column(DateTime, default=datetime.utcnow)
     size = Column(Integer)
-    sha256 = Column(String)
+    sha1 = Column(String)
     description = Column(Text)
 
     user = relationship('User', back_populates='attachments')
     comment = relationship('Comment', back_populates='attachments')
+
+    @property
+    def data(self)->bytes:
+        self.atime = datetime.utcnow()
+        with open(self.filename, 'rb') as f:
+            data = f.read()
+        return data
+
+    @data.setter
+    def data(self, data: bytes):
+        self.filename.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.filename, 'wb') as f:
+            f.write(data)
 
 
 class InputText(Base):
@@ -193,6 +210,9 @@ class InputText(Base):
         self.hash = hashlib.sha1(text.encode('utf-8')).digest()
         self.text_field = text
 
+    def __repr__(self) -> str:
+        return self.text
+
 
 class Cell(Base):
     __tablename__ = 'cells'
@@ -206,6 +226,9 @@ class Cell(Base):
 
     notebook = relationship("Notebook", back_populates="cells")
     input = relationship("InputText")
+
+    def __repr__(self) -> str:
+        return f"Cell(index={self.index}, input='{self.input}')"
 
 
 class Notebook(Base):
