@@ -28,7 +28,7 @@ def _is_const(x):
 
 
 def _basic_wave(Type, *args, shift=0):
-    return ((((Type, shift, *args), ), (1, )), ), (1, )
+    return ((((Type, *args, shift), ), (1, )), ), (1, )
 
 
 def _insert_type_value_pair(t_list, v_list, t, v, lo, hi):
@@ -83,8 +83,8 @@ def _shift(x, time):
 
     for pre_mtlist, nlist in x[0]:
         mtlist = []
-        for mt in pre_mtlist:
-            mtlist.append((mt[0], mt[1] + time, *mt[2:]))
+        for Type, *args, shift in pre_mtlist:
+            mtlist.append((Type, *args, shift + time))
         t_list.append((tuple(mtlist), nlist))
     return tuple(t_list), x[1]
 
@@ -115,14 +115,14 @@ def _pow(x, n):
 
 
 def _cos_power_n(x, n):
-    _, shift, w = x
+    _, w, shift = x
     ret = _zero
     for k in range(0, n // 2 + 1):
         if n == 2 * k:
             a = _const(comb(n, k) / 2**n)
             ret = _add(ret, a)
         else:
-            expr = (((((COS, shift, (n - 2 * k) * w), ), (1, )), ),
+            expr = (((((COS, (n - 2 * k) * w, shift), ), (1, )), ),
                     (comb(n, k) / 2**(n - 1), ))
             ret = _add(ret, expr)
     return ret
@@ -130,12 +130,12 @@ def _cos_power_n(x, n):
 
 def _trigMul_t(x, y, v):
     """cos(a)cos(b) = 0.5*cos(a+b)+0.5*cos(a-b)"""
-    _, t1, w1 = x
-    _, t2, w2 = y
+    _, w1, t1 = x
+    _, w2, t2 = y
     if w2 > w1:
         t1, t2 = t2, t1
         w1, w2 = w2, w1
-    exp1 = (COS, (w1 * t1 + w2 * t2) / (w1 + w2), w1 + w2)
+    exp1 = (COS, w1 + w2, (w1 * t1 + w2 * t2) / (w1 + w2))
     if w1 == w2:
         c = v * np.cos(w1 * t1 - w2 * t2) / 2
         if c == 0:
@@ -143,7 +143,7 @@ def _trigMul_t(x, y, v):
         else:
             return (((), ()), ((exp1, ), (1, ))), (c, 0.5 * v)
     else:
-        exp2 = (COS, (w1 * t1 - w2 * t2) / (w1 - w2), w1 - w2)
+        exp2 = (COS, w1 - w2, (w1 * t1 - w2 * t2) / (w1 - w2))
         if exp2[1] > exp1[1]:
             exp2, exp1 = exp1, exp2
         return (((exp2, ), (1, )), ((exp1, ), (1, ))), (0.5 * v, 0.5 * v)
@@ -201,7 +201,7 @@ def _filter(expr, low, high):
     for t, v in zip(*expr):
         for i, (mt, n) in enumerate(zip(*t)):
             if mt[0] == COS:
-                if low <= mt[2] < high:
+                if low <= mt[1] < high:
                     ret = _add(ret, ((t, ), (v, )))
                 break
             elif mt[0] == SINC and n == 1:
@@ -225,7 +225,8 @@ def _calc(wav, x):
         ret = 1
         for mt, n in zip(*t):
             if mt not in lru_cache:
-                lru_cache[mt] = _apply(x, *mt)
+                Type, *args, shift = mt
+                lru_cache[mt] = _apply(x, Type, shift, *args)
             ret = ret * lru_cache[mt]**n
         return ret
 
@@ -444,35 +445,35 @@ registerDerivative(LINEAR, lambda shift, *args: _one)
 
 registerDerivative(
     GAUSSIAN, lambda shift, *args: (((((LINEAR, shift),
-                                       (GAUSSIAN, shift, *args)), (1, 1)), ),
+                                       (GAUSSIAN, *args, shift)), (1, 1)), ),
                                     (-2 / args[0]**2, )))
 
 registerDerivative(
-    ERF, lambda shift, *args: (((((GAUSSIAN, shift, *args), ), (1, )), ),
+    ERF, lambda shift, *args: (((((GAUSSIAN, *args, shift), ), (1, )), ),
                                (2 / args[0] / np.sqrt(pi), )))
 
 registerDerivative(
-    COS, lambda shift, *args: (((((COS, shift - pi / args[0] / 2, args[0]), ),
+    COS, lambda shift, *args: (((((COS, args[0], shift - pi / args[0] / 2), ),
                                  (1, )), ), (args[0], )))
 
 registerDerivative(
     SINC, lambda shift, *args:
-    (((((LINEAR, shift), (COS, shift, *args)), (-1, 1)),
-      (((LINEAR, shift), (COS, shift, args[0], args[1] - pi / 2)), (-2, 1))),
+    (((((LINEAR, shift), (COS, *args, shift)), (-1, 1)),
+      (((LINEAR, shift), (COS, args[0], args[1] - pi / 2, shift)), (-2, 1))),
      (1, -1 / args[0])))
 
 registerDerivative(
-    EXP, lambda shift, *args: (((((EXP, shift, *args), ), (1, )), ),
+    EXP, lambda shift, *args: (((((EXP, *args, shift), ), (1, )), ),
                                (args[0], )))
 
 registerDerivative(
     INTERP, lambda shift, start, stop, points:
-    (((((INTERP, shift, start, stop, tuple(np.gradient(np.asarray(points)))),
+    (((((INTERP, start, stop, tuple(np.gradient(np.asarray(points))), shift),
         ), (1, )), ), ((len(points) - 1) / (stop - start), )))
 
 
 def _D_base(m):
-    Type, shift, *args = m
+    Type, *args, shift = m
     return _derivativeBaseFunc[Type](shift, *args)
 
 
@@ -527,7 +528,7 @@ def step(edge, type='erf'):
     else:
         std_sq2 = edge / 5
         # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
-        rise = ((((), ()), (((ERF, 0, std_sq2), ), (1, ))), (0.5, 0.5))
+        rise = ((((), ()), (((ERF, std_sq2, 0), ), (1, ))), (0.5, 0.5))
         return Waveform(bounds=(-edge, edge, +inf), seq=(_zero, rise, _one))
 
 
@@ -589,7 +590,7 @@ def cosPulse(width):
     # pulse = _mul(_add(cos, _one), _half)
     if width <= 0:
         return zero()
-    pulse = ((((), ()), (((COS, 0, 6.283185307179586 / width), ), (1, ))),
+    pulse = ((((), ()), (((COS, 6.283185307179586 / width, 0), ), (1, ))),
              (0.5, 0.5))
     return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
                     seq=(_zero, pulse, _zero))
