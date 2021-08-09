@@ -5,6 +5,14 @@ from .models import (Cell, InputText, InvalidKey, Notebook, Record, Report,
                      Role, Sample, SampleAccount, SampleTransfer, Tag, User)
 
 
+def create_user(session: Session, user_name: str, password: str) -> User:
+    """Create a user in the database."""
+    user = User(name=user_name)
+    user.setPassword(password)
+    session.add(user)
+    return user
+
+
 def login(session: Session, user_name: str, password: str) -> User:
     """Login a user in the database."""
     try:
@@ -53,26 +61,12 @@ def get_all_reports(session: Session) -> list:
     return session.query(Report).all()
 
 
-def get_tag(session: Session, tag_text: str) -> Tag:
+def tag(session: Session, tag_text: str) -> Tag:
     """Get a tag from the database or create a new if not exists."""
     try:
         return session.query(Tag).filter(Tag.text == tag_text).one()
     except NoResultFound:
-        return create_tag(session, tag_text)
-
-
-def create_tag(session: Session, tag_text: str) -> Tag:
-    """Create a tag in the database."""
-    tag = Tag(text=tag_text)
-    session.add(tag)
-    return tag
-
-
-def create_tag(session: Session, tag_text: str) -> Tag:
-    """Create a tag in the database."""
-    tag = Tag(text=tag_text)
-    session.add(tag)
-    return tag
+        return Tag(text=tag_text)
 
 
 def create_notebook(session: Session, notebook_name: str) -> Notebook:
@@ -100,13 +94,6 @@ def create_record(session: Session, record_name: str, notebook_id: int,
                     sample_id=sample_id)
     session.add(record)
     return record
-
-
-def create_user(session: Session, user_name: str, password: str) -> User:
-    """Create a user in the database."""
-    user = User(name=user_name, password=password)
-    session.add(user)
-    return user
 
 
 def create_role(session: Session, role_name: str) -> Role:
