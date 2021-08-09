@@ -101,6 +101,7 @@ class Task(ABC):
         self.signal = signal
         self.shots = shots
         self.calibration_level = calibration_level
+        self.no_record = False
         self._runtime = TaskRuntime()
 
     def __del__(self):
@@ -139,13 +140,16 @@ class Task(ABC):
     def set_record(self, dims: list[tuple[str, str]], vars: list[tuple[str,
                                                                        str]],
                    coords: dict[str, Sequence]) -> None:
+
+        if self.no_record:
+            return
         if self._runtime.record is not None:
             return
         dims, dims_units = list(zip(*dims))
         vars, vars_units = list(zip(*vars))
         file, key = self.data_path.split(':/')
-        # file = self.kernel.data_path / (file + '.hdf5')
-        file = self.kernel.data_path / (file + '.zip')
+        file = self.kernel.data_path / (file + '.hdf5')
+        #file = self.kernel.data_path / (file + '.zip')
         self._runtime.record = Record(str(file), key, dims, vars, dims_units,
                                       vars_units, coords)
         self._runtime.record.app = self.app_name
@@ -307,6 +311,7 @@ class UserInput(App):
         super().__init__()
         self.elements = None
         self.keys = keys
+        self.no_record = True
 
     def check(self):
         # never pass
@@ -324,7 +329,7 @@ class UserInput(App):
             self.set(key, input(f"{key} = "), cache=False)
 
     def result(self):
-        return None
+        return {'data': []}
 
 
 def _getAppClass(name: str) -> Type[App]:

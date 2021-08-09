@@ -64,6 +64,18 @@ class _ThreadWithKill(threading.Thread):
         self._kill_event.set()
 
 
+def _is_finished(task: Task) -> bool:
+    """Check if a task is finished."""
+    if task.kernel is None:
+        return False
+    finished_step = len(task.result()['data'])
+    return task._runtime.status not in [
+        'submiting', 'pending'
+    ] and finished_step >= task._runtime.step or task._runtime.status in [
+        'canceled', 'finished'
+    ]
+
+
 def join_task(task: Task, executor: Executor):
     try:
         while True:
@@ -71,11 +83,7 @@ def join_task(task: Task, executor: Executor):
                 break
             time.sleep(1)
 
-            if task._runtime.status not in ['submiting', 'pending'] and len(
-                    task.result()
-                ['data']) == task._runtime.step or task._runtime.status in [
-                    'canceled', 'finished'
-                ]:
+            if _is_finished(task):
                 executor.save(task.data_path, task.id)
                 task._runtime.finished_time = time.time()
                 if task._runtime.record is not None:
@@ -85,13 +93,14 @@ def join_task(task: Task, executor: Executor):
                     except Exception as e:
                         log.error(f"Failed to save record: {e}")
                 else:
-                    log.warning(f"No record for task {task.id}")
+                    log.warning(
+                        f"No record for task {task.app_name}({task.id})")
                 break
     except:
-        log.error(f"{task.id} is failed")
+        log.exception(f"{task.app_name}({task.id}) is failed")
         executor.free(task.id)
     finally:
-        log.debug(f'{task.id} is finished')
+        log.debug(f'{task.app_name}({task.id}) is finished')
         clean_side_effects(task, executor)
 
 
