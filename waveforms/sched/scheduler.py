@@ -7,16 +7,16 @@ import threading
 import time
 import uuid
 import warnings
-from waveforms.quantum.circuit.qlisp.config import Config
-from waveforms.quantum.circuit.qlisp.library import Library
 import weakref
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, NamedTuple, Optional, Union
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from waveforms.quantum.circuit.qlisp.config import Config
+from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import create_tables
 from waveforms.waveform import Waveform
 
@@ -62,6 +62,49 @@ class _ThreadWithKill(threading.Thread):
 
     def kill(self):
         self._kill_event.set()
+
+
+class StepStatus(NamedTuple):
+    index: tuple = ()
+    args: tuple = ()
+    optimized: bool = False
+    optimized_iteration: int = 0
+    iteration: int = 0
+
+
+def _args_generator(
+        iters=(), opt=None, args=(), index=(), max_opt_iter=0, counter=None):
+    if counter is None:
+        counter = itertools.count()
+    if len(iters) == 0:
+        if opt is not None:
+            yield from _opt_generator(opt, args, index, max_opt_iter, counter)
+        else:
+            yield StepStatus(index, args, False, 0, next(counter))
+    else:
+        current_iter = iters[0]
+        if callable(current_iter):
+            current_iter = current_iter(*args, index=index)
+        for i, a in enumerate(current_iter):
+            yield from _args_generator(iters[1:], opt, args + (a, ),
+                                       index + (i, ), max_opt_iter, counter)
+
+
+def _opt_generator(opt, args, index, max_opt_iter, counter):
+    def _is_optimized(suggested, last_suggested, max_opt_iter):
+        return (last_suggested is not None and suggested == last_suggested
+                or i > max_opt_iter)
+
+    last_suggested = None
+    for i in itertools.count():
+        suggested = opt.ask()
+        if _is_optimized(suggested, last_suggested, max_opt_iter):
+            yield StepStatus(index, args + tuple(opt.result), True, i,
+                             next(counter))
+            break
+        else:
+            last_suggested = suggested
+        yield StepStatus(index, args + suggested, False, i, next(counter))
 
 
 def _is_finished(task: Task) -> bool:
