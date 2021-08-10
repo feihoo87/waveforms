@@ -196,8 +196,9 @@ class QuarkExecutor(Executor):
         cmds = [(cmd.key, (type(cmd).__name__, cmd.value)) for cmd in cmds
                 if _is_feedable(cmd)]
 
-        self.conn.feed(task_id, task_step, cmds, extra=extra)
-        self.log.debug(f'feed({task_id}, {task_step}, {cmds}, extra={extra})')
+        priority = 0
+        self.conn.feed(priority, task_id, task_step, cmds, extra=extra)
+        self.log.debug(f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})')
 
     def free(self, task_id: int) -> None:
         """release resources of task
