@@ -1,7 +1,7 @@
 # waveforms
-[![View build status](https://travis-ci.com/feihoo87/waveforms.svg?branch=master)](https://travis-ci.com/feihoo87/waveforms)
+[![View build status](https://github.com/feihoo87/waveforms/actions/workflows/test.yml/badge.svg)](https://github.com/feihoo87/waveforms/)
 [![Coverage Status](https://coveralls.io/repos/github/feihoo87/waveforms/badge.svg?branch=master)](https://coveralls.io/github/feihoo87/waveforms?branch=master)
-[![PyPI version](https://badge.fury.io/py/waveforms.svg)](https://badge.fury.io/py/waveforms)
+[![PyPI version](https://badge.fury.io/py/waveforms.svg)](https://pypi.org/project/waveforms/)
 
 Form waveforms used in experiment.
 
