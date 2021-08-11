@@ -476,6 +476,6 @@ class Scheduler():
         Returns:
             a task
         """
-        task = create_task(app, args, kwds)
+        task = create_task((app, args, kwds))
         task._set_kernel(self)
         return task

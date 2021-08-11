@@ -102,8 +102,8 @@ class Task(ABC):
         self.calibration_level = calibration_level
         self.no_record = False
         self._runtime = TaskRuntime()
-        self.__db_sessions = {}
-        self.__kernel = None
+        self._db_sessions = {}
+        self._kernel = None
 
     def __del__(self):
         try:
@@ -116,10 +116,10 @@ class Task(ABC):
 
     @property
     def kernel(self):
-        return self.__kernel
+        return self._kernel
 
     def _set_kernel(self, kernel):
-        self.__kernel = kernel
+        self._kernel = kernel
 
     @property
     def db(self):
@@ -402,10 +402,10 @@ def create_task(taskInfo: Union[tuple, Task]) -> Task:
 def copy_task(task: Task) -> Task:
     memo = {
         id(task._runtime): TaskRuntime(),
-        id(task.kernel): None,
+        id(task._kernel): None,
         id(task.parent): None,
         id(task.container): None,
         id(task.id): None,
-        id(task.db): None,
+        id(task._db_sessions): None,
     }
     return copy.deepcopy(task, memo)
