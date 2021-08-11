@@ -498,28 +498,24 @@ class Report(Base):
     comments = relationship('Comment', secondary=report_comments)
 
     @property
-    def data(self):
-        with zipfile.ZipFile(self.file, 'r') as z:
-            with z.open(self.key) as f:
-                return pickle.loads(f.read())
+    def obj(self):
+        self.atime = datetime.utcnow()
+        with open(self.file, 'rb') as f:
+            data = pickle.load(f)
+        return data
 
-    @data.setter
-    def data(self, data):
-        Path(self.file).parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(self.file, 'a') as z:
-            with z.open(self.key + "/data.pickle", 'w') as f:
-                f.write(pickle.dumps(data))
-
-    @property
-    def images(self):
-        image_dir = zipfile.Path(self.file) / self.key / 'images'
-        return {i.name: i.read_bytes() for i in image_dir.iterdir()}
-
-    def add_image(self, name, image):
-        Path(self.file).parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(self.file, 'a') as z:
-            with z.open(self.key + "/images/" + name, 'w') as f:
-                f.write(image)
+    @obj.setter
+    def obj(self, data):
+        buf = pickle.dumps(data)
+        hashstr = hashlib.sha1(buf).hexdigest()
+        file = Path(
+            self.file
+        ).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
+        file.parent.mkdir(parents=True, exist_ok=True)
+        with open(file, 'wb') as f:
+            f.write(buf)
+        self.file = str(file)
+        return
 
 
 def create_tables(engine):
