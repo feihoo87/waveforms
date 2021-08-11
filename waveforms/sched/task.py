@@ -4,6 +4,7 @@ import copy
 import importlib
 import logging
 import sys
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -14,7 +15,7 @@ from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
 import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
-from waveforms.storage.models import Record
+from waveforms.storage.models import Record, Report
 
 
 class COMMAND():
@@ -96,13 +97,13 @@ class Task(ABC):
         self.parent = None
         self.container = None
         self.id = None
-        self.kernel = None
-        self.db = None
         self.signal = signal
         self.shots = shots
         self.calibration_level = calibration_level
         self.no_record = False
         self._runtime = TaskRuntime()
+        self.__db_sessions = {}
+        self.__kernel = None
 
     def __del__(self):
         try:
@@ -112,6 +113,20 @@ class Task(ABC):
 
     def __repr__(self):
         return f"{self.app_name}({self.id}, calibration_level={self.calibration_level})"
+
+    @property
+    def kernel(self):
+        return self.__kernel
+
+    def _set_kernel(self, kernel):
+        self.__kernel = kernel
+
+    @property
+    def db(self):
+        tid = threading.get_ident()
+        if tid not in self.__db_sessions:
+            self.__db_sessions[tid] = self.kernel.session()
+        return self.__db_sessions[tid]
 
     @property
     def app_name(self):
@@ -155,6 +170,16 @@ class Task(ABC):
         self._runtime.record.app = self.app_name
         self.db.add(self._runtime.record)
         self.db.commit()
+
+    def create_report(self) -> None:
+        """
+        create a report
+        """
+        file, key = self.data_path.split(':/')
+        file = self.kernel.data_path / (file + '.hdf5')
+
+        rp = Report(file=str(file), key=key)
+        return rp
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
         self._runtime.cmds.append(WRITE(key, value))
