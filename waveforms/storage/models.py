@@ -521,6 +521,10 @@ class Report(Base):
 def create_tables(engine):
     Base.metadata.create_all(engine)
 
+    sys_role = Role(name='sys')
+    kernel = User(name='BIG BROTHER')
+    kernel.roles.append(sys_role)
+    
     root_role = Role(name='root')
     admin_role = Role(name='admin')
     root_user = User(name='root')
@@ -539,5 +543,6 @@ def create_tables(engine):
     session = Session()
 
     session.add(root_user)
+    session.add(kernel)
     session.add_all([t1, t2, t3, t4, a])
     session.commit()
