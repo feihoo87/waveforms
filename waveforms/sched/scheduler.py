@@ -441,6 +441,8 @@ class Scheduler():
     def submit(self, task: Task) -> Task:
         """Submit a task.
         """
+        if task.status != 'not submited':
+            raise RuntimeError(f'Task({task.id}, status={task.status}) has been submited!')
         taskID = self.generate_task_id()
         task.id = taskID
         task._set_kernel(self)
