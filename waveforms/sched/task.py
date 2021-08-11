@@ -124,9 +124,9 @@ class Task(ABC):
     @property
     def db(self):
         tid = threading.get_ident()
-        if tid not in self.__db_sessions:
-            self.__db_sessions[tid] = self.kernel.session()
-        return self.__db_sessions[tid]
+        if tid not in self._db_sessions:
+            self._db_sessions[tid] = self.kernel.session()
+        return self._db_sessions[tid]
 
     @property
     def app_name(self):
