@@ -15,6 +15,7 @@ from typing import Any, Optional, Union
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import SingletonThreadPool
 from waveforms.quantum.circuit.qlisp.config import Config
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import create_tables
@@ -252,7 +253,10 @@ class Scheduler():
             url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
         self.db = url
         self.data_path = Path(data_path)
-        self.eng = create_engine(url, echo=debug_mode)
+        self.eng = create_engine(url,
+                                 echo=debug_mode,
+                                 poolclass=SingletonThreadPool,
+                                 connect_args={'check_same_thread': False})
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
