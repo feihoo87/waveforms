@@ -52,6 +52,7 @@ class TRIG(COMMAND):
 
 @dataclass
 class TaskRuntime():
+    priority: int = 0 # Priority of the task
     step: int = 0
     sub_index: int = 0
     status: str = 'not submited'

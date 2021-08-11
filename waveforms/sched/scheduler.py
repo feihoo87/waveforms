@@ -252,7 +252,7 @@ class Scheduler():
             url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
         self.db = url
         self.data_path = Path(data_path)
-        self.eng = create_engine(url)
+        self.eng = create_engine(url, echo=debug_mode)
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
