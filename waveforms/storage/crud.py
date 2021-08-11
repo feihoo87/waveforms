@@ -1,8 +1,10 @@
+from typing import Type, Union
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import NoResultFound
-
-from .models import (Cell, InputText, InvalidKey, Notebook, Record, Report,
-                     Role, Sample, SampleAccount, SampleTransfer, Tag, User)
+from sqlalchemy.orm import aliased, Query
+from .models import (Cell, Comment, InputText, InvalidKey, Notebook, Record,
+                     Report, Role, Sample, SampleAccount, SampleTransfer, Tag,
+                     User)
 
 
 def create_user(session: Session, user_name: str, password: str) -> User:
@@ -67,6 +69,37 @@ def tag(session: Session, tag_text: str) -> Tag:
         return session.query(Tag).filter(Tag.text == tag_text).one()
     except NoResultFound:
         return Tag(text=tag_text)
+
+
+def get_object_with_tags(session: Session,
+                         cls: Union[Type[Comment], Type[Sample], Type[Record],
+                                    Type[Report]], *tags: str) -> Query:
+    """
+    Query objects with the given tags.
+
+    Parameters
+    ----------
+    session : :class:`sqlalchemy.orm.Session`
+        The database session.
+    cls : :class:`sqlalchemy.orm.Mapper`
+        The object class.
+    tags : str
+        The tags.
+
+    Returns
+    -------
+    :class:`sqlalchemy.orm.Query`
+        The query.
+    """
+    if not hasattr(cls, 'tags'):
+        return []
+    q = session.query(cls)
+    aliase = {tag: aliased(Tag) for tag in tags}
+
+    for tag, a in aliase.items():
+        q = q.join(a, cls.tags)
+        q = q.filter(a.text == tag)
+    return q
 
 
 def create_notebook(session: Session, notebook_name: str) -> Notebook:
