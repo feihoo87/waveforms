@@ -91,13 +91,13 @@ def get_object_with_tags(session: Session,
     :class:`sqlalchemy.orm.Query`
         The query.
     """
-    if isinstance(cls, Query):
-        q = cls
+    if isinstance(session, Query):
+        q = session
     else:
-        if not hasattr(cls, 'tags'):
-            return []
         q = session.query(cls)
-        
+    if not hasattr(cls, 'tags'):
+        return []
+    
     aliase = {tag: aliased(Tag) for tag in tags}
 
     for tag, a in aliase.items():
