@@ -285,7 +285,8 @@ class QuarkConfig(ConfigProxy):
         ret, error = self.conn.query(q)
         #if error != 'None':
         #    raise KeyError(f"{q} not found")
-        _update(ret, u)
+        if isinstance(ret, dict):
+            _update(ret, u)
         self._cache_result(q, ret)
         return ret
 
