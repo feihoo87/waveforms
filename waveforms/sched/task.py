@@ -406,6 +406,6 @@ def copy_task(task: Task) -> Task:
         id(task.parent): None,
         id(task.container): None,
         id(task.id): None,
-        id(task._db_sessions): None,
+        id(task._db_sessions): {},
     }
     return copy.deepcopy(task, memo)
