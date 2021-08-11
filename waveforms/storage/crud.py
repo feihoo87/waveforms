@@ -68,7 +68,10 @@ def tag(session: Session, tag_text: str) -> Tag:
     try:
         return session.query(Tag).filter(Tag.text == tag_text).one()
     except NoResultFound:
-        return Tag(text=tag_text)
+        tag = Tag(text=tag_text)
+        session.add(tag)
+        session.commit()
+        return tag
 
 
 def get_object_with_tags(session: Session,
