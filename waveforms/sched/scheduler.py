@@ -281,14 +281,14 @@ class Scheduler():
         db = self.session()
         if username == 'BIG BROTHER' and password == self.__uuid:
             try:
-                user = db.query(User).filter(User.username == username).one()
+                user = db.query(User).filter(User.name == username).one()
             except NoResultFound:
-                user = User(username=username)
+                user = User(name=username)
                 db.add(user)
                 db.commit()
         else:
             try:
-                user = db.query(User).filter(User.username == username).one()
+                user = db.query(User).filter(User.name == username).one()
             except NoResultFound:
                 raise ValueError('User not found')
             if not user.verify(password):
