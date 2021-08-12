@@ -126,7 +126,7 @@ def diagnose(scheduler: Scheduler, task: Task) -> bool:
     Returns: True if node or dependent recalibrated.
     """
     # check data
-    result = task.check_data()
+    result = check_data(scheduler, task)
 
     # in spec case
     if result.suggested_calibration_level == 100:
