@@ -52,7 +52,7 @@ class TRIG(COMMAND):
 
 @dataclass
 class TaskRuntime():
-    priority: int = 0 # Priority of the task
+    priority: int = 0  # Priority of the task
     step: int = 0
     sub_index: int = 0
     status: str = 'not submited'
@@ -145,6 +145,14 @@ class Task(ABC):
     def cfg(self) -> Config:
         return self.kernel.cfg
 
+    @property
+    def runtime(self) -> TaskRuntime:
+        return self._runtime
+
+    @property
+    def record(self) -> Optional[Record]:
+        return self._runtime.record
+
     def is_children_of(self, task: Task) -> bool:
         return self.parent is not None and self.parent == task.id
 
@@ -163,19 +171,45 @@ class Task(ABC):
             return
         dims, dims_units = list(zip(*dims))
         vars, vars_units = list(zip(*vars))
-        file, key = self.data_path.split(':/')
-        file = self.kernel.data_path / (file + '.hdf5')
-        #file = self.kernel.data_path / (file + '.zip')
-        self._runtime.record = Record(str(file), key, dims, vars, dims_units,
-                                      vars_units, coords)
-        self._runtime.record.app = self.app_name
+        self._runtime.record = self.create_record()
         self.db.add(self._runtime.record)
         self.db.commit()
 
-    def create_report(self) -> None:
-        """
-        create a report
-        """
+    # def set_frame(self, dims: list[tuple[str, str]],
+    #                   vars: list[tuple[str, str]],
+    #                   coords: dict[str, Sequence]) -> None:
+    #     '''
+    #     set_frame(dims=['shots', 'cbits'], vars=['IQ', 'state'], coords={'shots': [0, 1, 2], 'cbits': [0, 1, 2]})
+    #     '''
+    #     pass
+
+    # def set_record(self, save_raw: bool = False, **kwargs) -> None:
+    #     """
+    #     Define the record for the task.
+
+    #     Args:
+    #         save_raw: whether to store raw data or not
+    #         kwargs: the data to be stored
+
+    #     Example:
+    #         def_record(save_raw=True,
+    #                    sigma_z={'mean': ['shots']},
+    #                    S_z={'mean': ['shots'], 'sum': ['cbits']},
+    #                    S_p={'std': ['shots']},)
+    #     """
+    #     pass
+
+    def create_record(self) -> Record:
+        """Create a record"""
+        file, key = self.data_path.split(':/')
+        file = self.kernel.data_path / (file + '.hdf5')
+
+        record = Record(file=str(file), key=key)
+        record.app = self.app_name
+        return record
+
+    def create_report(self) -> Report:
+        """create a report"""
         file, key = self.data_path.split(':/')
         file = self.kernel.data_path / (file + '.hdf5')
 

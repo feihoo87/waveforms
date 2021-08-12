@@ -14,11 +14,12 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from sqlalchemy import create_engine
+from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import SingletonThreadPool
 from waveforms.quantum.circuit.qlisp.config import Config
 from waveforms.quantum.circuit.qlisp.library import Library
-from waveforms.storage.models import create_tables
+from waveforms.storage.models import User, create_tables
 from waveforms.waveform import Waveform
 
 from .task import COMMAND, READ, WRITE, Task, create_task
@@ -242,7 +243,7 @@ class Scheduler():
                 `dialect+driver://username:password@host:port/database`
         """
         self.counter = itertools.count()
-        self.uuid = uuid.uuid1()
+        self.__uuid = uuid.uuid1()
         self._task_pool = {}
         self._queue = deque()
         self._waiting_pool = {}
@@ -261,6 +262,8 @@ class Scheduler():
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
 
+        self.system_user = self.login('BIG BROTHER', self.__uuid)
+
         self._read_data_thread = threading.Thread(target=waiting_loop,
                                                   args=(self._waiting_pool,
                                                         debug_mode),
@@ -273,6 +276,24 @@ class Scheduler():
                   self.executor),
             daemon=True)
         self._submit_thread.start()
+
+    def login(self, username: str, password: str) -> User:
+        db = self.session()
+        if username == 'BIG BROTHER' and password == self.__uuid:
+            try:
+                user = db.query(User).filter(User.username == username).one()
+            except NoResultFound:
+                user = User(username=username)
+                db.add(user)
+                db.commit()
+        else:
+            try:
+                user = db.query(User).filter(User.username == username).one()
+            except NoResultFound:
+                raise ValueError('User not found')
+            if not user.verify(password):
+                raise ValueError('Wrong password')
+        return user
 
     @property
     def cfg(self):
@@ -335,7 +356,7 @@ class Scheduler():
             await asyncio.sleep(1)
 
     def generate_task_id(self):
-        i = uuid.uuid3(self.uuid, f"{next(self.counter)}").int
+        i = uuid.uuid3(self.__uuid, f"{next(self.counter)}").int
         return i & ((1 << 64) - 1)
 
     def scan(self, task):
@@ -442,7 +463,8 @@ class Scheduler():
         """Submit a task.
         """
         if task.status != 'not submited':
-            raise RuntimeError(f'Task({task.id}, status={task.status}) has been submited!')
+            raise RuntimeError(
+                f'Task({task.id}, status={task.status}) has been submited!')
         taskID = self.generate_task_id()
         task.id = taskID
         task._set_kernel(self)
