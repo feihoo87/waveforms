@@ -15,8 +15,8 @@ from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
 import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
-from waveforms.storage.models import Record, Report
 from waveforms.storage.crud import tag
+from waveforms.storage.models import Record, Report
 
 
 class COMMAND():
@@ -67,7 +67,7 @@ class TaskRuntime():
     feedback_buffer: Any = None
     side_effects: dict = field(default_factory=dict)
     result: dict = field(default_factory=lambda: {
-        'index': [],
+        'index': {},
         'states': [],
         'counts': [],
         'diags': []

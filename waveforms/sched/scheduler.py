@@ -14,14 +14,15 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.pool import SingletonThreadPool
 from waveforms.quantum.circuit.qlisp.config import Config
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import User, create_tables
 from waveforms.waveform import Waveform
 
+from .scan_iters import scan_iters
 from .task import COMMAND, READ, WRITE, Task, create_task
 
 log = logging.getLogger(__name__)
@@ -195,16 +196,21 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
 
 def expand_task(task: Task, executor: Executor):
     task._runtime.step = 0
-    for args in task.scan_range():
+    iters = task.scan_range()
+    for step in scan_iters(iters):
         try:
             if threading.current_thread()._kill_event.is_set():
                 break
         except AttributeError:
             pass
-        task._runtime.result['index'].append(args)
+        for k, v in step.kwds.items():
+            if k in task._runtime.result['index']:
+                task._runtime.result['index'][k].append(v)
+            else:
+                task._runtime.result['index'][k] = [v]
         task._runtime.dataMaps.append({})
         task._runtime.cmds = []
-        yield args
+        yield step
         task.trig()
         cmds = task._runtime.cmds
         task._runtime.cmds_list.append(task._runtime.cmds)
