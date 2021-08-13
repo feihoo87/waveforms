@@ -9,18 +9,13 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-
 """
 Exception for errors raised while parsing OPENQASM.
 """
 
-class Error(Exception):
-    pass
 
-
-class QasmError(Error):
+class QasmError(SyntaxError):
     """Base class for errors raised while parsing OPENQASM."""
-
     def __init__(self, *msg):
         """Set the error message."""
         super().__init__(*msg)

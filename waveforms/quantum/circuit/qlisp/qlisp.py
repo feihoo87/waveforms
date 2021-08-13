@@ -16,7 +16,7 @@ def gateName(st):
         return st[0][0]
 
 
-class QLispError(Exception):
+class QLispError(SyntaxError):
     pass
 
 

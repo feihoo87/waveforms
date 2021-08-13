@@ -4,6 +4,7 @@ from typing import Optional
 from ..qasm import Qasm
 from ..qasm.node import *
 from .library import Library
+from .qlisp import QLispError
 
 __qindex = 0
 __cindex = 0
@@ -33,7 +34,7 @@ def get_name(name, scope):
         if name in s:
             return s[name]
     else:
-        raise Exception(f'Undefined {name:r}')
+        raise QLispError(f'Undefined {name:r}')
 
 
 def get_sym(ID, scope, index=None):
@@ -44,7 +45,7 @@ def get_sym(ID, scope, index=None):
         else:
             return ID
     if ID.name not in scope[-1]:
-        raise NodeException(
+        raise QLispError(
             "Expected local parameter name: ",
             "name=%s, line=%s, file=%s" % (ID.name, ID.line, ID.file))
     if isinstance(ID, IndexedId):
@@ -124,7 +125,7 @@ def qasm_eval_prog(prog, scope=None):
             elif isinstance(gate, Gate):
                 yield from qasm_eval_prog(gate.body, [*scope, sub_scope])
             else:
-                raise Exception(f"{st.name:r} is not gate nor opaque")
+                raise QLispError(f"{st.name:r} is not gate nor opaque")
         elif isinstance(st, If):
             yield from qasm_eval_if(st, scope)
         elif isinstance(st, Format):
