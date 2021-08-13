@@ -101,7 +101,7 @@ class TagSet(set):
 
 def update_tags(sender: TagSet, tag_text, obj: Any, tag_set_id, db) -> None:
     if id(sender) == tag_set_id:
-        obj.tags.add(tag(db, tag_text))
+        obj.tags.append(tag(db, tag_text))
 
 
 class Task(ABC):
