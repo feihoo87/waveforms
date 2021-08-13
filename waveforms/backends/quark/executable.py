@@ -34,7 +34,7 @@ def getCommands(code, signal='state', shots=1024):
         cmds.append(WRITE(key, wav))
 
     ADInfo = {}
-    dataMap = {}
+    dataMap = {'cbits': {}}
     readChannels = set()
     for cbit in sorted(code.measures.keys()):
         task = code.measures[cbit][-1]
@@ -61,7 +61,8 @@ def getCommands(code, signal='state', shots=1024):
         ADInfo[ad]['w'].append(w)
         ADInfo[ad]['fList'].append(Delta)
         ADInfo[ad]['tasks'].append(task)
-        dataMap[cbit] = (ad, len(ADInfo[ad]['fList']) - 1, Delta, task.params)
+        dataMap['cbits'][cbit] = (ad, len(ADInfo[ad]['fList']) - 1, Delta,
+                                  task.params)
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
@@ -90,7 +91,7 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     result = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
 
     min_shots = np.inf
-    for cbit in sorted(dataMap):
+    for cbit in sorted(dataMap['cbits']):
         ch, i, Delta, params = dataMap[cbit]
         gate_list.append({'params': params})
         try:
@@ -198,7 +199,8 @@ class QuarkExecutor(Executor):
 
         priority = 0
         self.conn.feed(priority, task_id, task_step, cmds, extra=extra)
-        self.log.debug(f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})')
+        self.log.debug(
+            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})')
 
     def free(self, task_id: int) -> None:
         """release resources of task
