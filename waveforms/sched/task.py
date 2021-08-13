@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import blinker
 import copy
 import importlib
 import logging
@@ -17,6 +17,7 @@ from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.crud import tag
 from waveforms.storage.models import Record, Report
+import functools
 
 
 class COMMAND():
@@ -85,6 +86,24 @@ SIGNAL = Literal['trace', 'raw', 'state', 'count', 'diag']
 QLisp = list[tuple]
 
 
+class TagSet(set):
+    updated = blinker.signal('updated')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def add(self, tag: str):
+        if tag in self:
+            return
+        super().add(tag)
+        self.updated.send(self, tag_text=tag)
+
+
+def update_tags(sender: TagSet, tag_text, obj: Any, tag_set_id, db) -> None:
+    if id(sender) == tag_set_id:
+        obj.tags.add(tag(db, tag_text))
+
+
 class Task(ABC):
     def __init__(self,
                  signal: SIGNAL = 'count',
@@ -106,7 +125,7 @@ class Task(ABC):
         self._runtime = TaskRuntime()
         self._db_sessions = {}
         self._kernel = None
-        self.tags: set = set()
+        self.tags: set = TagSet()
 
     def __del__(self):
         try:
@@ -210,6 +229,11 @@ class Task(ABC):
         record.app = self.app_name
         for tag_text in self.tags:
             record.tags.append(tag(self.db, tag_text))
+        self.tags.updated.connect(
+            functools.partial(update_tags,
+                              obj=record,
+                              db=self.db,
+                              tag_set_id=id(self.tags)))
         return record
 
     def create_report(self) -> Report:
@@ -220,6 +244,11 @@ class Task(ABC):
         rp = Report(file=str(file), key=key)
         for tag_text in self.tags:
             rp.tags.append(tag(self.db, tag_text))
+        self.tags.updated.connect(
+            functools.partial(update_tags,
+                              obj=rp,
+                              db=self.db,
+                              tag_set_id=id(self.tags)))
         return rp
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
@@ -237,6 +266,13 @@ class Task(ABC):
              lib: Optional[Library] = None,
              cfg: Union[Config, ConfigProxy, None] = None,
              compile_once: bool = False):
+
+        for _, qubits in circuit:
+            if not isinstance(qubits, tuple):
+                qubits = (qubits,)
+            for qubit in qubits:
+                self.tags.add(qubit)
+
         step = self.kernel._exec(self,
                                  circuit,
                                  lib=lib,
