@@ -73,6 +73,12 @@ def _call_func_with_kwds(func, kwds):
     return func(**kw)
 
 
+def _try_to_call(x, kwds):
+    if callable(x):
+        return _call_func_with_kwds(x, kwds)
+    return x
+
+
 def _args_generator(iters: dict,
                     kwds: dict = {},
                     pos=(),
@@ -96,12 +102,7 @@ def _args_generator(iters: dict,
     if not _is_multi_step(keys, current_iters):
         keys = (keys, )
         current_iters = (current_iters, )
-    iter_list = []
-    for current_iter in current_iters:
-        if callable(current_iter):
-            iter_list.append(_call_func_with_kwds(current_iter, kwds))
-        else:
-            iter_list.append(current_iter)
+    iter_list = [_try_to_call(it, kwds) for it in current_iters]
     for i, values in enumerate(zip(*iter_list)):
         yield from _args_generator(iters, kwds | dict(zip(keys, values)),
                                    pos + (i, ), optimizer_status, filter)
