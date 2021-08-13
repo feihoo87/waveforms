@@ -158,6 +158,12 @@ def _opt_generator(iters: dict,
                     opt.tell(suggested, fun)
 
 
+def _find_diff_pos(a: tuple, b: tuple):
+    for i, (x, y) in enumerate(zip(a, b)):
+        if x != y:
+            return i
+
+
 def scan_iters(
         iters: dict,
         filter: Optional[Callable[..., bool]] = None) -> Iterable[StepStatus]:
@@ -168,17 +174,9 @@ def scan_iters(
     for step in _args_generator(iters, filter=filter):
         if last_pos is None:
             index = step.pos
-            yield StepStatus(step.pos, step.kwds, step.iteration, index,
-                             step.optimizer_status)
         else:
-            index = list(index)
-            for i, (p1, p2) in enumerate(zip(last_pos, step.pos)):
-                if p1 != p2:
-                    index[i] += 1
-                    for j in range(i + 1, len(index)):
-                        index[j] = 0
-                    break
-            yield StepStatus(step.pos, step.kwds, step.iteration, tuple(index),
-                             step.optimizer_status)
-
+            i = _find_diff_pos(last_pos, step.pos)
+            index = tuple((j <= i) * n + (j == i) for j, n in enumerate(index))
+        yield StepStatus(step.pos, step.kwds, step.iteration, index,
+                         step.optimizer_status)
         last_pos = step.pos
