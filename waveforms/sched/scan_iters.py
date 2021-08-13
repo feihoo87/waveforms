@@ -1,7 +1,7 @@
 import inspect
 from collections import deque
 from itertools import chain, count
-from typing import Iterable, NamedTuple, Type, Union
+from typing import Callable, Iterable, NamedTuple, Optional, Type, Union
 
 from skopt import Optimizer
 
@@ -50,9 +50,10 @@ class OptimizerStatus(NamedTuple):
 
 
 class StepStatus(NamedTuple):
-    index: tuple = ()
+    pos: tuple = ()
     kwds: dict = {}
     iteration: int = 0
+    index: tuple = ()
     optimizer_status: tuple = ()
 
 
@@ -66,23 +67,32 @@ def _is_optimize_step(keys, iters):
         iters, tuple) and isinstance(iters[0], OptimizerConfig)
 
 
+def _call_func_with_kwds(func, kwds):
+    sig = inspect.signature(func)
+    kw = {k: v for k, v in kwds.items() if k in sig.parameters}
+    return func(**kw)
+
+
 def _args_generator(iters: dict,
                     kwds: dict = {},
-                    index=(),
+                    pos=(),
                     counter=None,
-                    optimizer_status=()):
+                    optimizer_status=(),
+                    filter=None):
     if counter is None:
         counter = count()
+
     if len(iters) == 0:
-        yield StepStatus(index, kwds, next(counter), optimizer_status)
+        if filter is None or _call_func_with_kwds(filter, kwds):
+            yield StepStatus(pos, kwds, next(counter), (), optimizer_status)
         return
 
     iters = iters.copy()
     keys, current_iters = iters.popitem()
     if _is_optimize_step(keys, current_iters):
         opts = current_iters
-        yield from _opt_generator(iters, kwds, index, counter,
-                                  optimizer_status, keys, opts)
+        yield from _opt_generator(iters, kwds, pos, counter, optimizer_status,
+                                  keys, opts)
     else:
         if not _is_multi_step(keys, current_iters):
             keys = (keys, )
@@ -90,22 +100,22 @@ def _args_generator(iters: dict,
         iter_list = []
         for current_iter in current_iters:
             if callable(current_iter):
-                sig = inspect.signature(current_iter)
-                kw = {k: v for k, v in kwds.items() if k in sig.parameters}
-                current_iter = current_iter(**kw)
-                iter_list.append(current_iter)
+                iter_list.append(_call_func_with_kwds(current_iter, kwds))
             else:
                 iter_list.append(current_iter)
         for i, a in enumerate(zip(*iter_list)):
             yield from _args_generator(iters, kwds | dict(zip(keys, a)),
-                                       index + (i, ), counter,
-                                       optimizer_status)
+                                       pos + (i, ), counter, optimizer_status)
 
 
-def _opt_generator(iters: dict, kwds: dict, index: tuple[int],
-                   counter: Iterable, optimizer_status: tuple,
+def _opt_generator(iters: dict,
+                   kwds: dict,
+                   pos: tuple[int],
+                   counter: Iterable,
+                   optimizer_status: tuple,
                    opt_keys: tuple[str, ...],
-                   opts: Union[OptimizerConfig, tuple[OptimizerConfig, ...]]):
+                   opts: Union[OptimizerConfig, tuple[OptimizerConfig, ...]],
+                   filter=None):
     def _is_optimized(suggested, last_suggested, max_opt_iter):
         return (last_suggested is not None and suggested == last_suggested
                 or i >= max_opt_iter)
@@ -121,18 +131,26 @@ def _opt_generator(iters: dict, kwds: dict, index: tuple[int],
         if _is_optimized(suggested, last_suggested, max_opt_iter):
             o = OptimizerStatus(opt_keys, suggested, True, i, proxy)
             yield from _args_generator(
-                iters, kwds | dict(
+                iters,
+                kwds | dict(
                     zip(opt_keys, chain(*(opt.get_result().x
-                                          for opt in opts)))), index + (i, ),
-                counter, optimizer_status + (o, ))
+                                          for opt in opts)))),
+                pos + (i, ),
+                counter,
+                optimizer_status + (o, ),
+                filter=filter)
             break
         else:
             last_suggested = suggested
 
             o = OptimizerStatus(opt_keys, suggested, False, i, proxy)
             yield from _args_generator(
-                iters, kwds | dict(zip(opt_keys, chain(*suggested))),
-                index + (i, ), counter, optimizer_status + (o, ))
+                iters,
+                kwds | dict(zip(opt_keys, chain(*suggested))),
+                pos + (i, ),
+                counter,
+                optimizer_status + (o, ),
+                filter=filter)
         for feedback in proxy():
             if len(opts) == 1:
                 suggested, fun = feedback
@@ -142,6 +160,27 @@ def _opt_generator(iters: dict, kwds: dict, index: tuple[int],
                     opt.tell(suggested, fun)
 
 
-def scan_iters(iters: dict) -> Iterable[StepStatus]:
+def scan_iters(
+        iters: dict,
+        filter: Optional[Callable[..., bool]] = None) -> Iterable[StepStatus]:
     iters = {k: iters[k] for k in reversed(iters)}
-    yield from _args_generator(iters)
+
+    last_pos = None
+    index = ()
+    for step in _args_generator(iters, filter=filter):
+        if last_pos is None:
+            index = step.pos
+            yield StepStatus(step.pos, step.kwds, step.iteration, index,
+                             step.optimizer_status)
+        else:
+            index = list(index)
+            for i, (p1, p2) in enumerate(zip(last_pos, step.pos)):
+                if p1 != p2:
+                    index[i] += 1
+                    for j in range(i + 1, len(index)):
+                        index[j] = 0
+                    break
+            yield StepStatus(step.pos, step.kwds, step.iteration, tuple(index),
+                             step.optimizer_status)
+
+        last_pos = step.pos
