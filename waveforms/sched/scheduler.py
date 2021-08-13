@@ -167,7 +167,6 @@ def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
            running_pool: dict[int, tuple[Task, _ThreadWithKill]],
            executor: Executor):
     executor.free(task.id)
-    executor.submit(task.id, {})
     task._runtime.status = 'submiting'
     submit_thread = _ThreadWithKill(target=task.main)
     current_stack.append((task, submit_thread))

@@ -217,9 +217,9 @@ class QuarkExecutor(Executor):
         self.free(-1000)
         self.log.debug('free(-1000)')
 
-    def submit(self, task_id: int, data_template: dict) -> None:
-        self.conn.submit(task_id, data_template)
-        self.log.debug(f'submit({task_id}, {data_template})')
+    def submit(self, task_info: dict) -> None:
+        self.conn.submit(task_info)
+        self.log.debug(f'submit({task_info})')
 
     def fetch(self, task_id: int, skip: int = 0) -> list:
         """get results of task
