@@ -14,7 +14,7 @@ class OptimizerConfig(NamedTuple):
     max_iters: int = 100
 
 
-class FeedbackProxy():
+class FeedbackPipe():
     __slots__ = (
         'opt_keys',
         '_queue',
@@ -46,7 +46,7 @@ class OptimizerStatus(NamedTuple):
     suggested: tuple = ()
     optimized: bool = False
     iteration: int = 0
-    proxy: FeedbackProxy = None
+    pipe: FeedbackPipe = None
 
 
 class StepStatus(NamedTuple):
@@ -116,7 +116,7 @@ def _opt_generator(iters: dict,
                    opts: Union[OptimizerConfig, tuple[OptimizerConfig, ...]],
                    filter=None):
 
-    proxy = FeedbackProxy(opt_keys)
+    pipe = FeedbackPipe(opt_keys)
     opts = (opts, ) if isinstance(opts, OptimizerConfig) else opts
     max_opt_iter = max(o.max_iters for o in opts)
     opts = [o.cls(o.dimensions, *o.args, **o.kwds) for o in opts]
@@ -133,7 +133,7 @@ def _opt_generator(iters: dict,
                 kw = dict(zip(opt_keys, chain(*result)))
             except:
                 pass
-        o = OptimizerStatus(opt_keys, suggested, optimized, i, proxy)
+        o = OptimizerStatus(opt_keys, suggested, optimized, i, pipe)
         yield from _args_generator(iters,
                                    kwds | kw,
                                    pos + (i, ),
@@ -141,7 +141,7 @@ def _opt_generator(iters: dict,
                                    filter=filter)
         if optimized:
             break
-        for feedback in proxy():
+        for feedback in pipe():
             if len(opts) == 1:
                 suggested, fun = feedback
                 opts[0].tell(suggested, fun)
