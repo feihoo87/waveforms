@@ -92,7 +92,7 @@ def _args_generator(iters: dict,
     if _is_optimize_step(keys, current_iters):
         opts = current_iters
         yield from _opt_generator(iters, kwds, pos, counter, optimizer_status,
-                                  keys, opts)
+                                  keys, opts, filter)
     else:
         if not _is_multi_step(keys, current_iters):
             keys = (keys, )
@@ -105,7 +105,8 @@ def _args_generator(iters: dict,
                 iter_list.append(current_iter)
         for i, a in enumerate(zip(*iter_list)):
             yield from _args_generator(iters, kwds | dict(zip(keys, a)),
-                                       pos + (i, ), counter, optimizer_status)
+                                       pos + (i, ), counter, optimizer_status,
+                                       filter)
 
 
 def _opt_generator(iters: dict,
@@ -116,41 +117,38 @@ def _opt_generator(iters: dict,
                    opt_keys: tuple[str, ...],
                    opts: Union[OptimizerConfig, tuple[OptimizerConfig, ...]],
                    filter=None):
-    def _is_optimized(suggested, last_suggested, max_opt_iter):
-        return (last_suggested is not None and suggested == last_suggested
-                or i >= max_opt_iter)
 
     proxy = FeedbackProxy(opt_keys)
     opts = (opts, ) if isinstance(opts, OptimizerConfig) else opts
     max_opt_iter = max(o.max_iters for o in opts)
     opts = [o.cls(o.dimensions, *o.args, **o.kwds) for o in opts]
 
-    last_suggested = None
     for i in count():
         suggested = tuple(tuple(opt.ask()) for opt in opts)
-        if _is_optimized(suggested, last_suggested, max_opt_iter):
+        kw = dict(zip(opt_keys, chain(*suggested)))
+        if i >= max_opt_iter:
             o = OptimizerStatus(opt_keys, suggested, True, i, proxy)
-            yield from _args_generator(
-                iters,
-                kwds | dict(
-                    zip(opt_keys, chain(*(opt.get_result().x
-                                          for opt in opts)))),
-                pos + (i, ),
-                counter,
-                optimizer_status + (o, ),
-                filter=filter)
+            try:
+                kw = dict(
+                    zip(opt_keys,
+                        chain(*(opt.get_result().x for opt in opts))))
+            except:
+                pass
+            yield from _args_generator(iters,
+                                       kwds | kw,
+                                       pos + (i, ),
+                                       counter,
+                                       optimizer_status + (o, ),
+                                       filter=filter)
             break
         else:
-            last_suggested = suggested
-
             o = OptimizerStatus(opt_keys, suggested, False, i, proxy)
-            yield from _args_generator(
-                iters,
-                kwds | dict(zip(opt_keys, chain(*suggested))),
-                pos + (i, ),
-                counter,
-                optimizer_status + (o, ),
-                filter=filter)
+            yield from _args_generator(iters,
+                                       kwds | kw,
+                                       pos + (i, ),
+                                       counter,
+                                       optimizer_status + (o, ),
+                                       filter=filter)
         for feedback in proxy():
             if len(opts) == 1:
                 suggested, fun = feedback
