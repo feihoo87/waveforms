@@ -1,6 +1,7 @@
 from __future__ import annotations
-import blinker
+
 import copy
+import functools
 import importlib
 import logging
 import sys
@@ -12,12 +13,12 @@ from functools import cached_property
 from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
                     Type, Union)
 
+import blinker
 import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.crud import tag
 from waveforms.storage.models import Record, Report
-import functools
 
 
 class COMMAND():
