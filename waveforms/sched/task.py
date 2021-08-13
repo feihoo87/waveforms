@@ -269,7 +269,7 @@ class Task(ABC):
 
         for _, qubits in circuit:
             if not isinstance(qubits, tuple):
-                qubits = (qubits,)
+                qubits = (qubits, )
             for qubit in qubits:
                 self.tags.add(qubit)
 
@@ -362,9 +362,11 @@ class Task(ABC):
 
         try:
             i = len(self._runtime.data)
-            a = self.kernel.fetch(self, i)
+            additional = self.kernel.fetch(self, i)
+            if isinstance(additional, str):
+                additional = []
             for step, (raw_data,
-                       dataMap) in enumerate(zip(a,
+                       dataMap) in enumerate(zip(additional,
                                                  self._runtime.dataMaps[i:]),
                                              start=i):
                 result = assymblyData(raw_data, dataMap, self.signal)
