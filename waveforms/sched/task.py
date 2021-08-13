@@ -16,6 +16,7 @@ import numpy as np
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import Record, Report
+from waveforms.storage.crud import tag
 
 
 class COMMAND():
@@ -105,6 +106,7 @@ class Task(ABC):
         self._runtime = TaskRuntime()
         self._db_sessions = {}
         self._kernel = None
+        self.tags: set = set()
 
     def __del__(self):
         try:
@@ -206,6 +208,8 @@ class Task(ABC):
 
         record = Record(file=str(file), key=key)
         record.app = self.app_name
+        for tag_text in self.tags:
+            record.tags.append(tag(self.db, tag_text))
         return record
 
     def create_report(self) -> Report:
@@ -214,6 +218,8 @@ class Task(ABC):
         file = self.kernel.data_path / (file + '.hdf5')
 
         rp = Report(file=str(file), key=key)
+        for tag_text in self.tags:
+            rp.tags.append(tag(self.db, tag_text))
         return rp
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
