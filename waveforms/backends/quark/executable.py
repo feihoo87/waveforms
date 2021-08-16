@@ -92,7 +92,7 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
 
     min_shots = np.inf
     for cbit in sorted(dataMap['cbits']):
-        ch, i, Delta, params = dataMap[cbit]
+        ch, i, Delta, params = dataMap['cbits'][cbit]
         gate_list.append({'params': params})
         try:
             key = f'{ch}.IQ'

@@ -87,7 +87,7 @@ def join_task(task: Task, executor: Executor):
             time.sleep(1)
 
             if _is_finished(task):
-                executor.save(task.data_path, task.id)
+                executor.save(task.id, task.data_path)
                 task._runtime.finished_time = time.time()
                 if task._runtime.record is not None:
                     try:
