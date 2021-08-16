@@ -222,7 +222,7 @@ def expand_task(task: Task, executor: Executor):
             task.runtime.prog.side_effects.setdefault(k, v)
 
         executor.feed(task.id, task.runtime.step, cmds, extra={})
-        for cmd in task.runtime.cmds:
+        for cmd in cmds:
             if isinstance(cmd.value, Waveform):
                 task.runtime.prog.side_effects[cmd.address] = 'zero()'
         task.runtime.step += 1
