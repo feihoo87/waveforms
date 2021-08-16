@@ -73,9 +73,9 @@ def _is_finished(task: Task) -> bool:
     if task.kernel is None:
         return False
     finished_step = len(task.result()['data'])
-    return task._runtime.status not in [
+    return task.status not in [
         'submiting', 'pending'
-    ] and finished_step >= task._runtime.step or task._runtime.status in [
+    ] and finished_step >= task.runtime.step or task.status in [
         'canceled', 'finished'
     ]
 
@@ -89,10 +89,10 @@ def join_task(task: Task, executor: Executor):
 
             if _is_finished(task):
                 executor.save(task.id, task.data_path)
-                task._runtime.finished_time = time.time()
-                if task._runtime.record is not None:
+                task.runtime.finished_time = time.time()
+                if task.runtime.record is not None:
                     try:
-                        task._runtime.record.data = task.result()
+                        task.runtime.record.data = task.result()
                         task.db.commit()
                     except Exception as e:
                         log.error(f"Failed to save record: {e}")
@@ -110,11 +110,10 @@ def join_task(task: Task, executor: Executor):
 
 def clean_side_effects(task: Task, executor: Executor):
     cmds = []
-    for k, v in task._runtime.side_effects.items():
+    for k, v in task.runtime.prog.side_effects.items():
         cmds.append(WRITE(k, v))
         executor.update(k, v, cache=False)
     executor.feed(task.id, -1, cmds)
-    task._runtime.side_effects.clear()
     task.cfg.clear_buffer()
 
 
@@ -124,18 +123,18 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
     from waveforms import compile
     from waveforms.backends.quark.executable import getCommands
 
-    if task._runtime.step == 0 or not compile_once:
+    if task.runtime.step == 0 or not compile_once:
         code = compile(circuit, lib=lib, cfg=cfg)
         cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
-        task._runtime.cmds.extend(cmds)
-        task._runtime.dataMaps[-1].update(dataMap)
+        task.runtime.cmds.extend(cmds)
+        task.runtime.prog.data_maps[-1].update(dataMap)
     else:
-        for cmd in task._runtime.cmds_list[-1]:
+        for cmd in task.runtime.prog.commands[-1]:
             if (isinstance(cmd, READ) or cmd.address.endswith('.StartCapture')
                     or cmd.address.endswith('.CaptureMode')):
-                task._runtime.cmds.append(cmd)
-        task._runtime.dataMaps[-1] = task._runtime.dataMaps[0]
-    return task._runtime.step
+                task.runtime.cmds.append(cmd)
+        task.runtime.prog.data_maps[-1] = task.runtime.prog.data_maps[0]
+    return task.runtime.step
 
 
 def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
@@ -149,7 +148,7 @@ def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
             if thread.is_alive():
                 current_stack.append((current_task, thread))
             else:
-                current_task._runtime.status = 'running'
+                current_task.runtime.status = 'running'
 
         try:
             task = task_queue.popleft()
@@ -168,10 +167,10 @@ def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
            running_pool: dict[int, tuple[Task, _ThreadWithKill]],
            executor: Executor):
     executor.free(task.id)
-    task._runtime.status = 'submiting'
+    task.runtime.status = 'submiting'
     submit_thread = _ThreadWithKill(target=task.main)
     current_stack.append((task, submit_thread))
-    task._runtime.started_time = time.time()
+    task.runtime.started_time = time.time()
     submit_thread.start()
 
     fetch_data_thread = _ThreadWithKill(target=join_task,
@@ -190,12 +189,12 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
                         del running_pool[taskID]
                 except:
                     pass
-                task._runtime.status = 'finished'
+                task.runtime.status = 'finished'
         time.sleep(0.01)
 
 
 def expand_task(task: Task, executor: Executor):
-    task._runtime.step = 0
+    task.runtime.step = 0
     iters = task.scan_range()
     for step in scan_iters(iters):
         try:
@@ -203,24 +202,30 @@ def expand_task(task: Task, executor: Executor):
                 break
         except AttributeError:
             pass
+
+        task.runtime.prog.index.append(step)
+        task.runtime.prog.data_maps.append({})
+
         for k, v in step.kwds.items():
-            if k in task._runtime.result['index']:
-                task._runtime.result['index'][k].append(v)
+            if k in task.runtime.result['index']:
+                task.runtime.result['index'][k].append(v)
             else:
-                task._runtime.result['index'][k] = [v]
-        task._runtime.dataMaps.append({})
-        task._runtime.cmds = []
+                task.runtime.result['index'][k] = [v]
+
+        task.runtime.cmds = []
         yield step
         task.trig()
-        cmds = task._runtime.cmds
-        task._runtime.cmds_list.append(task._runtime.cmds)
+        cmds = task.runtime.cmds
+        task.runtime.prog.commands.append(task.runtime.cmds)
+
         for k, v in task.cfg._history.items():
-            task._runtime.side_effects.setdefault(k, v)
-        executor.feed(task.id, task._runtime.step, cmds, extra={})
-        for cmd in task._runtime.cmds:
+            task.runtime.prog.side_effects.setdefault(k, v)
+
+        executor.feed(task.id, task.runtime.step, cmds, extra={})
+        for cmd in task.runtime.cmds:
             if isinstance(cmd.value, Waveform):
-                task._runtime.side_effects[cmd.address] = 'zero()'
-        task._runtime.step += 1
+                task.runtime.prog.side_effects[cmd.address] = 'zero()'
+        task.runtime.step += 1
 
 
 class Scheduler():
@@ -322,16 +327,16 @@ class Scheduler():
         while self._submit_stack:
             task, thread = self._submit_stack.pop()
             thread.kill()
-            task._runtime.status = 'canceled'
+            task.runtime.status = 'canceled'
 
         while self._waiting_result:
             task_id, (task, thread) = self._waiting_result.popitem()
             thread.kill()
-            task._runtime.status = 'canceled'
+            task.runtime.status = 'canceled'
 
     def join(self, task):
         while True:
-            if task._runtime.status == 'finished':
+            if task.status == 'finished':
                 break
             time.sleep(1)
 
@@ -352,7 +357,7 @@ class Scheduler():
 
     async def join_async(self, task):
         while True:
-            if task._runtime.status == 'finished':
+            if task.status == 'finished':
                 break
             await asyncio.sleep(1)
 
@@ -411,7 +416,7 @@ class Scheduler():
 
             def main(self):
                 for _ in self.scan():
-                    self._runtime.cmds.extend(cmds)
+                    self.runtime.cmds.extend(cmds)
                     self.exec(circuit, lib=lib, cfg=cfg)
 
         t = A()
@@ -423,9 +428,9 @@ class Scheduler():
         if labels is None:
             labels = keys
         dataMap = {label: key for key, label in zip(keys, labels)}
-        task._runtime.dataMaps[-1].update(dataMap)
+        task.runtime.prog.data_maps[-1].update(dataMap)
         cmds = [(key, READ) for key in keys]
-        task._runtime.cmds.extend(cmds)
+        task.runtime.cmds.extend(cmds)
 
     def measure(self, keys, labels=None, cmds=[]):
         pass
@@ -467,9 +472,8 @@ class Scheduler():
             raise RuntimeError(
                 f'Task({task.id}, status={task.status}) has been submited!')
         taskID = self.generate_task_id()
-        task.id = taskID
-        task._set_kernel(self)
-        task._runtime.status = 'pending'
+        task._set_kernel(self, taskID)
+        task.runtime.status = 'pending'
         self._queue.append(task)
 
         def delete(ref, dct, key):
@@ -484,14 +488,6 @@ class Scheduler():
 
     def update(self, key, value, cache=False):
         self.executor.update(key, value, cache=cache)
-
-    def feedback(self, task, obj):
-        task._runtime.feedback_buffer = obj
-
-    def get_feedback(self, task):
-        obj = task._runtime.feedback_buffer
-        task._runtime.feedback_buffer = None
-        return obj
 
     def create_task(self, app, args=(), kwds={}):
         """

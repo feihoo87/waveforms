@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import functools
 import inspect
 import itertools
 import logging
@@ -13,8 +14,7 @@ from typing import (Any, Generator, Iterable, Literal, NamedTuple, Optional,
                     Sequence, Type, Union)
 
 from sqlalchemy.orm.session import Session
-from waveforms.storage.models import User
-import functools
+from waveforms.storage.models import Record, Report, User
 
 
 class COMMAND():
@@ -104,6 +104,7 @@ class Program:
     """
     with_feedback: bool = False
 
+    index: list = field(default_factory=list)
     commands: list[list[COMMAND]] = field(default_factory=list)
     data_maps: list[dict] = field(default_factory=list)
     side_effects: dict = field(default_factory=dict)
@@ -132,7 +133,18 @@ class TaskRuntime():
 
     prog: Program = field(default_factory=Program)
 
-    data: object = None
+    #################################################
+    step: int = 0
+    sub_index: int = 0
+    data: list = field(default_factory=list)
+    cmds: list = field(default_factory=list)
+    result: dict = field(default_factory=lambda: {
+        'index': {},
+        'states': [],
+        'counts': [],
+        'diags': []
+    })
+    record: Optional[Record] = None
 
 
 class AnalyzeResult(NamedTuple):

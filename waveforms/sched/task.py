@@ -26,30 +26,6 @@ from .base import TaskRuntime
 
 
 @dataclass
-class TaskRuntime():
-    priority: int = 0  # Priority of the task
-    step: int = 0
-    sub_index: int = 0
-    status: str = 'not submited'
-    created_time: float = field(default_factory=time.time)
-    started_time: float = field(default_factory=time.time)
-    finished_time: float = field(default=-1)
-    dataMaps: list = field(default_factory=list)
-    data: list = field(default_factory=list)
-    cmds: list = field(default_factory=list)
-    cmds_list: list = field(default_factory=list)
-    feedback_buffer: Any = None
-    side_effects: dict = field(default_factory=dict)
-    result: dict = field(default_factory=lambda: {
-        'index': {},
-        'states': [],
-        'counts': [],
-        'diags': []
-    })
-    record: Optional[Record] = None
-
-
-@dataclass
 class CalibrationResult():
     suggested_calibration_level: int = 0
     parameters: dict = field(default_factory=dict)
@@ -77,7 +53,7 @@ def update_tags(sender: TagSet, tag_text, obj: Any, tag_set_id, db) -> None:
         obj.tags.append(tag(db, tag_text))
 
 
-class Task(ABC):
+class Task(BaseTask):
     def __init__(self,
                  signal: SIGNAL = 'count',
                  shots: int = 1024,
@@ -88,17 +64,15 @@ class Task(ABC):
             shots: the number of shots to be measured
             calibration_level: calibration level (0~100)
         """
+        super().__init__()
         self.parent = None
         self.container = None
-        self.id = None
         self.signal = signal
         self.shots = shots
         self.calibration_level = calibration_level
         self.no_record = False
-        self._runtime = TaskRuntime()
         self._db_sessions = {}
-        self._kernel = None
-        self.tags: set = TagSet()
+        self._tags: set = TagSet()
 
     def __del__(self):
         try:
@@ -108,13 +82,6 @@ class Task(ABC):
 
     def __repr__(self):
         return f"{self.app_name}({self.id}, calibration_level={self.calibration_level})"
-
-    @property
-    def kernel(self):
-        return self._kernel
-
-    def _set_kernel(self, kernel):
-        self._kernel = kernel
 
     @property
     def db(self):
@@ -132,20 +99,16 @@ class Task(ABC):
         return logging.getLogger(f"{self.app_name}")
 
     @property
-    def status(self):
-        return self._runtime.status
-
-    @property
     def cfg(self) -> Config:
         return self.kernel.cfg
 
     @property
-    def runtime(self) -> TaskRuntime:
-        return self._runtime
+    def tags(self):
+        return self._tags
 
     @property
     def record(self) -> Optional[Record]:
-        return self._runtime.record
+        return self.runtime.record
 
     def is_children_of(self, task: Task) -> bool:
         return self.parent is not None and self.parent == task.id
@@ -161,12 +124,12 @@ class Task(ABC):
 
         if self.no_record:
             return
-        if self._runtime.record is not None:
+        if self.runtime.record is not None:
             return
         dims, dims_units = list(zip(*dims))
         vars, vars_units = list(zip(*vars))
-        self._runtime.record = self.create_record()
-        self.db.add(self._runtime.record)
+        self.runtime.record = self.create_record()
+        self.db.add(self.runtime.record)
         self.db.commit()
 
     # def set_frame(self, dims: list[tuple[str, str]],
@@ -225,7 +188,7 @@ class Task(ABC):
         return rp
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
-        self._runtime.cmds.append(WRITE(key, value))
+        self.runtime.cmds.append(WRITE(key, value))
         self.cfg.update(key, value, cache=cache)
 
     def get(self, key: str) -> Any:
@@ -260,7 +223,7 @@ class Task(ABC):
     def trig(self) -> None:
         cmds = self.get('station.triggercmds')
         for cmd in cmds:
-            self._runtime.cmds.append(TRIG(cmd))
+            self.runtime.cmds.append(TRIG(cmd))
 
     def scan(self) -> Generator:
         self.set_record(dims=[('index', ''), ('shots', ''), ('cbits', '')],
@@ -270,25 +233,18 @@ class Task(ABC):
                         })
         yield from self.kernel.scan(self)
 
-    def feedback(self, obj: Any) -> None:
-        self.kernel.feedback(self, obj)
-
-    def get_feedback(self) -> Any:
-        return self.kernel.get_feedback(self)
-
     @cached_property
     def data_path(self) -> str:
         if self.parent:
             name = '/'.join([
                 self.kernel.get_task_by_id(self.parent).data_path, 'sub_data',
-                f"{self.__class__.__name__}_{self._runtime.sub_index}"
+                f"{self.__class__.__name__}_{self.runtime.sub_index}"
             ])
             return name
         else:
             file_name = self.get('station.sample')
-            time_str = time.strftime(
-                '%Y-%m-%d-%H-%M-%S',
-                time.localtime(self._runtime.started_time))
+            time_str = time.strftime('%Y-%m-%d-%H-%M-%S',
+                                     time.localtime(self.runtime.started_time))
             name = f"{self.__class__.__name__}_{time_str}_{self.id}"
             return f"{file_name}:/{name}"
 
@@ -321,43 +277,34 @@ class Task(ABC):
         """
         raise NotImplementedError()
 
-    def run_subtask(self, subtask):
-        subtask.parent = self.id
-        subtask._runtime.sub_index = self._runtime.step
-        self.kernel.submit(subtask)
-        self.kernel.join(subtask)
-        ret = subtask.result()
-        self._runtime.data.append(ret['data'])
-        return ret
-
     def standard_result(self):
         from waveforms.backends.quark.executable import assymblyData
 
-        i = len(self._runtime.data)
+        i = len(self.runtime.data)
         additional = self.kernel.fetch(self, i)
         if isinstance(additional, str):
             additional = []
         for step, (raw_data,
                    dataMap) in enumerate(zip(additional,
-                                             self._runtime.dataMaps[i:]),
+                                             self.runtime.prog.data_maps[i:]),
                                          start=i):
             result = assymblyData(raw_data, dataMap, self.signal)
-            self._runtime.data.append(result['data'])
-            self._runtime.result['states'].append(result.get('state', None))
-            self._runtime.result['counts'].append(result.get('count', None))
-            self._runtime.result['diags'].append(result.get('diag', None))
-            if self._runtime.record is not None:
+            self.runtime.data.append(result['data'])
+            self.runtime.result['states'].append(result.get('state', None))
+            self.runtime.result['counts'].append(result.get('count', None))
+            self.runtime.result['diags'].append(result.get('diag', None))
+            if self.runtime.record is not None:
                 cbits = result['data'].shape[-1]
-                if 'cbits' in self._runtime.record.dims and 'cbits' not in self._runtime.record.coords:
-                    self._runtime.record.coords['cbits'] = np.arange(cbits)
+                if 'cbits' in self.runtime.record.dims and 'cbits' not in self.runtime.record.coords:
+                    self.runtime.record.coords['cbits'] = np.arange(cbits)
 
         return {
             'calibration_level': self.calibration_level,
-            'index': self._runtime.result['index'],
-            'data': np.asarray(self._runtime.data),
-            'states': np.asarray(self._runtime.result['states']),
-            'counts': self._runtime.result['counts'],
-            'diags': np.asarray(self._runtime.result['diags'])
+            'index': self.runtime.result['index'],
+            'data': np.asarray(self.runtime.data),
+            'states': np.asarray(self.runtime.result['states']),
+            'counts': self.runtime.result['counts'],
+            'diags': np.asarray(self.runtime.result['diags'])
         }
 
     def result(self):
@@ -445,11 +392,8 @@ def create_task(taskInfo: Union[tuple, Task]) -> Task:
 
 def copy_task(task: Task) -> Task:
     memo = {
-        id(task._runtime): TaskRuntime(),
-        id(task._kernel): None,
         id(task.parent): None,
         id(task.container): None,
-        id(task.id): None,
         id(task._db_sessions): {},
     }
     return copy.deepcopy(task, memo)
