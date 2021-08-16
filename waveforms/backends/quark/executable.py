@@ -9,8 +9,8 @@ import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
+from waveforms.sched.base import COMMAND, READ, TRIG, WRITE
 from waveforms.sched.scheduler import Executor
-from waveforms.sched.task import COMMAND, READ, TRIG, WRITE
 
 from quark import connect
 
@@ -118,8 +118,7 @@ def _process_classify(data, gate_params_list, signal, classify):
 
 def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
-    data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'], signal,
-                                         classify)
+    data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
     result = _process_classify(data, gate_params_list, signal, classify)
     result['data'] = data
     return result
@@ -127,10 +126,10 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
 
 def _is_feedable(cmd):
     if isinstance(cmd, WRITE):
-        if re.match(r'[QCM]\d+\..+', cmd.key) and not re.match(
-                r'[QCM]\d+\.(setting|waveform)\..+', cmd.key):
+        if re.match(r'[QCM]\d+\..+', cmd.address) and not re.match(
+                r'[QCM]\d+\.(setting|waveform)\..+', cmd.address):
             return False
-        if cmd.key.startswith('gate.'):
+        if cmd.address.startswith('gate.'):
             return False
     return True
 
@@ -202,7 +201,7 @@ class QuarkExecutor(Executor):
             extra (dict): extra data
         """
 
-        cmds = [(cmd.key, (type(cmd).__name__, cmd.value)) for cmd in cmds
+        cmds = [(cmd.address, (type(cmd).__name__, cmd.value)) for cmd in cmds
                 if _is_feedable(cmd)]
 
         priority = 0

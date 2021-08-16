@@ -20,37 +20,9 @@ from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.crud import tag
 from waveforms.storage.models import Record, Report
 
-
-class COMMAND():
-    """Commands for the scheduler"""
-    __slots__ = ('key', 'value')
-
-    def __init__(self, key: str, value: Any):
-        self.key = key
-        self.value = value
-
-
-class READ(COMMAND):
-    """Read a value from the scheduler"""
-    def __init__(self, key: str):
-        super().__init__(key, 'READ')
-
-    def __repr__(self) -> str:
-        return f"READ({self.key})"
-
-
-class WRITE(COMMAND):
-    def __repr__(self) -> str:
-        return f"WRITE({self.key}, {self.value})"
-
-
-class TRIG(COMMAND):
-    """Trigger the system"""
-    def __init__(self, key: str):
-        super().__init__(key, 0)
-
-    def __repr__(self) -> str:
-        return f"TRIG({self.key})"
+from .base import TRIG, WRITE
+from .base import Task as BaseTask
+from .base import TaskRuntime
 
 
 @dataclass
@@ -361,31 +333,23 @@ class Task(ABC):
     def standard_result(self):
         from waveforms.backends.quark.executable import assymblyData
 
-        try:
-            i = len(self._runtime.data)
-            additional = self.kernel.fetch(self, i)
-            if isinstance(additional, str):
-                additional = []
-            for step, (raw_data,
-                       dataMap) in enumerate(zip(additional,
-                                                 self._runtime.dataMaps[i:]),
-                                             start=i):
-                result = assymblyData(raw_data, dataMap, self.signal)
-                self._runtime.data.append(result['data'])
-                self._runtime.result['states'].append(result.get(
-                    'state', None))
-                self._runtime.result['counts'].append(result.get(
-                    'count', None))
-                self._runtime.result['diags'].append(result.get('diag', None))
-                if self._runtime.record is not None:
-                    cbits = result['data'].shape[-1]
-                    if 'cbits' in self._runtime.record.dims and 'cbits' not in self._runtime.record.coords:
-                        self._runtime.record.coords['cbits'] = np.arange(cbits)
-                    # self._runtime.record.append(
-                    #     [(self._runtime.result['index'][step], )],
-                    #     [(result['data'], result.get('state', None))])
-        except:
-            pass
+        i = len(self._runtime.data)
+        additional = self.kernel.fetch(self, i)
+        if isinstance(additional, str):
+            additional = []
+        for step, (raw_data,
+                   dataMap) in enumerate(zip(additional,
+                                             self._runtime.dataMaps[i:]),
+                                         start=i):
+            result = assymblyData(raw_data, dataMap, self.signal)
+            self._runtime.data.append(result['data'])
+            self._runtime.result['states'].append(result.get('state', None))
+            self._runtime.result['counts'].append(result.get('count', None))
+            self._runtime.result['diags'].append(result.get('diag', None))
+            if self._runtime.record is not None:
+                cbits = result['data'].shape[-1]
+                if 'cbits' in self._runtime.record.dims and 'cbits' not in self._runtime.record.coords:
+                    self._runtime.record.coords['cbits'] = np.arange(cbits)
 
         return {
             'calibration_level': self.calibration_level,

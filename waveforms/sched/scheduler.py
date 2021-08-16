@@ -22,8 +22,9 @@ from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import User, create_tables
 from waveforms.waveform import Waveform
 
+from .base import COMMAND, READ, WRITE
 from .scan_iters import scan_iters
-from .task import COMMAND, READ, WRITE, Task, create_task
+from .task import Task, create_task
 
 log = logging.getLogger(__name__)
 
@@ -130,8 +131,8 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
         task._runtime.dataMaps[-1].update(dataMap)
     else:
         for cmd in task._runtime.cmds_list[-1]:
-            if (isinstance(cmd, READ) or cmd.key.endswith('.StartCapture')
-                    or cmd.key.endswith('.CaptureMode')):
+            if (isinstance(cmd, READ) or cmd.address.endswith('.StartCapture')
+                    or cmd.address.endswith('.CaptureMode')):
                 task._runtime.cmds.append(cmd)
         task._runtime.dataMaps[-1] = task._runtime.dataMaps[0]
     return task._runtime.step
@@ -218,7 +219,7 @@ def expand_task(task: Task, executor: Executor):
         executor.feed(task.id, task._runtime.step, cmds, extra={})
         for cmd in task._runtime.cmds:
             if isinstance(cmd.value, Waveform):
-                task._runtime.side_effects[cmd.key] = 'zero()'
+                task._runtime.side_effects[cmd.address] = 'zero()'
         task._runtime.step += 1
 
 

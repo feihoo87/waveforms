@@ -1,3 +1,4 @@
+from .base import READ, TRIG, WRITE
 from .progress import JupyterProgressBar, Progress, ProgressBar
 from .scheduler import Scheduler
-from .task import READ, TRIG, WRITE, App, CalibrationResult, UserInput
+from .task import App, CalibrationResult, UserInput
