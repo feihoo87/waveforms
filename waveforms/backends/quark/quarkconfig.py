@@ -17,7 +17,10 @@ class QuarkConfig(ConfigProxy):
     def connect(self):
         """Connect to the quark server."""
         from quark import connect
-        self.conn = connect('QuarkServer', host=self.host, verbose=False)
+        if self.host is None:
+            self.conn = None
+        else:
+            self.conn = connect('QuarkServer', host=self.host, verbose=False)
 
     def init_namespace(self):
         self.conn.create('dev', {})
