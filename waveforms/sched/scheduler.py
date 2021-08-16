@@ -511,5 +511,5 @@ class Scheduler():
             a task
         """
         task = create_task((app, args, kwds))
-        task._set_kernel(self)
+        task._set_kernel(self, -1)
         return task
