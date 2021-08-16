@@ -204,7 +204,13 @@ def expand_task(task: Task, executor: Executor):
     task.runtime.prog.signal = task.signal
 
     iters = task.scan_range()
-    for step in scan_iters(iters):
+    if isinstance(iters, tuple) and len(iters) == 2:
+        iters, filter_func = iters
+    elif isinstance(iters, dict):
+        iters, filter_func = iters, None
+    else:
+        raise ValueError(f"Invalid scan range: {iters}")
+    for step in scan_iters(iters, filter_func):
         try:
             if threading.current_thread()._kill_event.is_set():
                 break
