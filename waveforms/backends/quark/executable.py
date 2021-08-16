@@ -85,35 +85,43 @@ def getCommands(code, signal='state', shots=1024):
     return cmds, dataMap
 
 
-def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
+def _sort_cbits(raw_data, dataMap):
     ret = []
     gate_list = []
-    result = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
-
     min_shots = np.inf
-    for cbit in sorted(dataMap['cbits']):
-        ch, i, Delta, params = dataMap['cbits'][cbit]
+    for cbit in sorted(dataMap):
+        ch, i, Delta, params = dataMap[cbit]
         gate_list.append({'params': params})
         try:
             key = f'{ch}.IQ'
-            ret.append(result[key][:, i])
+            ret.append(raw_data[key][:, i])
         except KeyError:
             key = f'{ch}.TraceIQ'
-            ret.append(result[key])
+            ret.append(raw_data[key])
         min_shots = min(min_shots, ret[-1].shape[0])
 
     ret = [r[:min_shots] for r in ret]
 
-    result = {}
-    result['data'] = np.asarray(ret).T
+    return np.asarray(ret).T, gate_list
 
+
+def _process_classify(data, gate_params_list, signal, classify):
+    result = {}
     if signal in ['state', 'count', 'diag']:
-        result['state'] = classify(result['data'], gate_list, avg=False)
+        result['state'] = classify(data, gate_params_list, avg=False)
     if signal in ['count', 'diag']:
         result['count'] = countState(result['state'])
     if signal == 'diag':
         result['diag'] = count_to_diag(result['count'])
+    return result
 
+
+def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
+    raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
+    data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'], signal,
+                                         classify)
+    result = _process_classify(data, gate_params_list, signal, classify)
+    result['data'] = data
     return result
 
 
@@ -253,11 +261,11 @@ class QuarkExecutor(Executor):
         self.cfg.update_all(data)
         self.log.debug(f'update_all({data})')
 
-    def save(self, path: str, task_id: int) -> None:
+    def save(self, task_id: int, path: str) -> None:
         """save data to file
         """
-        ret = self.conn.save(path, task_id)
-        self.log.debug(f'save({path}, {task_id})')
+        ret = self.conn.save(task_id, path)
+        self.log.debug(f'save({task_id}, {path})')
         return ret
 
     def query(self, key: str) -> Any:

@@ -215,12 +215,7 @@ def expand_task(task: Task, executor: Executor):
         task._runtime.cmds_list.append(task._runtime.cmds)
         for k, v in task.cfg._history.items():
             task._runtime.side_effects.setdefault(k, v)
-        executor.feed(task.id,
-                      task._runtime.step,
-                      cmds,
-                      extra={
-                          'hello': 'world',
-                      })
+        executor.feed(task.id, task._runtime.step, cmds, extra={})
         for cmd in task._runtime.cmds:
             if isinstance(cmd.value, Waveform):
                 task._runtime.side_effects[cmd.key] = 'zero()'
