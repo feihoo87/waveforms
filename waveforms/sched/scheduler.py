@@ -97,14 +97,13 @@ def join_task(task: Task, executor: Executor):
                     except Exception as e:
                         log.error(f"Failed to save record: {e}")
                 else:
-                    log.warning(
-                        f"No record for task {task.app_name}({task.id})")
+                    log.warning(f"No record for task {task.name}({task.id})")
                 break
     except:
-        log.exception(f"{task.app_name}({task.id}) is failed")
+        log.exception(f"{task.name}({task.id}) is failed")
         executor.free(task.id)
     finally:
-        log.debug(f'{task.app_name}({task.id}) is finished')
+        log.debug(f'{task.name}({task.id}) is finished')
         clean_side_effects(task, executor)
 
 
@@ -123,6 +122,7 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
     from waveforms import compile
     from waveforms.backends.quark.executable import getCommands
 
+    task.runtime.prog.steps[-1] = (circuit, {}, [])
     if task.runtime.step == 0 or not compile_once:
         code = compile(circuit, lib=lib, cfg=cfg)
         cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
@@ -195,6 +195,14 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
 
 def expand_task(task: Task, executor: Executor):
     task.runtime.step = 0
+    task.runtime.prog.index = []
+    task.runtime.prog.commands = []
+    task.runtime.prog.data_maps = []
+    task.runtime.prog.side_effects = {}
+    task.runtime.prog.steps = []
+    task.runtime.prog.shots = task.shots
+    task.runtime.prog.signal = task.signal
+
     iters = task.scan_range()
     for step in scan_iters(iters):
         try:
@@ -205,6 +213,7 @@ def expand_task(task: Task, executor: Executor):
 
         task.runtime.prog.index.append(step)
         task.runtime.prog.data_maps.append({})
+        task.runtime.prog.steps.append(([], {}, []))
 
         for k, v in step.kwds.items():
             if k in task.runtime.result['index']:

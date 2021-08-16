@@ -222,7 +222,7 @@ class Task(ABC):
 
     @property
     def cfg(self):
-        self.kernel.cfg
+        return self.kernel.cfg
 
     @property
     def status(self):

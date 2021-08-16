@@ -81,7 +81,7 @@ class Task(BaseTask):
             pass
 
     def __repr__(self):
-        return f"{self.app_name}({self.id}, calibration_level={self.calibration_level})"
+        return f"{self.name}({self.id}, calibration_level={self.calibration_level})"
 
     @property
     def db(self):
@@ -89,18 +89,6 @@ class Task(BaseTask):
         if tid not in self._db_sessions:
             self._db_sessions[tid] = self.kernel.session()
         return self._db_sessions[tid]
-
-    @property
-    def app_name(self):
-        return f"{self.__class__.__module__}.{self.__class__.__name__}"
-
-    @property
-    def log(self):
-        return logging.getLogger(f"{self.app_name}")
-
-    @property
-    def cfg(self) -> Config:
-        return self.kernel.cfg
 
     @property
     def tags(self):
@@ -162,7 +150,7 @@ class Task(BaseTask):
         file = self.kernel.data_path / (file + '.hdf5')
 
         record = Record(file=str(file), key=key)
-        record.app = self.app_name
+        record.app = self.name
         for tag_text in self.tags:
             record.tags.append(tag(self.db, tag_text))
         self.tags.updated.connect(
