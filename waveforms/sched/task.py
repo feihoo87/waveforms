@@ -154,7 +154,8 @@ class Task(BaseTask):
         record.app = self.name
         record.base_path = file.parent
         for tag_text in self.tags:
-            record.tags.append(tag(self.db, tag_text))
+            t = tag(self.db, tag_text)
+            record.tags.append(t)
 
         receiver = functools.partial(update_tags,
                                      obj=record,
@@ -172,7 +173,8 @@ class Task(BaseTask):
         rp = Report(file=str(file), key=key)
         rp.base_path = file.parent
         for tag_text in self.tags:
-            rp.tags.append(tag(self.db, tag_text))
+            t = tag(self.db, tag_text)
+            rp.tags.append(t)
 
         receiver = functools.partial(update_tags,
                                      obj=rp,
