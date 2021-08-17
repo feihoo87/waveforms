@@ -9,8 +9,7 @@ import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
-from waveforms.sched.base import COMMAND, READ, TRIG, WRITE
-from waveforms.sched.scheduler import Executor
+from waveforms.sched.base import COMMAND, READ, TRIG, WRITE, Executor
 
 from quark import connect
 
@@ -147,7 +146,7 @@ class QuarkExecutor(Executor):
 
         self.host = host
         set_up_backend(self.host)
-        self.cfg = getConfig()
+        self._cfg = getConfig()
 
         self._conn_pool = _connection_pool({}, [], threading.Lock())
         self._gc_thread = threading.Thread(target=self._gc, daemon=True)
@@ -182,6 +181,22 @@ class QuarkExecutor(Executor):
                                                            host=self.host,
                                                            verbose=False)
             return self._conn_pool.actived[tid]
+
+    def get_config(self):
+        return self._cfg
+
+    @property
+    def cfg(self):
+        return self._cfg
+
+    def boot(self):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def reset(self):
+        pass
 
     def start(self, *args):
         self.conn.start(*args)

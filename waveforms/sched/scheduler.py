@@ -22,41 +22,11 @@ from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import User, create_tables
 from waveforms.waveform import Waveform
 
-from .base import COMMAND, READ, WRITE
+from .base import COMMAND, READ, WRITE, Executor
 from .scan_iters import scan_iters
 from .task import Task, create_task
 
 log = logging.getLogger(__name__)
-
-
-class Executor(ABC):
-    @property
-    def log(self):
-        return logging.getLogger(
-            f"{self.__module__}.{self.__class__.__name__}")
-
-    @abstractmethod
-    def feed(self, task_id: int, task_step: int, cmds: list[COMMAND],
-             extra: dict):
-        """
-        """
-        pass
-
-    @abstractmethod
-    def free(self, task_id: int) -> None:
-        pass
-
-    @abstractmethod
-    def submit(self, task_id: int, data_template: dict) -> None:
-        pass
-
-    @abstractmethod
-    def fetch(self, task_id: int, skip: int = 0) -> list:
-        pass
-
-    @abstractmethod
-    def save(self, path: str, task_id: int, data: dict) -> str:
-        pass
 
 
 class _ThreadWithKill(threading.Thread):
