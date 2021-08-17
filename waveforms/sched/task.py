@@ -47,6 +47,9 @@ class TagSet(set):
         super().add(tag)
         self.updated.send(self, tag_text=tag)
 
+    def __repr__(self) -> str:
+        return super().__repr__()
+
 
 def update_tags(sender: TagSet, tag_text, obj: Any, tag_set_id, db) -> None:
     if id(sender) == tag_set_id:
@@ -152,11 +155,13 @@ class Task(BaseTask):
         record.base_path = file.parent
         for tag_text in self.tags:
             record.tags.append(tag(self.db, tag_text))
-        self.tags.updated.connect(
-            functools.partial(update_tags,
-                              obj=record,
-                              db=self.db,
-                              tag_set_id=id(self.tags)))
+
+        receiver = functools.partial(update_tags,
+                                     obj=record,
+                                     db=self.db,
+                                     tag_set_id=id(self.tags))
+        self.tags.updated.connect(receiver)
+        record._blinker_update_tag_receiver = receiver  # hold a reference
         return record
 
     def create_report(self) -> Report:
@@ -168,11 +173,13 @@ class Task(BaseTask):
         rp.base_path = file.parent
         for tag_text in self.tags:
             rp.tags.append(tag(self.db, tag_text))
-        self.tags.updated.connect(
-            functools.partial(update_tags,
-                              obj=rp,
-                              db=self.db,
-                              tag_set_id=id(self.tags)))
+
+        receiver = functools.partial(update_tags,
+                                     obj=rp,
+                                     db=self.db,
+                                     tag_set_id=id(self.tags))
+        self.tags.updated.connect(receiver)
+        rp._blinker_update_tag_receiver = receiver  # hold a reference
         return rp
 
     def set(self, key: str, value: Any, cache: bool = True) -> None:
