@@ -226,14 +226,14 @@ class Task(BaseTask):
         if self.parent:
             name = '/'.join([
                 self.kernel.get_task_by_id(self.parent).data_path, 'sub_data',
-                f"{self.__class__.__name__}_{self.runtime.sub_index}"
+                f"{self.name}_{self.runtime.sub_index}"
             ])
             return name
         else:
             file_name = self.get('station.sample')
             time_str = time.strftime('%Y-%m-%d-%H-%M-%S',
                                      time.localtime(self.runtime.started_time))
-            name = f"{self.__class__.__name__}_{time_str}_{self.id}"
+            name = f"{self.name}_{time_str}_{self.id}"
             return f"{file_name}:/{name}"
 
     def clean_side_effects(self) -> None:
