@@ -10,7 +10,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
-from sqlalchemy import (Column, DateTime, Float, ForeignKey, Integer, Boolean,
+from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer,
                         LargeBinary, Sequence, String, Table, Text,
                         create_engine)
 from sqlalchemy.orm import (backref, declarative_base, relationship,
@@ -154,6 +154,8 @@ class Comment(Base):
     text = Column(String)
     user_id = Column(Integer, ForeignKey('users.id'))
     ctime = Column(DateTime, default=datetime.utcnow)
+    mtime = Column(DateTime, default=datetime.utcnow)
+    atime = Column(DateTime, default=datetime.utcnow)
     parent_id = Column(Integer, ForeignKey('comments.id'))
 
     replies = relationship("Comment", lazy="joined", join_depth=2)
@@ -173,6 +175,8 @@ class Attachment(Base):
     user_id = Column(Integer, ForeignKey('users.id'))
     comment_id = Column(Integer, ForeignKey('comments.id'))
     ctime = Column(DateTime, default=datetime.utcnow)
+    mtime = Column(DateTime, default=datetime.utcnow)
+    atime = Column(DateTime, default=datetime.utcnow)
     size = Column(Integer)
     sha1 = Column(String)
     description = Column(Text)
@@ -180,8 +184,10 @@ class Attachment(Base):
     user = relationship('User', back_populates='attachments')
     comment = relationship('Comment', back_populates='attachments')
 
+    base_path = Path.home() / 'data'
+
     @property
-    def data(self)->bytes:
+    def data(self) -> bytes:
         self.atime = datetime.utcnow()
         with open(self.filename, 'rb') as f:
             data = f.read()
@@ -189,9 +195,8 @@ class Attachment(Base):
 
     @data.setter
     def data(self, data: bytes):
-        self.filename.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.filename, 'wb') as f:
-            f.write(data)
+        self.mtime = datetime.utcnow()
+        self.filename, self.sha1 = _save_object(data, self.base_path)
 
 
 class InputText(Base):
@@ -330,6 +335,8 @@ class Record(Base):
     tags = relationship('Tag', secondary=record_tags, back_populates='records')
     comments = relationship('Comment', secondary=record_comments)
 
+    base_path = Path.home() / 'data'
+
     def __init__(self,
                  file: str = 'test.h5',
                  key: Optional[str] = None,
@@ -338,6 +345,7 @@ class Record(Base):
                  dims_units: list[str] = [],
                  vars_units: list[str] = [],
                  coords: Optional[dict] = None):
+        self.base_path = Path(file).parent
         self.file = file
         if key is None:
             self.key = '/Data' + time.strftime("%Y%m%d%H%M%S")
@@ -363,15 +371,7 @@ class Record(Base):
     @data.setter
     def data(self, data):
         buf = pickle.dumps(data)
-        hashstr = hashlib.sha1(buf).hexdigest()
-        file = Path(
-            self.file
-        ).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
-        file.parent.mkdir(parents=True, exist_ok=True)
-        with open(file, 'wb') as f:
-            f.write(buf)
-        self.file = str(file)
-        return
+        self.file, _ = _save_object(buf, self.base_path)
 
     # def flush(self):
     #     if len(self._buff[0]) == 0:
@@ -497,6 +497,8 @@ class Report(Base):
     tags = relationship('Tag', secondary=report_tags, back_populates='reports')
     comments = relationship('Comment', secondary=report_comments)
 
+    base_path = Path.home() / 'data'
+
     @property
     def obj(self):
         self.atime = datetime.utcnow()
@@ -507,15 +509,7 @@ class Report(Base):
     @obj.setter
     def obj(self, data):
         buf = pickle.dumps(data)
-        hashstr = hashlib.sha1(buf).hexdigest()
-        file = Path(
-            self.file
-        ).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
-        file.parent.mkdir(parents=True, exist_ok=True)
-        with open(file, 'wb') as f:
-            f.write(buf)
-        self.file = str(file)
-        return
+        self.file, _ = _save_object(buf, self.base_path)
 
 
 def create_tables(engine):
@@ -524,13 +518,18 @@ def create_tables(engine):
     sys_role = Role(name='sys')
     kernel = User(name='BIG BROTHER')
     kernel.roles.append(sys_role)
-    
+
     root_role = Role(name='root')
     admin_role = Role(name='admin')
     root_user = User(name='root')
     root_user.setPassword('123')
     root_user.roles.append(root_role)
     root_user.roles.append(admin_role)
+
+    guest_role = Role(name='guest')
+    guest_user = User(name='guest')
+    guest_user.setPassword('')
+    guest_user.roles.append(guest_role)
 
     t1 = SampleAccountType(name='factory')
     t2 = SampleAccountType(name='destroyed')
@@ -543,6 +542,17 @@ def create_tables(engine):
     session = Session()
 
     session.add(root_user)
+    session.add(guest_user)
     session.add(kernel)
     session.add_all([t1, t2, t3, t4, a])
     session.commit()
+
+
+def _save_object(data: bytes, base_path) -> tuple[str, str]:
+    hashstr = hashlib.sha1(data).hexdigest()
+    file = Path(
+        base_path) / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
+    file.parent.mkdir(parents=True, exist_ok=True)
+    with open(file, 'wb') as f:
+        f.write(data)
+    return str(file), hashstr

@@ -71,7 +71,6 @@ class Task(BaseTask):
         self.shots = shots
         self.calibration_level = calibration_level
         self.no_record = False
-        self._db_sessions = {}
         self._tags: set = TagSet()
 
     def __del__(self):
@@ -85,10 +84,9 @@ class Task(BaseTask):
 
     @property
     def db(self):
-        tid = threading.get_ident()
-        if tid not in self._db_sessions:
-            self._db_sessions[tid] = self.kernel.session()
-        return self._db_sessions[tid]
+        if self.runtime.db is None:
+            self.runtime.db = self.kernel.session()
+        return self.runtime.db
 
     @property
     def tags(self):
@@ -151,6 +149,7 @@ class Task(BaseTask):
 
         record = Record(file=str(file), key=key)
         record.app = self.name
+        record.base_path = file.parent
         for tag_text in self.tags:
             record.tags.append(tag(self.db, tag_text))
         self.tags.updated.connect(
@@ -166,6 +165,7 @@ class Task(BaseTask):
         file = self.kernel.data_path / (file + '.hdf5')
 
         rp = Report(file=str(file), key=key)
+        rp.base_path = file.parent
         for tag_text in self.tags:
             rp.tags.append(tag(self.db, tag_text))
         self.tags.updated.connect(
