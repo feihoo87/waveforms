@@ -68,6 +68,9 @@ def _is_optimize_step(keys, iters):
 
 def _call_func_with_kwds(func, kwds):
     sig = inspect.signature(func)
+    for p in sig.parameters.values():
+        if p.kind == p.VAR_KEYWORD:
+            return func(**kwds)
     kw = {k: v for k, v in kwds.items() if k in sig.parameters}
     return func(**kw)
 
