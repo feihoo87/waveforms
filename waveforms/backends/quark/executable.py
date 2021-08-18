@@ -124,10 +124,11 @@ def _process_classify(data, gate_params_list, signal, classify):
 
 
 def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
-    result = {}
-    raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
     if not dataMap:
         return raw_data
+
+    result = {}
+    raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
     if 'cbits' in dataMap:
         data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
         result.update(
