@@ -293,13 +293,6 @@ class Scheduler():
     def cfg(self):
         return self.executor.cfg
 
-    @property
-    def executer(self):
-        warnings.warn(
-            'kernel.executer is deprecated, use kernel.executor instead',
-            DeprecationWarning)
-        return self.executor
-
     def session(self):
         return sessionmaker(bind=self.eng)()
 
