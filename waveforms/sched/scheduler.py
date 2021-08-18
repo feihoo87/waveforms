@@ -92,18 +92,21 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
     from waveforms import compile
     from waveforms.backends.quark.executable import getCommands
 
-    task.runtime.prog.steps[-1] = (circuit, {}, [])
+    task.runtime.prog.steps[-1][1].extend(task.runtime.cmds)
     if task.runtime.step == 0 or not compile_once:
         code = compile(circuit, lib=lib, cfg=cfg)
         cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
         task.runtime.cmds.extend(cmds)
         task.runtime.prog.data_maps[-1].update(dataMap)
+        task.runtime.prog.steps[-1][0].extend(circuit)
     else:
         for cmd in task.runtime.prog.commands[-1]:
             if (isinstance(cmd, READ) or cmd.address.endswith('.StartCapture')
                     or cmd.address.endswith('.CaptureMode')):
                 task.runtime.cmds.append(cmd)
         task.runtime.prog.data_maps[-1] = task.runtime.prog.data_maps[0]
+        task.runtime.prog.steps[-1][2].extend(task.runtime.cmds)
+        task.runtime.prog.steps[-1][3].update(task.runtime.prog.data_maps[-1])
     return task.runtime.step
 
 
@@ -189,7 +192,7 @@ def expand_task(task: Task, executor: Executor):
 
         task.runtime.prog.index.append(step)
         task.runtime.prog.data_maps.append({})
-        task.runtime.prog.steps.append(([], {}, []))
+        task.runtime.prog.steps.append(([], {}, [], {}))
 
         for k, v in step.kwds.items():
             if k in task.runtime.result['index']:
