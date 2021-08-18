@@ -92,7 +92,7 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
     from waveforms import compile
     from waveforms.backends.quark.executable import getCommands
 
-    task.runtime.prog.steps[-1][1].extend(task.runtime.cmds)
+    task.runtime.prog.steps[-1][2].extend(task.runtime.cmds)
     if task.runtime.step == 0 or not compile_once:
         code = compile(circuit, lib=lib, cfg=cfg)
         cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
