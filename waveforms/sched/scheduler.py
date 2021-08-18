@@ -412,10 +412,9 @@ class Scheduler():
     def _measure(self, task, keys, labels=None):
         if labels is None:
             labels = keys
-        dataMap = {label: key for key, label in zip(keys, labels)}
+        dataMap = {'data': {label: key for key, label in zip(keys, labels)}}
         task.runtime.prog.data_maps[-1].update(dataMap)
-        cmds = [(key, READ) for key in keys]
-        task.runtime.cmds.extend(cmds)
+        task.runtime.cmds.extend([READ(key) for key in keys])
 
     def measure(self, keys, labels=None, cmds=[]):
         pass

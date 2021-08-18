@@ -16,7 +16,6 @@ from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer,
 from sqlalchemy.orm import (backref, declarative_base, relationship,
                             sessionmaker)
 from sqlalchemy.orm.session import Session
-from sqlalchemy.util.compat import u
 from waveforms.security import InvalidKey, encryptPassword, verifyPassword
 
 Base = declarative_base()

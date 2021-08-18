@@ -104,6 +104,14 @@ def _sort_cbits(raw_data, dataMap):
     return np.asarray(ret).T, gate_list
 
 
+def _sort_data(raw_data, dataMap):
+    ret = {}
+    for label, channel in dataMap.items():
+        if label in raw_data:
+            ret[label] = raw_data[channel]
+    return ret
+
+
 def _process_classify(data, gate_params_list, signal, classify):
     result = {}
     if signal in ['state', 'count', 'diag']:
@@ -116,10 +124,15 @@ def _process_classify(data, gate_params_list, signal, classify):
 
 
 def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
+    result = {}
     raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
-    data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
-    result = _process_classify(data, gate_params_list, signal, classify)
-    result['data'] = data
+    if 'cbits' in dataMap:
+        data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
+        result.update(
+            _process_classify(data, gate_params_list, signal, classify))
+        result['data'] = data
+    if 'data' in dataMap:
+        result.update(_sort_data(raw_data, dataMap['data']))
     return result
 
 
