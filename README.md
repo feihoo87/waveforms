@@ -1,5 +1,6 @@
 # waveforms
 [![View build status](https://github.com/feihoo87/waveforms/actions/workflows/test.yml/badge.svg)](https://github.com/feihoo87/waveforms/)
+[![View release status](https://github.com/feihoo87/waveforms/actions/workflows/publish.yml/badge.svg)](https://pypi.org/project/waveforms/)
 [![Coverage Status](https://coveralls.io/repos/github/feihoo87/waveforms/badge.svg?branch=master)](https://coveralls.io/github/feihoo87/waveforms?branch=master)
 [![PyPI version](https://badge.fury.io/py/waveforms.svg)](https://pypi.org/project/waveforms/)
 
