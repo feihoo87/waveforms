@@ -109,8 +109,8 @@ class Program:
     data_maps: list[dict] = field(default_factory=list)
     side_effects: dict = field(default_factory=dict)
 
-    steps: list[tuple[list[tuple], dict[str, Any],
-                      list[COMMAND]]] = field(default_factory=list)
+    steps: list[tuple[list[tuple], dict[str, Any], list[COMMAND]],
+                dict] = field(default_factory=list)
     shots: int = 1024
     signal: str = 'state'
 
