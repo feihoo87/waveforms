@@ -58,8 +58,7 @@ class StepStatus(NamedTuple):
 
 
 def _is_multi_step(keys, iters):
-    return isinstance(keys, tuple) and len(keys) > 1 and not isinstance(
-        iters, OptimizerConfig)
+    return isinstance(keys, tuple) and not isinstance(iters, OptimizerConfig)
 
 
 def _is_optimize_step(keys, iters):
