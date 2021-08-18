@@ -101,7 +101,7 @@ def _sort_cbits(raw_data, dataMap):
 
     ret = [r[:min_shots] for r in ret]
 
-    return np.ascontiguousarray(np.asarray(ret).T), gate_list
+    return np.asfortranarray(ret).T, gate_list
 
 
 def _sort_data(raw_data, dataMap):
