@@ -274,7 +274,7 @@ class Task(BaseTask):
         """
         raise NotImplementedError()
 
-    def standard_result(self):
+    def _fetch_result(self):
         from waveforms.backends.quark.executable import assymblyData
 
         i = len(self.runtime.data)
@@ -305,7 +305,14 @@ class Task(BaseTask):
         }
 
     def result(self):
-        return self.standard_result()
+        return {
+            'calibration_level': self.calibration_level,
+            'index': self.runtime.result['index'],
+            'data': np.asarray(self.runtime.data),
+            'states': np.asarray(self.runtime.result['states']),
+            'counts': self.runtime.result['counts'],
+            'diags': np.asarray(self.runtime.result['diags'])
+        }
 
 
 class ContainerTask(Task):

@@ -42,7 +42,7 @@ def _is_finished(task: Task) -> bool:
     """Check if a task is finished."""
     if task.kernel is None:
         return False
-    finished_step = len(task.result()['data'])
+    finished_step = len(task._fetch_result()['data'])
     return task.status not in [
         'submiting', 'pending'
     ] and finished_step >= task.runtime.step or task.status in [
@@ -62,7 +62,7 @@ def join_task(task: Task, executor: Executor):
                 task.runtime.finished_time = time.time()
                 if task.runtime.record is not None:
                     try:
-                        task.runtime.record.data = task.result()
+                        task.runtime.record.data = task._fetch_result()
                         task.db.commit()
                     except Exception as e:
                         log.error(f"Failed to save record: {e}")
