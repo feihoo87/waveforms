@@ -118,10 +118,10 @@ def submit_loop(task_queue: PriorityQueue,
                 executor: Executor):
     while True:
         if len(current_stack) > 0:
-            current_task, thread = current_stack.pop()
+            current_task = current_stack.pop()
 
-            if thread.is_alive():
-                current_stack.append((current_task, thread))
+            if current_task.runtime.threads['submit'].is_alive():
+                current_stack.append(current_task)
             else:
                 current_task.runtime.status = 'running'
 
@@ -143,22 +143,22 @@ def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
            executor: Executor):
     executor.free(task.id)
     task.runtime.status = 'submiting'
-    submit_thread = _ThreadWithKill(target=task.main)
-    current_stack.append((task, submit_thread))
+    task.runtime.threads['submit'] = _ThreadWithKill(target=task.main)
+    current_stack.append(task)
     task.runtime.started_time = time.time()
-    submit_thread.start()
+    task.runtime.threads['submit'].start()
 
-    fetch_data_thread = _ThreadWithKill(target=join_task,
-                                        args=(task, executor))
-    running_pool[task.id] = task, fetch_data_thread
-    fetch_data_thread.start()
+    task.runtime.threads['fetch_data'] = _ThreadWithKill(target=join_task,
+                                                         args=(task, executor))
+    running_pool[task.id] = task
+    task.runtime.threads['fetch_data'].start()
 
 
 def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
                  debug_mode: bool = False):
     while True:
-        for taskID, (task, thread) in list(running_pool.items()):
-            if not thread.is_alive():
+        for taskID, task in list(running_pool.items()):
+            if not task.runtime.threads['fetch_data'].is_alive():
                 try:
                     if not debug_mode:
                         del running_pool[taskID]

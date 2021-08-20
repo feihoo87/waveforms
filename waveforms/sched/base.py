@@ -148,6 +148,8 @@ class TaskRuntime():
     })
     record: Optional[Record] = None
 
+    threads: dict = field(default_factory=dict)
+
 
 class AnalyzeResult(NamedTuple):
     """
