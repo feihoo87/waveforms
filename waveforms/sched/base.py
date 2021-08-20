@@ -114,6 +114,8 @@ class Program:
     shots: int = 1024
     signal: str = 'state'
 
+    snapshot: dict = field(default_factory=dict)
+
 
 @dataclass
 class TaskRuntime():
@@ -211,6 +213,7 @@ class Task(ABC):
     def _set_kernel(self, kernel, id):
         self.__runtime.id = id
         self.__runtime.kernel = kernel
+        self.__runtime.prog.snapshot = kernel.executor.conn.snapshot()
 
     @property
     def runtime(self):

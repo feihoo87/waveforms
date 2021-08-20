@@ -62,7 +62,9 @@ def join_task(task: Task, executor: Executor):
                 task.runtime.finished_time = time.time()
                 if task.runtime.record is not None:
                     try:
-                        task.runtime.record.data = task._fetch_result()
+                        data = task._fetch_result()
+                        data['snapshot'] = task.runtime.prog.snapshot
+                        task.runtime.record.data = data
                         task.db.commit()
                     except Exception as e:
                         log.error(f"Failed to save record: {e}")
