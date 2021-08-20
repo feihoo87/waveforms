@@ -9,8 +9,8 @@ import uuid
 import warnings
 import weakref
 from abc import ABC, abstractmethod
-from collections import deque
 from pathlib import Path
+from queue import Empty, PriorityQueue
 from typing import Any, Optional, Union
 
 from sqlalchemy import create_engine
@@ -110,8 +110,8 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
     return task.runtime.step
 
 
-def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
-                                                             _ThreadWithKill]],
+def submit_loop(task_queue: PriorityQueue,
+                current_stack: list[tuple[Task, _ThreadWithKill]],
                 running_pool: dict[int, tuple[Task, _ThreadWithKill]],
                 executor: Executor):
     while True:
@@ -124,8 +124,8 @@ def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
                 current_task.runtime.status = 'running'
 
         try:
-            task = task_queue.popleft()
-        except IndexError:
+            task = task_queue.get_nowait()
+        except Empty:
             time.sleep(1)
             continue
 
@@ -133,7 +133,7 @@ def submit_loop(task_queue: deque, current_stack: list[tuple[Task,
                 or task.is_children_of(current_stack[-1][0])):
             submit(task, current_stack, running_pool, executor)
         else:
-            task_queue.appendleft(task)
+            task_queue.put_nowait(task)
 
 
 def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
@@ -239,7 +239,7 @@ class Scheduler():
         self.counter = itertools.count()
         self.__uuid = uuid.uuid1()
         self._task_pool = {}
-        self._queue = deque()
+        self._queue = PriorityQueue()
         self._waiting_pool = {}
         self._submit_stack = []
         self.mutex = set()
@@ -454,7 +454,7 @@ class Scheduler():
         taskID = self.generate_task_id()
         task._set_kernel(self, taskID)
         task.runtime.status = 'pending'
-        self._queue.append(task)
+        self._queue.put_nowait(task)
 
         def delete(ref, dct, key):
             dct.pop(key)
