@@ -250,7 +250,8 @@ class Task(ABC):
         return ret
 
     def __lt__(self, other: Task):
-        return self.priority < other.priority
+        return ((self.runtime.at, self.priority, self.runtime.created_time) <
+                (self.runtime.at, other.priority, other.runtime.created_time))
 
 
 class Scheduler(ABC):
