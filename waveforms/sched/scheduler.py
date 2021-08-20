@@ -44,13 +44,13 @@ def _is_finished(task: Task) -> bool:
         return False
     finished_step = len(task._fetch_result()['data'])
     return task.status not in [
-        'submiting', 'pending'
+        'submiting', 'pending', 'compiling'
     ] and finished_step >= task.runtime.step or task.status in [
-        'canceled', 'finished'
-    ]
+        'cancelled', 'finished'
+    ] and task.runtime.prog.compiled
 
 
-def join_task(task: Task, executor: Executor):
+def fetch_data(task: Task, executor: Executor):
     try:
         while True:
             if threading.current_thread()._kill_event.is_set():
@@ -76,7 +76,6 @@ def join_task(task: Task, executor: Executor):
         executor.free(task.id)
     finally:
         log.debug(f'{task.name}({task.id}) is finished')
-        clean_side_effects(task, executor)
 
 
 def clean_side_effects(task: Task, executor: Executor):
@@ -123,7 +122,8 @@ def submit_loop(task_queue: PriorityQueue,
             if current_task.runtime.threads['submit'].is_alive():
                 current_stack.append(current_task)
             else:
-                current_task.runtime.status = 'running'
+                with current_task.runtime._status_lock:
+                    current_task.runtime.status = 'running'
 
         try:
             task = task_queue.get_nowait()
@@ -138,17 +138,39 @@ def submit_loop(task_queue: PriorityQueue,
             task_queue.put_nowait(task)
 
 
+def submit_thread(task: Task, executor: Executor):
+    """Submit a task."""
+    i = 0
+    while True:
+        if task.runtime.threads['submit']._kill_event.is_set():
+            break
+        if i >= task.runtime.step and task.runtime.prog.compiled:
+            break
+        if i == len(task.runtime.prog.commands):
+            time.sleep(1)
+            continue
+        cmds = task.runtime.prog.commands[i]
+        executor.feed(task.id, i, cmds)
+        i += 1
+    clean_side_effects(task, executor)
+
+
 def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
            running_pool: dict[int, tuple[Task, _ThreadWithKill]],
            executor: Executor):
     executor.free(task.id)
-    task.runtime.status = 'submiting'
-    task.runtime.threads['submit'] = _ThreadWithKill(target=task.main)
+    with task.runtime._status_lock:
+        task.runtime.status = 'submiting'
+    if task.runtime.prog.with_feedback:
+        task.runtime.threads['submit'] = _ThreadWithKill(target=task.main)
+    else:
+        task.runtime.threads['submit'] = _ThreadWithKill(target=submit_thread,
+                                                         args=(task, executor))
     current_stack.append(task)
     task.runtime.started_time = time.time()
     task.runtime.threads['submit'].start()
 
-    task.runtime.threads['fetch_data'] = _ThreadWithKill(target=join_task,
+    task.runtime.threads['fetch_data'] = _ThreadWithKill(target=fetch_data,
                                                          args=(task, executor))
     running_pool[task.id] = task
     task.runtime.threads['fetch_data'].start()
@@ -164,7 +186,8 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
                         del running_pool[taskID]
                 except:
                     pass
-                task.runtime.status = 'finished'
+                with task.runtime._status_lock:
+                    task.runtime.status = 'finished'
         time.sleep(0.01)
 
 
@@ -211,7 +234,8 @@ def expand_task(task: Task, executor: Executor):
         for k, v in task.cfg._history.items():
             task.runtime.prog.side_effects.setdefault(k, v)
 
-        executor.feed(task.id, task.runtime.step, cmds, extra={})
+        if task.runtime.prog.with_feedback:
+            executor.feed(task.id, task.runtime.step, cmds, extra={})
         for cmd in cmds:
             if isinstance(cmd.value, Waveform):
                 task.runtime.prog.side_effects[cmd.address] = 'zero()'
@@ -310,12 +334,14 @@ class Scheduler():
         while self._submit_stack:
             task, thread = self._submit_stack.pop()
             thread.kill()
-            task.runtime.status = 'canceled'
+            with task.runtime._status_lock:
+                task.runtime.status = 'cancelled'
 
         while self._waiting_result:
             task_id, (task, thread) = self._waiting_result.popitem()
             thread.kill()
-            task.runtime.status = 'canceled'
+            with task.runtime._status_lock:
+                task.runtime.status = 'cancelled'
 
     def join(self, task):
         while True:
@@ -354,7 +380,15 @@ class Scheduler():
         :param task: task to scan
         :return: a generator yielding step arguments.
         """
-        yield from expand_task(task, self.executor)
+        try:
+            yield from expand_task(task, self.executor)
+        finally:
+            with task.runtime._status_lock:
+                task.runtime.prog.compiled = True
+                if task.status == 'compiling':
+                    task.runtime.status = 'pending'
+            if task.runtime.prog.with_feedback:
+                clean_side_effects(task, self.executor)
 
     def _exec(self,
               task,
@@ -450,12 +484,21 @@ class Scheduler():
     def submit(self, task: Task) -> Task:
         """Submit a task.
         """
-        if task.status != 'not submited':
-            raise RuntimeError(
-                f'Task({task.id}, status={task.status}) has been submited!')
+        with task.runtime._status_lock:
+            if task.status != 'not submited':
+                raise RuntimeError(
+                    f'Task({task.id}, status={task.status}) has been submited!'
+                )
         taskID = self.generate_task_id()
         task._set_kernel(self, taskID)
-        task.runtime.status = 'pending'
+        with task.runtime._status_lock:
+            if not task.runtime.prog.with_feedback:
+                task.runtime.threads['compile'] = _ThreadWithKill(
+                    target=task.main)
+                task.runtime.threads['compile'].start()
+                task.runtime.status = 'compiling'
+            else:
+                task.runtime.status = 'pending'
         self._queue.put_nowait(task)
 
         def delete(ref, dct, key):

@@ -103,6 +103,7 @@ class Program:
     A program is a list of commands.
     """
     with_feedback: bool = False
+    compiled: bool = False
 
     index: list = field(default_factory=list)
     commands: list[list[COMMAND]] = field(default_factory=list)
@@ -149,6 +150,7 @@ class TaskRuntime():
     record: Optional[Record] = None
 
     threads: dict = field(default_factory=dict)
+    _status_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class AnalyzeResult(NamedTuple):
