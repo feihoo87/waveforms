@@ -136,7 +136,7 @@ class TaskRuntime():
     status: str = 'not submited'
     id: int = -1
     created_time: float = field(default_factory=time.time)
-    started_time: float = field(default=-1)
+    started_time: float = field(default_factory=time.time)
     finished_time: float = field(default=-1)
     kernel: Scheduler = None
     db: Session = None
