@@ -12,6 +12,8 @@ _zero = ((), ())
 
 
 def _const(c):
+    if c == 0:
+        return _zero
     return (((), ()), ), (c, )
 
 
@@ -314,13 +316,70 @@ class Waveform:
             self.seq = self.seq[:-1] + other.seq[1:]
 
     def __ior__(self, other):
-        self.append(other)
-        return self
+        return self | other
 
     def __or__(self, other):
-        w = Waveform(self.bounds, self.seq)
-        w.append(other)
-        return w
+        if isinstance(other, (int, float, complex)):
+            other = const(other)
+        w = self.marker + other.marker
+
+        def _or(a, b):
+            if a != _zero or b != _zero:
+                return _one
+            else:
+                return _zero
+
+        return self._comb(other, _or)
+
+    def __iand__(self, other):
+        return self & other
+
+    def __and__(self, other):
+        if isinstance(other, (int, float, complex)):
+            other = const(other)
+        w = self.marker + other.marker
+
+        def _and(a, b):
+            if a != _zero and b != _zero:
+                return _one
+            else:
+                return _zero
+
+        return self._comb(other, _and)
+
+    @property
+    def marker(self):
+        w = self.simplify()
+        return Waveform(w.bounds,
+                        tuple(_zero if s == _zero else _one for s in w.seq))
+
+    def mask(self, edge=0):
+        w = self.marker
+        in_wave = w.seq[0] == _zero
+        bounds = []
+        seq = []
+
+        if w.seq[0] == _zero:
+            in_wave = False
+            b = w.bounds[0] - edge
+            bounds.append(b)
+            seq.append(_zero)
+
+        for b, s in zip(w.bounds[1:], w.seq[1:]):
+            if not in_wave and s != _zero:
+                in_wave = True
+                bounds.append(b + edge)
+                seq.append(_one)
+            elif in_wave and s == _zero:
+                in_wave = False
+                b = b - edge
+                if b > bounds[-1]:
+                    bounds.append(b)
+                    seq.append(_zero)
+                else:
+                    bounds.pop()
+                    bounds.append(b)
+        return Waveform(tuple(bounds), tuple(seq))
 
     def __mul__(self, other):
         if isinstance(other, Waveform):

@@ -237,7 +237,7 @@ def measure(ctx, qubits, cbit=None):
     pulse = square(duration) >> duration / 2 + t
     ctx.channel['readoutLine.RF',
                 qubit] += amp * pulse * cos(2 * pi * frequency, phi)
-    ctx.channel['readoutLine.AD.trigger', qubit] += pulse
+    ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
 
     params = {k: v for k, v in ctx.params.items()}
     params['w'] = w
