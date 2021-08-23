@@ -218,7 +218,6 @@ def measure(ctx, qubits, cbit=None):
         else:
             cbit = max(ctx.measures.keys()) + 1
 
-    gate = ctx.cfg.getGate('Measure', qubit)
     lo = ctx._getReadoutADLO(qubit)
     amp = ctx.params['amp']
     duration = ctx.params['duration']
