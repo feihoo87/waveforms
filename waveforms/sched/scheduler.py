@@ -467,7 +467,7 @@ class Scheduler(BaseScheduler):
         """
         return self.executor.fetch(task.id, skip)
 
-    def submit(self, task: Task) -> Task:
+    def submit(self, task: Task, dry_run: bool = False) -> Task:
         """Submit a task.
         """
         with task.runtime._status_lock:
@@ -489,6 +489,10 @@ class Scheduler(BaseScheduler):
                 task.runtime.status = 'compiling'
             else:
                 task.runtime.status = 'pending'
+
+        if dry_run:
+            return task
+
         self._queue.put_nowait(task)
 
         def delete(ref, dct, key):
