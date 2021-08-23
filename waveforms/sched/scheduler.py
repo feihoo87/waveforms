@@ -8,7 +8,6 @@ import time
 import uuid
 import warnings
 import weakref
-from abc import ABC, abstractmethod
 from pathlib import Path
 from queue import Empty, PriorityQueue
 from typing import Any, Optional, Union
@@ -22,20 +21,11 @@ from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import User, create_tables
 from waveforms.waveform import Waveform
 
-from .base import COMMAND, READ, WRITE, Executor
+from .base import COMMAND, READ, WRITE, Executor, ThreadWithKill
 from .scan_iters import scan_iters
 from .task import Task, create_task
 
 log = logging.getLogger(__name__)
-
-
-class _ThreadWithKill(threading.Thread):
-    def __init__(self, *args, **kwds):
-        super().__init__(*args, **kwds)
-        self._kill_event = threading.Event()
-
-    def kill(self):
-        self._kill_event.set()
 
 
 def _is_finished(task: Task) -> bool:
@@ -43,17 +33,16 @@ def _is_finished(task: Task) -> bool:
     if task.kernel is None:
         return False
     finished_step = len(task._fetch_result()['data'])
-    return task.status not in [
-        'submiting', 'pending', 'compiling'
-    ] and finished_step >= task.runtime.step or task.status in [
-        'cancelled', 'finished'
-    ] and task.runtime.prog.compiled
+    return task.status not in ['submiting', 'pending', 'compiling'
+                               ] and finished_step >= task.runtime.step
 
 
 def fetch_data(task: Task, executor: Executor):
     try:
         while True:
             if threading.current_thread()._kill_event.is_set():
+                with task.runtime._status_lock:
+                    task.runtime.status = 'cancelled'
                 break
             time.sleep(1)
 
@@ -63,15 +52,19 @@ def fetch_data(task: Task, executor: Executor):
                 if task.runtime.record is not None:
                     try:
                         data = task._fetch_result()
-                        data['snapshot'] = task.runtime.prog.snapshot
+                        data['program'] = task.runtime.prog
                         task.runtime.record.data = data
                         task.db.commit()
                     except Exception as e:
                         log.error(f"Failed to save record: {e}")
                 else:
                     log.warning(f"No record for task {task.name}({task.id})")
+                with task.runtime._status_lock:
+                    task.runtime.status = 'finished'
                 break
     except:
+        with task.runtime._status_lock:
+            task.runtime.status = 'failed'
         log.exception(f"{task.name}({task.id}) is failed")
         executor.free(task.id)
     finally:
@@ -111,10 +104,8 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
     return task.runtime.step
 
 
-def submit_loop(task_queue: PriorityQueue,
-                current_stack: list[tuple[Task, _ThreadWithKill]],
-                running_pool: dict[int, tuple[Task, _ThreadWithKill]],
-                executor: Executor):
+def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
+                running_pool: dict[int, Task], executor: Executor):
     while True:
         if len(current_stack) > 0:
             current_task = current_stack.pop()
@@ -130,9 +121,11 @@ def submit_loop(task_queue: PriorityQueue,
         except Empty:
             time.sleep(1)
             continue
-
-        if (len(current_stack) == 0
-                or task.is_children_of(current_stack[-1][0])):
+        if task.runtime.at > 0 and task.runtime.at > time.time():
+            task_queue.put(task)
+            time.sleep(1)
+        elif (len(current_stack) == 0
+              or task.is_children_of(current_stack[-1])):
             submit(task, current_stack, running_pool, executor)
         else:
             task_queue.put_nowait(task)
@@ -142,42 +135,36 @@ def submit_thread(task: Task, executor: Executor):
     """Submit a task."""
     i = 0
     while True:
-        if task.runtime.threads['submit']._kill_event.is_set():
+        if any(t._kill_event.is_set() for t in task.runtime.threads.values()):
             break
-        if i >= task.runtime.step and task.runtime.prog.compiled:
+        if (i >= task.runtime.step
+                and not task.runtime.threads['compile'].is_alive()):
             break
         if i == len(task.runtime.prog.commands):
             time.sleep(1)
             continue
-        cmds = task.runtime.prog.commands[i]
-        executor.feed(task.id, i, cmds)
+        executor.feed(task.id, i, task.runtime.prog.commands[i])
         i += 1
     clean_side_effects(task, executor)
 
 
-def submit(task: Task, current_stack: list[tuple[Task, _ThreadWithKill]],
-           running_pool: dict[int, tuple[Task, _ThreadWithKill]],
-           executor: Executor):
+def submit(task: Task, current_stack: list[Task],
+           running_pool: dict[int, Task], executor: Executor):
     executor.free(task.id)
     with task.runtime._status_lock:
         task.runtime.status = 'submiting'
     if task.runtime.prog.with_feedback:
-        task.runtime.threads['submit'] = _ThreadWithKill(target=task.main)
-    else:
-        task.runtime.threads['submit'] = _ThreadWithKill(target=submit_thread,
-                                                         args=(task, executor))
+        task.runtime.threads['compile'].start()
+
     current_stack.append(task)
     task.runtime.started_time = time.time()
     task.runtime.threads['submit'].start()
 
-    task.runtime.threads['fetch_data'] = _ThreadWithKill(target=fetch_data,
-                                                         args=(task, executor))
     running_pool[task.id] = task
     task.runtime.threads['fetch_data'].start()
 
 
-def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
-                 debug_mode: bool = False):
+def waiting_loop(running_pool: dict[int, Task], debug_mode: bool = False):
     while True:
         for taskID, task in list(running_pool.items()):
             if not task.runtime.threads['fetch_data'].is_alive():
@@ -186,9 +173,7 @@ def waiting_loop(running_pool: dict[int, tuple[Task, _ThreadWithKill]],
                         del running_pool[taskID]
                 except:
                     pass
-                with task.runtime._status_lock:
-                    task.runtime.status = 'finished'
-        time.sleep(0.01)
+        time.sleep(0.1)
 
 
 def expand_task(task: Task, executor: Executor):
@@ -234,8 +219,6 @@ def expand_task(task: Task, executor: Executor):
         for k, v in task.cfg._history.items():
             task.runtime.prog.side_effects.setdefault(k, v)
 
-        if task.runtime.prog.with_feedback:
-            executor.feed(task.id, task.runtime.step, cmds, extra={})
         for cmd in cmds:
             if isinstance(cmd.value, Waveform):
                 task.runtime.prog.side_effects[cmd.address] = 'zero()'
@@ -328,6 +311,9 @@ class Scheduler():
         except:
             return None
 
+    def list_tasks(self):
+        return {id: ref() for id, ref in self._task_pool.items()}
+
     def cancel(self):
         self.executor.cancel()
         self._queue.clear()
@@ -345,9 +331,15 @@ class Scheduler():
 
     def join(self, task):
         while True:
-            if task.status == 'finished':
+            if task.status in ['finished', 'cancelled', 'failed']:
                 break
-            time.sleep(1)
+            time.sleep(0.01)
+
+    async def join_async(self, task):
+        while True:
+            if task.status in ['finished', 'cancelled', 'failed']:
+                break
+            await asyncio.sleep(0.01)
 
     def set(self, key: str, value: Any, cache: bool = False):
         cmds = []
@@ -364,12 +356,6 @@ class Scheduler():
         """
         return self.query(key)
 
-    async def join_async(self, task):
-        while True:
-            if task.status == 'finished':
-                break
-            await asyncio.sleep(1)
-
     def generate_task_id(self):
         i = uuid.uuid3(self.__uuid, f"{next(self.counter)}").int
         return i & ((1 << 64) - 1)
@@ -380,15 +366,10 @@ class Scheduler():
         :param task: task to scan
         :return: a generator yielding step arguments.
         """
-        try:
-            yield from expand_task(task, self.executor)
-        finally:
-            with task.runtime._status_lock:
-                task.runtime.prog.compiled = True
-                if task.status == 'compiling':
-                    task.runtime.status = 'pending'
-            if task.runtime.prog.with_feedback:
-                clean_side_effects(task, self.executor)
+        yield from expand_task(task, self.executor)
+        with task.runtime._status_lock:
+            if task.status == 'compiling':
+                task.runtime.status = 'pending'
 
     def _exec(self,
               task,
@@ -491,10 +472,14 @@ class Scheduler():
                 )
         taskID = self.generate_task_id()
         task._set_kernel(self, taskID)
+        task.runtime.threads.update({
+            'submit':
+            ThreadWithKill(target=submit_thread, args=(task, self.executor)),
+            'fetch_data':
+            ThreadWithKill(target=fetch_data, args=(task, self.executor))
+        })
         with task.runtime._status_lock:
             if not task.runtime.prog.with_feedback:
-                task.runtime.threads['compile'] = _ThreadWithKill(
-                    target=task.main)
                 task.runtime.threads['compile'].start()
                 task.runtime.status = 'compiling'
             else:

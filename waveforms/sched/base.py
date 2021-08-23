@@ -17,6 +17,15 @@ from sqlalchemy.orm.session import Session
 from waveforms.storage.models import Record, Report, User
 
 
+class ThreadWithKill(threading.Thread):
+    def __init__(self, *args, **kwds):
+        super().__init__(*args, **kwds)
+        self._kill_event = threading.Event()
+
+    def kill(self):
+        self._kill_event.set()
+
+
 class COMMAND():
     """Commands for the executor"""
     __slots__ = ('address', 'value')
@@ -103,7 +112,6 @@ class Program:
     A program is a list of commands.
     """
     with_feedback: bool = False
-    compiled: bool = False
 
     index: list = field(default_factory=list)
     commands: list[list[COMMAND]] = field(default_factory=list)
@@ -139,10 +147,10 @@ class TaskRuntime():
     #################################################
     step: int = 0
     sub_index: int = 0
-    data: list = field(default_factory=list)
     cmds: list = field(default_factory=list)
     result: dict = field(default_factory=lambda: {
         'index': {},
+        'data': [],
         'states': [],
         'counts': [],
         'diags': []
@@ -177,6 +185,7 @@ class AnalyzeResult(NamedTuple):
 class Task(ABC):
     def __init__(self):
         self.__runtime = TaskRuntime()
+        self.__runtime.threads['compile'] = ThreadWithKill(target=self.main)
 
     @abstractmethod
     def scan_range(self):

@@ -277,7 +277,7 @@ class Task(BaseTask):
     def _fetch_result(self):
         from waveforms.backends.quark.executable import assymblyData
 
-        i = len(self.runtime.data)
+        i = len(self.runtime.result['data'])
         additional = self.kernel.fetch(self, i)
         if isinstance(additional, str):
             additional = []
@@ -286,7 +286,7 @@ class Task(BaseTask):
                                              self.runtime.prog.data_maps[i:]),
                                          start=i):
             result = assymblyData(raw_data, dataMap, self.signal)
-            self.runtime.data.append(result['data'])
+            self.runtime.result['data'].append(result['data'])
             self.runtime.result['states'].append(result.get('state', None))
             self.runtime.result['counts'].append(result.get('count', None))
             self.runtime.result['diags'].append(result.get('diag', None))
@@ -298,7 +298,7 @@ class Task(BaseTask):
         return {
             'calibration_level': self.calibration_level,
             'index': self.runtime.result['index'],
-            'data': np.asarray(self.runtime.data),
+            'data': np.asarray(self.runtime.result['data']),
             'states': np.asarray(self.runtime.result['states']),
             'counts': self.runtime.result['counts'],
             'diags': np.asarray(self.runtime.result['diags'])
@@ -308,7 +308,7 @@ class Task(BaseTask):
         return {
             'calibration_level': self.calibration_level,
             'index': self.runtime.result['index'],
-            'data': np.asarray(self.runtime.data),
+            'data': np.asarray(self.runtime.result['data']),
             'states': np.asarray(self.runtime.result['states']),
             'counts': self.runtime.result['counts'],
             'diags': np.asarray(self.runtime.result['diags'])
