@@ -65,7 +65,8 @@ def _get_w_and_data_maps(ADInfo):
                 'LOFrequency']
             info['fList'].append(Delta)
             dataMap['cbits'][task.cbit] = (channel, len(info['fList']) - 1,
-                                           Delta, task.params)
+                                           Delta, task.params, task.time,
+                                           info['start'], info['stop'])
             if task.params['w'] is not None:
                 w = np.zeros(numberOfPoints, dtype=complex)
                 w[:len(task.params['w'])] = task.params['w']
@@ -116,7 +117,7 @@ def _sort_cbits(raw_data, dataMap):
     gate_list = []
     min_shots = np.inf
     for cbit in sorted(dataMap):
-        ch, i, Delta, params = dataMap[cbit]
+        ch, i, Delta, params, time, start, stop = dataMap[cbit]
         gate_list.append({'params': params})
         try:
             key = f'{ch}.IQ'
