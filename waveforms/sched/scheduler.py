@@ -21,7 +21,9 @@ from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.models import User, create_tables
 from waveforms.waveform import Waveform
 
-from .base import COMMAND, READ, WRITE, Executor, ThreadWithKill
+from .base import COMMAND, READ, WRITE, Executor
+from .base import Scheduler as BaseScheduler
+from .base import ThreadWithKill
 from .scan_iters import scan_iters
 from .task import Task, create_task
 
@@ -225,7 +227,7 @@ def expand_task(task: Task, executor: Executor):
         task.runtime.step += 1
 
 
-class Scheduler():
+class Scheduler(BaseScheduler):
     def __init__(self,
                  executor: Executor,
                  url: Optional[str] = None,
@@ -303,6 +305,9 @@ class Scheduler():
         return self.executor.cfg
 
     def session(self):
+        return sessionmaker(bind=self.eng)()
+
+    def db(self):
         return sessionmaker(bind=self.eng)()
 
     def get_task_by_id(self, task_id):

@@ -301,7 +301,7 @@ class Scheduler(ABC):
         pass
 
     @abstractmethod
-    def get_task(self, task_id: int) -> Task:
+    def get_task_by_id(self, task_id: int) -> Task:
         pass
 
     def __deepcopy__(self, memo):
