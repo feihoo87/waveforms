@@ -9,7 +9,9 @@ import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
+from waveforms.math.signal import shift
 from waveforms.sched.base import COMMAND, READ, TRIG, WRITE, Executor
+from waveforms.waveform_parser import wave_eval
 
 from quark import connect
 
@@ -27,41 +29,66 @@ def set_up_backend(host='127.0.0.1'):
     set_context_factory(QuarkContext)
 
 
-def getCommands(code, signal='state', shots=1024):
-    cmds = []
-    for key, wav in code.waveforms.items():
-        cmds.append(WRITE(key, wav))
-
+def _getADInfo(measures):
     ADInfo = {}
-    dataMap = {'cbits': {}}
-    readChannels = set()
-    for cbit in sorted(code.measures.keys()):
-        task = code.measures[cbit][-1]
-        readChannels.add(task.hardware['channel']['IQ'])
+    for cbit in sorted(measures.keys()):
+        task = measures[cbit][-1]
         ad = task.hardware['channel']['IQ']
         if ad not in ADInfo:
             ADInfo[ad] = {
+                'start': np.inf,
+                'stop': 0,
                 'fList': [],
                 'sampleRate': task.hardware['params']['sampleRate']['IQ'],
                 'tasks': [],
                 'w': []
             }
-        Delta = task.params['frequency'] - task.hardware['params'][
-            'LOFrequency']
-
-        if task.params['w'] is not None:
-            w = task.params['w']
-        else:
-            w = getFTMatrix([Delta],
-                            4096,
-                            weight=task.params['weight'],
-                            sampleRate=ADInfo[ad]['sampleRate'])[:, 0]
-
-        ADInfo[ad]['w'].append(w)
-        ADInfo[ad]['fList'].append(Delta)
+        ADInfo[ad]['start'] = min(ADInfo[ad]['start'], task.time)
+        ADInfo[ad]['stop'] = max(ADInfo[ad]['stop'],
+                                 task.time + task.params['duration'])
         ADInfo[ad]['tasks'].append(task)
-        dataMap['cbits'][cbit] = (ad, len(ADInfo[ad]['fList']) - 1, Delta,
-                                  task.params)
+    return ADInfo
+
+
+def _get_w_and_data_maps(ADInfo):
+    dataMap = {'cbits': {}}
+
+    for channel, info in ADInfo.items():
+        numberOfPoints = int(
+            (info['stop'] - info['start']) * info['sampleRate'])
+        if numberOfPoints % 1024 != 0:
+            numberOfPoints = numberOfPoints + 1024 - numberOfPoints % 1024
+        t = np.arange(numberOfPoints) / info['sampleRate'] + info['start']
+
+        for task in info['tasks']:
+            Delta = task.params['frequency'] - task.hardware['params'][
+                'LOFrequency']
+            info['fList'].append(Delta)
+            dataMap['cbits'][task.cbit] = (channel, len(info['fList']) - 1,
+                                           Delta, task.params)
+            if task.params['w'] is not None:
+                w = np.zeros(numberOfPoints, dtype=complex)
+                w[:len(task.params['w'])] = task.params['w']
+                w = shift(w, task.time - info['start'])
+            else:
+                fun = wave_eval(task.params['weight']) >> task.time
+                weight = fun(t)
+                w = getFTMatrix([Delta],
+                                numberOfPoints,
+                                weight=weight,
+                                sampleRate=info['sampleRate'])[:, 0]
+            info['w'].append(w)
+    return ADInfo, dataMap
+
+
+def getCommands(code, signal='state', shots=1024):
+    cmds = []
+
+    for key, wav in code.waveforms.items():
+        cmds.append(WRITE(key, wav))
+
+    ADInfo = _getADInfo(code.measures)
+    ADInfo, dataMap = _get_w_and_data_maps(ADInfo)
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
@@ -69,7 +96,7 @@ def getCommands(code, signal='state', shots=1024):
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
         cmds.append(WRITE(channel + '.shots', shots))
 
-    for channel in readChannels:
+    for channel in ADInfo:
         if signal == 'trace':
             cmds.append(READ(channel + '.TraceIQ'))
             cmds.append(WRITE(channel + '.CaptureMode', 'raw'))
@@ -77,7 +104,7 @@ def getCommands(code, signal='state', shots=1024):
             cmds.append(READ(channel + '.IQ'))
             cmds.append(WRITE(channel + '.CaptureMode', 'alg'))
 
-    for channel in readChannels:
+    for channel in ADInfo:
         cmds.append(
             WRITE(channel + '.StartCapture', random.randint(0, 2**16 - 1)))
 

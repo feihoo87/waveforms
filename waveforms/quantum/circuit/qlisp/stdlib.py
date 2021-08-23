@@ -226,11 +226,10 @@ def measure(ctx, qubits, cbit=None):
     signal = ctx.params.get('signal', 'state')
 
     try:
-        w = gate.W()
+        w = ctx.params['w']
         weight = None
     except:
-        w = (step(2500.0) >> 800) * exp(-1 / 100000)
-        weight = w(np.arange(4096, dtype=np.float64))
+        weight = ctx.params.get('weight', f'step({duration}) >> {duration/2}')
         w = None
     t = ctx.time[qubit]
 
