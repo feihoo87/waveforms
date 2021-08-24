@@ -178,7 +178,7 @@ def waiting_loop(running_pool: dict[int, Task], debug_mode: bool = False):
         time.sleep(0.1)
 
 
-def expand_task(task: Task, executor: Executor):
+def expand_task(task: Task):
     task.runtime.step = 0
     task.runtime.prog.index = []
     task.runtime.prog.commands = []
@@ -374,7 +374,7 @@ class Scheduler(BaseScheduler):
         :param task: task to scan
         :return: a generator yielding step arguments.
         """
-        yield from expand_task(task, self.executor)
+        yield from expand_task(task)
         with task.runtime._status_lock:
             if task.status == 'compiling':
                 task.runtime.status = 'pending'
