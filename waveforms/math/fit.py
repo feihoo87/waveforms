@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 import numpy as np
+from sklearn import svm
 
 
 def linFit(x, y):
@@ -95,6 +96,12 @@ def _atleast_type(a, dtype):
         return a
 
 
+def classify(data, thr, phi):
+    ret = (data * np.exp(-1j * phi)).real > thr
+    ret.dtype = np.int8
+    return ret
+
+
 def classifyData(data, measure_gates, avg=False):
     assert data.shape[-1] == len(
         measure_gates), 'number of qubits must equal to the size of last axis'
@@ -128,3 +135,53 @@ def classifyData(data, measure_gates, avg=False):
     if avg:
         ret = ret.mean(axis=-2)
     return ret
+
+
+def cdf(t, data):
+    data.sort()
+    x = data
+    y = np.linspace(0, 1, len(data))
+    return np.interp(t, x, y, left=0, right=1)
+
+
+def getThresholdInfo(s0, s1):
+    s0, s1 = np.asarray(s0), np.asarray(s1)
+
+    data = np.hstack([s0, s1])
+    scale = 0.2 * np.abs(data).max()
+    data /= scale
+    target = np.hstack([np.zeros_like(s0), np.ones_like(s1)])
+    X = np.c_[np.real(data), np.imag(data)]
+    clf = svm.LinearSVC()
+    clf.fit(X, target)
+    A, B, C = clf.coef_[0, 0], clf.coef_[0, 1], clf.intercept_[0]
+    phi = np.arctan2(B, A)
+    #thr = -scale * C / np.sqrt(A**2 + B**2)
+
+    re0 = (s0 * np.exp(-1j * phi)).real
+    re1 = (s1 * np.exp(-1j * phi)).real
+    im0 = (s0 * np.exp(-1j * phi)).imag
+    im1 = (s1 * np.exp(-1j * phi)).imag
+
+    x = np.unique(np.hstack([re0, re1]))
+    x.sort()
+    a = cdf(x, re0)
+    b = cdf(x, re1)
+    c = a - b
+
+    visibility = c.max()
+    thr = x[c == visibility].mean()
+
+    c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
+    c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
+
+    return {
+        'threshold': thr,
+        'phi': phi,
+        'visibility': (visibility, cdf(thr, re0), cdf(thr, re1)),
+        'signal': (re0, re1),
+        'idle': (im0, im1),
+        'center': (c0, c1),
+        'std': (a0, b0, a1, b1),
+        'cdf': (x, a, b, c)
+    }
