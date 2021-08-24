@@ -215,15 +215,18 @@ def expand_task(task: Task, executor: Executor):
         task.runtime.cmds = []
         yield step
         task.trig()
-        cmds = task.runtime.cmds
         task.runtime.prog.commands.append(task.runtime.cmds)
 
-        for k, v in task.cfg._history.items():
-            task.runtime.prog.side_effects.setdefault(k, v)
-
-        for cmd in cmds:
+        for cmd in task.runtime.cmds:
             if isinstance(cmd.value, Waveform):
-                task.runtime.prog.side_effects[cmd.address] = 'zero()'
+                task.runtime.prog.side_effects.setdefault(
+                    cmd.address, 'zero()')
+            else:
+                try:
+                    task.runtime.prog.side_effects.setdefault(
+                        cmd.address, task.cfg._history[cmd.address])
+                except:
+                    pass
         task.runtime.step += 1
 
 
@@ -351,8 +354,8 @@ class Scheduler(BaseScheduler):
         if not cache:
             cmds.append(WRITE(key, value))
         if len(cmds) > 0:
-            self.executor.feed(0, -1, cmds)
-            self.executor.free(0)
+            if self.executor.feed(0, -1, cmds):
+                self.executor.free(0)
         self.cfg.update(key, value, cache=cache)
 
     def get(self, key: str):
