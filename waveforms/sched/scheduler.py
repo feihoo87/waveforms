@@ -147,7 +147,8 @@ def submit_thread(task: Task, executor: Executor):
             continue
 
         cmds = []
-        if i == 0:
+        #if i == 0:
+        if False:
             sync_set = {}
             for e in task.runtime.used_elements:
                 try:
