@@ -267,7 +267,8 @@ class QuarkExecutor(Executor):
                 if isinstance(cmd, WRITE):
                     writes[cmd.address] = (type(cmd).__name__, cmd.value)
                 else:
-                    others.append(cmd)
+                    others.append(
+                        (cmd.address, (type(cmd).__name__, cmd.value)))
         cmds = list(writes.items())
         cmds.extend(others)
 
