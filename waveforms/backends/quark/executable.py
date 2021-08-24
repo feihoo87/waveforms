@@ -206,9 +206,9 @@ class QuarkExecutor(Executor):
                 for tid in list(self._conn_pool.actived.keys()):
                     if tid not in alived:
                         conn = self._conn_pool.actived.pop(tid)
-                        if len(self._conn_pool.disactived
-                               ) < self._conn_pool.max_unused:
-                            self._conn_pool.disactived.append(conn)
+                        # if len(self._conn_pool.disactived
+                        #        ) < self._conn_pool.max_unused:
+                        #     self._conn_pool.disactived.append(conn)
 
     @property
     def conn(self):
