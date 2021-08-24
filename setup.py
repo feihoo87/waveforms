@@ -43,7 +43,7 @@ setup(
     #ext_modules = cythonize("waveforms/math/prime.pyx"),
     include_package_data = True,
     package_data={
-        'waveforms': ['libs/*.inc']
+        'waveforms.quantum.circuit.qasm': ['libs/*.inc']
     },
     #data_files=[('waveforms/Data', waveData)],
     install_requires=requirements,
