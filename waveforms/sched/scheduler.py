@@ -321,6 +321,19 @@ class Scheduler(BaseScheduler):
                 raise ValueError('Wrong password')
         return user
 
+    def add_user(self, username: str, password: str):
+        db = self.session()
+        try:
+            user = db.query(User).filter(User.name == username).one()
+        except NoResultFound:
+            user = User(name=username)
+            db.add(user)
+            db.commit()
+        else:
+            raise ValueError('User already exists')
+        user.setPassword(password)
+        db.commit()
+
     @property
     def cfg(self):
         return self.executor.cfg
