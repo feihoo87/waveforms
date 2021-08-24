@@ -1,0 +1,2 @@
+include waveforms/quantum/circuit/qasm/libs/*.inc
+include MANIFEST.in
