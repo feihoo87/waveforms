@@ -230,7 +230,12 @@ def measure(ctx, qubits, cbit=None):
     except:
         weight = ctx.params.get('weight', f'step({duration}) >> {duration/2}')
         w = None
-    t = ctx.time[qubit]
+    
+    TRIGGER_CLOCK_CYCLE = 8e-9
+
+    t = np.floor_divide(ctx.time[qubit], TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
+    if t < ctx.time[qubit]:
+        t += TRIGGER_CLOCK_CYCLE
 
     phi = 2 * np.pi * (lo - frequency) * t
 
@@ -249,7 +254,7 @@ def measure(ctx, qubits, cbit=None):
                         signal,
                         params,
                         hardware={}))
-    ctx.time[qubit] += duration
+    ctx.time[qubit] = t + duration
     ctx.phases[qubit] = 0
 
 
