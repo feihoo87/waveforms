@@ -11,17 +11,17 @@ from ..cache import cache
 from .math import dagger, normalize, randomUnitary, unitary2v, v2unitary
 
 __base_op = {
-    'I': np.array([[1, 0], [0, 1]]),
-    'X': np.array([[0, -1j], [-1j, 0]]),
-    'Y': np.array([[0, -1], [1, 0]]),
-    'X/2': np.array([[1, -1j], [-1j, 1]]) / np.sqrt(2),
-    'Y/2': np.array([[1, -1], [1, 1]]) / np.sqrt(2),
-    '-X/2': np.array([[1, 1j], [1j, 1]]) / np.sqrt(2),
-    '-Y/2': np.array([[1, 1], [-1, 1]]) / np.sqrt(2),
-    'Z': np.array([[1, 0], [0, -1]]),
-    'S': np.array([[1, 0], [0, 1j]]),
-    '-S': np.array([[1, 0], [0, -1j]]),
-    'H': np.array([[1, 1], [1, -1]]) / np.sqrt(2),
+    'I': np.array([[1, 0], [0, 1]], dtype=complex),
+    'X': np.array([[0, -1j], [-1j, 0]], dtype=complex),
+    'Y': np.array([[0, -1], [1, 0]], dtype=complex),
+    'X/2': np.array([[1, -1j], [-1j, 1]], dtype=complex) / np.sqrt(2),
+    'Y/2': np.array([[1, -1], [1, 1]], dtype=complex) / np.sqrt(2),
+    '-X/2': np.array([[1, 1j], [1j, 1]], dtype=complex) / np.sqrt(2),
+    '-Y/2': np.array([[1, 1], [-1, 1]], dtype=complex) / np.sqrt(2),
+    'Z': np.array([[1, 0], [0, -1]], dtype=complex),
+    'S': np.array([[1, 0], [0, 1j]], dtype=complex),
+    '-S': np.array([[1, 0], [0, -1j]], dtype=complex),
+    'H': np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2),
 
     # non-clifford
     'T': np.array([[1, 0], [0, 1 / np.sqrt(2) + 1j / np.sqrt(2)]]),
@@ -30,10 +30,15 @@ __base_op = {
 
 __base_op_2 = {
     # two qubits
-    'CZ': np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]]),
-    'CNOT': np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]),
-    'iSWAP': np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0],
-                       [0, 0, 0, 1]]),
+    'CZ':
+    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]],
+             dtype=complex),
+    'CNOT':
+    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
+             dtype=complex),
+    'iSWAP':
+    np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]],
+             dtype=complex),
 }
 
 __base_op['Sigma_x'] = 1j * __base_op['X']
@@ -84,7 +89,7 @@ def vToRho(V):
     X = V[:(N**2 - N) // 2]
     Y = V[(N**2 - N) // 2:(N**2 - N)]
     Z = V[(N**2 - N):]
-    rho = np.diag(np.hstack((1 - np.sum(Z), Z)) / 2).astype(np.complex)
+    rho = np.diag(np.hstack((1 - np.sum(Z), Z)) / 2).astype(complex)
 
     rho[np.triu_indices(N, 1)] = X + 1j * Y
     rho += dagger(rho)
@@ -235,7 +240,7 @@ def qst_mle(diags, gates=qst_gates, F=None, rho0=None):
         pxis = pxis * (pxis.real > 0)
         terms = (diags * log(pxis + (diags == 0)) +
                  (1 - diags) * log(1 - pxis + (diags == 1)))
-        return -np.sum(terms)
+        return -np.sum(terms.real)
 
     #minimize
     #tis = optimize.fmin(unlikelihood, tis_guess)

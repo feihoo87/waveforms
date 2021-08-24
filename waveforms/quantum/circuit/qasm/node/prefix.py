@@ -53,9 +53,6 @@ class Prefix(Node):
 
     def real(self, nested_scope=None):
         """Return the correspond floating point number."""
-        if nested_scope is not None:
-            warnings.warn('Parameter \'Prefix.real(..., nested_scope)\' is no longer '
-                          'used and is being deprecated.', DeprecationWarning)
         operation = self.children[0].operation()
         expr = self.children[1].real(nested_scope)
         return operation(expr)
