@@ -43,6 +43,7 @@ setup(
     #ext_modules = cythonize("waveforms/math/prime.pyx"),
     include_package_data = True,
     #data_files=[('waveforms/Data', waveData)],
+    entry_points ={'console_scripts': ['wave_server = waveforms.server.__main__:main']},
     install_requires=requirements,
     extras_require={
         'storage': [
