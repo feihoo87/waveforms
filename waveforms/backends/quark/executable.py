@@ -260,8 +260,17 @@ class QuarkExecutor(Executor):
             extra (dict): extra data
         """
 
-        cmds = [(cmd.address, (type(cmd).__name__, cmd.value)) for cmd in cmds
-                if _is_feedable(cmd)]
+        writes = {}
+        others = []
+        for cmd in cmds:
+            if _is_feedable(cmd):
+                if isinstance(cmd, WRITE):
+                    writes[cmd.address] = (type(cmd).__name__, cmd.value)
+                else:
+                    others.append(cmd)
+        cmds = list(writes.items())
+        cmds.extend(others)
+
         if len(cmds) == 0:
             return False
 

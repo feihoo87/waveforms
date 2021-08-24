@@ -205,6 +205,11 @@ class Task(BaseTask):
                 qubits = (qubits, )
             for qubit in qubits:
                 self.tags.add(qubit)
+                self.runtime.used_elements.add(qubit)
+                q = self.cfg.query(qubit)
+                self.runtime.used_elements.add(q['probe'])
+                for coupler in q['couplers']:
+                    self.runtime.used_elements.add(coupler)
 
         step = self.kernel._exec(self,
                                  circuit,

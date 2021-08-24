@@ -145,7 +145,24 @@ def submit_thread(task: Task, executor: Executor):
         if i == len(task.runtime.prog.commands):
             time.sleep(1)
             continue
-        executor.feed(task.id, i, task.runtime.prog.commands[i])
+
+        cmds = []
+        if i == 0:
+            sync_set = {}
+            for e in task.runtime.used_elements:
+                try:
+                    q = executor.cfg.query(e)
+                    sync_set.update({
+                        f'{e}.setting.' + k: v
+                        for k, v in q['setting'].items()
+                    })
+                except:
+                    pass
+            for k, v in sync_set.items():
+                cmds.append(WRITE(k, v))
+
+        cmds.extend(task.runtime.prog.commands[i])
+        executor.feed(task.id, i, cmds)
         i += 1
     clean_side_effects(task, executor)
 

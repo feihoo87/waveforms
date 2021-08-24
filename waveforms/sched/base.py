@@ -160,6 +160,8 @@ class TaskRuntime():
     threads: dict = field(default_factory=dict)
     _status_lock: threading.Lock = field(default_factory=threading.Lock)
 
+    used_elements: set = field(default_factory=set)
+
 
 class AnalyzeResult(NamedTuple):
     """
