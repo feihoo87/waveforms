@@ -10,7 +10,7 @@ from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.math.signal import shift
-from waveforms.sched.base import COMMAND, READ, TRIG, WRITE, Executor
+from waveforms.sched.base import COMMAND, READ, SYNC, TRIG, WRITE, Executor
 from waveforms.waveform_parser import wave_eval
 
 from quark import connect
@@ -259,6 +259,7 @@ class QuarkExecutor(Executor):
             cmds (list): commands to be executed
             extra (dict): extra data
         """
+        commands = []
 
         writes = {}
         others = []
@@ -266,19 +267,27 @@ class QuarkExecutor(Executor):
             if _is_feedable(cmd):
                 if isinstance(cmd, WRITE):
                     writes[cmd.address] = (type(cmd).__name__, cmd.value)
+                elif isinstance(cmd, SYNC):
+                    commands.extend(list(writes.items()))
+                    writes = {}
+                    commands.extend(others)
+                    others = []
+                    # commands.append(
+                    #     (cmd.address, (type(cmd).__name__, cmd.value)))
                 else:
                     others.append(
                         (cmd.address, (type(cmd).__name__, cmd.value)))
-        cmds = list(writes.items())
-        cmds.extend(others)
+        commands.extend(list(writes.items()))
+        commands.extend(others)
 
-        if len(cmds) == 0:
+        if len(commands) == 0:
             return False
 
         priority = 0
-        self.conn.feed(priority, task_id, task_step, cmds, extra=extra)
+        self.conn.feed(priority, task_id, task_step, commands, extra=extra)
         self.log.debug(
-            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})')
+            f'feed({priority}, {task_id}, {task_step}, {commands}, extra={extra})'
+        )
         return True
 
     def free(self, task_id: int) -> None:
