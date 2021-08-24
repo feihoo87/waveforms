@@ -159,8 +159,61 @@ def _find_diff_pos(a: tuple, b: tuple):
 
 
 def scan_iters(
-        iters: dict,
+        iters: dict[Union[str, tuple[str, ...]], Union[Iterable, Callable,
+                                                       tuple[Iterable, ...]]],
         filter: Optional[Callable[..., bool]] = None) -> Iterable[StepStatus]:
+    """
+    Scan the given iterable of iterables.
+
+    Parameters
+    ----------
+    iters : dict
+        The map of iterables.
+    filter : Callable[..., bool]
+        A filter function that is called for each step.
+        If it returns False, the step is skipped.
+
+    Returns
+    -------
+    Iterable[StepStatus]
+        An iterable of StepStatus objects.
+
+    Examples
+    --------
+    >>> iters = {
+    >>>     'a': range(2),
+    >>>     'b': range(3),
+    >>> }
+    >>> list(scan_iters(iters))
+    [StepStatus(pos=(0, 0), kwds={'a': 0, 'b': 0}, iteration=0, index=(0, 0),
+                optimizer_status=()),
+     StepStatus(pos=(0, 1), kwds={'a': 0, 'b': 1}, iteration=0, index=(0, 1),
+                optimizer_status=()),
+     StepStatus(pos=(0, 2), kwds={'a': 0, 'b': 2}, iteration=0, index=(0, 2),
+                optimizer_status=()),
+     StepStatus(pos=(1, 0), kwds={'a': 1, 'b': 0}, iteration=1, index=(1, 0),
+                optimizer_status=()),
+     StepStatus(pos=(1, 1), kwds={'a': 1, 'b': 1}, iteration=1, index=(1, 1),
+                optimizer_status=()),
+     StepStatus(pos=(1, 2), kwds={'a': 1, 'b': 2}, iteration=1, index=(1, 2),
+                optimizer_status=())]
+
+    >>> iters = {
+    >>>     'a': range(2),
+    >>>     'b': range(3),
+    >>> }
+    >>> list(scan_iters(iters, lambda a, b: a < b))
+    [StepStatus(pos=(0, 1), kwds={'a': 0, 'b': 1}, iteration=0, index=(0, 0),
+                optimizer_status=()),
+     StepStatus(pos=(0, 2), kwds={'a': 0, 'b': 2}, iteration=0, index=(0, 1),
+                optimizer_status=()),
+     StepStatus(pos=(1, 2), kwds={'a': 1, 'b': 2}, iteration=1, index=(1, 0),
+                optimizer_status=())]
+    """
+
+    if len(iters) == 0:
+        return
+
     iters = {k: iters[k] for k in reversed(iters)}
 
     last_pos = None
