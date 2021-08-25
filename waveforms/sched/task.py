@@ -20,9 +20,10 @@ from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.crud import tag
 from waveforms.storage.models import Record, Report
 
-from .base import TRIG, WRITE
+from .base import READ, TRIG, WRITE
 from .base import Task as BaseTask
 from .base import TaskRuntime
+from .scan import exec_circuit, expand_task
 
 
 @dataclass
@@ -199,7 +200,22 @@ class Task(BaseTask):
              lib: Optional[Library] = None,
              cfg: Union[Config, ConfigProxy, None] = None,
              compile_once: bool = False):
+        from waveforms import stdlib
 
+        if lib is None:
+            lib = stdlib
+        if cfg is None:
+            cfg = self.cfg
+
+        self._collect_used_elements(circuit)
+        return exec_circuit(self,
+                            circuit,
+                            lib=lib,
+                            cfg=cfg,
+                            signal=self.signal,
+                            compile_once=compile_once)
+
+    def _collect_used_elements(self, circuit: QLisp) -> None:
         for _, qubits in circuit:
             if not isinstance(qubits, tuple):
                 qubits = (qubits, )
@@ -211,16 +227,12 @@ class Task(BaseTask):
                 for coupler in q['couplers']:
                     self.runtime.used_elements.add(coupler)
 
-        step = self.kernel._exec(self,
-                                 circuit,
-                                 lib=lib,
-                                 cfg=cfg,
-                                 signal=self.signal,
-                                 compile_once=compile_once)
-        return step
-
     def measure(self, keys, labels=None):
-        self.kernel._measure(self, keys, labels)
+        if labels is None:
+            labels = keys
+        dataMap = {'data': {label: key for key, label in zip(keys, labels)}}
+        self.runtime.prog.data_maps[-1].update(dataMap)
+        self.runtime.cmds.extend([READ(key) for key in keys])
 
     def trig(self) -> None:
         cmds = self.get('station.triggercmds')
@@ -233,7 +245,11 @@ class Task(BaseTask):
                         coords={
                             'shots': np.arange(self.shots),
                         })
-        yield from self.kernel.scan(self)
+
+        yield from expand_task(self)
+        with self.runtime._status_lock:
+            if self.status == 'compiling':
+                self.runtime.status = 'pending'
 
     @cached_property
     def data_path(self) -> str:

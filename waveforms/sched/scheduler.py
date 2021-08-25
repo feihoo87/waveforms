@@ -17,10 +17,9 @@ from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.pool import SingletonThreadPool
 from waveforms.storage.models import User, create_tables
 
-from .base import COMMAND, READ, WRITE, Executor
+from .base import WRITE, Executor
 from .base import Scheduler as BaseScheduler
 from .base import ThreadWithKill
-from .scan import exec_circuit, expand_task
 from .task import Task, create_task
 from .terminal import Terminal
 
@@ -115,33 +114,16 @@ def submit_thread(task: Task, executor: Executor):
     """Submit a task."""
     i = 0
     while True:
-        if any(t._kill_event.is_set() for t in task.runtime.threads.values()):
+        t0 = time.time()
+        if task.runtime.threads['submit']._kill_event.is_set():
             break
         if (i >= task.runtime.step
                 and not task.runtime.threads['compile'].is_alive()):
             break
         if i == len(task.runtime.prog.commands):
-            time.sleep(1)
+            time.sleep(0.1)
             continue
-
-        cmds = []
-        #if i == 0:
-        if False:
-            sync_set = {}
-            for e in task.runtime.used_elements:
-                try:
-                    q = executor.cfg.query(e)
-                    sync_set.update({
-                        f'{e}.setting.' + k: v
-                        for k, v in q['setting'].items()
-                    })
-                except:
-                    pass
-            for k, v in sync_set.items():
-                cmds.append(WRITE(k, v))
-
-        cmds.extend(task.runtime.prog.commands[i])
-        executor.feed(task.id, i, cmds)
+        executor.feed(task.id, i, task.runtime.prog.commands[i])
         i += 1
     clean_side_effects(task, executor)
 
@@ -175,12 +157,24 @@ def waiting_loop(running_pool: dict[int, Task], debug_mode: bool = False):
 
 
 class Scheduler(BaseScheduler):
-    def __init__(self,
-                 executor: Executor,
-                 url: Optional[str] = None,
-                 data_path: Union[str, Path] = Path.home() / 'data',
-                 debug_mode: bool = False):
+    def __init__(self):
+        self.counter = itertools.count()
+        self.__uuid = uuid.uuid1()
+        self._task_pool = {}
+        self._queue = PriorityQueue()
+        self._waiting_pool = {}
+        self._submit_stack = []
+        self.mutex = set()
+        self.executor = None
+
+    def bootstrap(self,
+                  executor: Executor,
+                  url: Optional[str] = None,
+                  data_path: Union[str, Path] = Path.home() / 'data',
+                  debug_mode: bool = False):
         """
+        Bootstrap the scheduler.
+
         Parameters
         ----------
         executor : Executor
@@ -193,14 +187,13 @@ class Scheduler(BaseScheduler):
             source name" replaces the "host" and "database" portions. The
             typical form of a database URL is:
                 `dialect+driver://username:password@host:port/database`
+        data_path : str
+            The path to the data directory.
+        debug_mode : bool
+            Whether to enable debug mode.
         """
-        self.counter = itertools.count()
-        self.__uuid = uuid.uuid1()
-        self._task_pool = {}
-        self._queue = PriorityQueue()
-        self._waiting_pool = {}
-        self._submit_stack = []
-        self.mutex = set()
+        if self.executor is not None:
+            return
         self.executor = executor
         if url is None:
             url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
@@ -326,39 +319,6 @@ class Scheduler(BaseScheduler):
         i = uuid.uuid3(self.__uuid, f"{next(self.counter)}").int
         return i & ((1 << 64) - 1)
 
-    def scan(self, task):
-        """Yield from task.scan_range().
-
-        :param task: task to scan
-        :return: a generator yielding step arguments.
-        """
-        yield from expand_task(task)
-        with task.runtime._status_lock:
-            if task.status == 'compiling':
-                task.runtime.status = 'pending'
-
-    def _exec(self,
-              task,
-              circuit,
-              lib=None,
-              cfg=None,
-              signal='state',
-              compile_once=False):
-        """Execute a circuit."""
-        from waveforms import stdlib
-
-        if lib is None:
-            lib = stdlib
-        if cfg is None:
-            cfg = self.cfg
-
-        return exec_circuit(task,
-                            circuit,
-                            lib=lib,
-                            cfg=cfg,
-                            signal=signal,
-                            compile_once=compile_once)
-
     def exec(self,
              circuit,
              signal='state',
@@ -389,13 +349,6 @@ class Scheduler(BaseScheduler):
                         cmds=cmds)
         self.submit(t)
         return t
-
-    def _measure(self, task, keys, labels=None):
-        if labels is None:
-            labels = keys
-        dataMap = {'data': {label: key for key, label in zip(keys, labels)}}
-        task.runtime.prog.data_maps[-1].update(dataMap)
-        task.runtime.cmds.extend([READ(key) for key in keys])
 
     def measure(self, keys, labels=None, cmds=[]):
         pass
@@ -489,4 +442,50 @@ class Scheduler(BaseScheduler):
         """
         task = create_task((app, args, kwds))
         task._set_kernel(self, -1)
+        task.runtime.user = self.system_user
         return task
+
+
+scheduler = Scheduler()
+
+
+def bootstrap(executor: Executor,
+              url: Optional[str] = None,
+              data_path: Union[str, Path] = Path.home() / 'data',
+              debug_mode: bool = False):
+    """
+    Bootstrap the scheduler.
+
+    Parameters
+    ----------
+    executor : Executor
+        The executor to use to submit tasks
+    url : str
+        The url of the database. These URLs follow RFC-1738, and usually
+        can include username, password, hostname, database name as well
+        as optional keyword arguments for additional configuration.
+        In some cases a file path is accepted, and in others a "data
+        source name" replaces the "host" and "database" portions. The
+        typical form of a database URL is:
+            `dialect+driver://username:password@host:port/database`
+    data_path : str
+        The path to the data directory.
+    debug_mode : bool
+        Whether to enable debug mode.
+    """
+    scheduler.bootstrap(executor, url, data_path, debug_mode)
+    return scheduler
+
+
+def login(username, password):
+    """
+    Login to the scheduler.
+
+    Parameters
+    ----------
+    username : str
+        The username to login with.
+    password : str
+        The password to login with.
+    """
+    return scheduler.login(username, password)
