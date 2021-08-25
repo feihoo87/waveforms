@@ -81,24 +81,28 @@ def _try_to_call(x, kwds):
     return x
 
 
-def _args_generator(iters: dict,
+def _args_generator(iters: list[tuple[str, Iterable]],
+                    filter: Optional[Callable[..., bool]] = None,
+                    additional_kwds: dict = {},
                     kwds: dict = {},
                     pos=(),
                     optimizer_status=(),
-                    filter=None):
+                    level=0):
 
-    if len(iters) == 0:
+    if len(iters) == level:
+        kwds.update(
+            {k: _try_to_call(v, kwds)
+             for k, v in additional_kwds.items()})
         if filter is None or _call_func_with_kwds(filter, kwds):
             yield StepStatus(pos, kwds, 0, (), optimizer_status)
         return
 
-    iters = iters.copy()
-    keys, current_iters = iters.popitem()
+    keys, current_iters = iters[level]
 
     if _is_optimize_step(keys, current_iters):
         opts = current_iters
-        yield from _opt_generator(iters, kwds, pos, optimizer_status, keys,
-                                  opts, filter)
+        yield from _opt_generator(iters, filter, additional_kwds, kwds, pos,
+                                  optimizer_status, keys, opts, level)
         return
 
     if not _is_multi_step(keys, current_iters):
@@ -106,17 +110,20 @@ def _args_generator(iters: dict,
         current_iters = (current_iters, )
     iter_list = [_try_to_call(it, kwds) for it in current_iters]
     for i, values in enumerate(zip(*iter_list)):
-        yield from _args_generator(iters, kwds | dict(zip(keys, values)),
-                                   pos + (i, ), optimizer_status, filter)
+        yield from _args_generator(iters, filter, additional_kwds,
+                                   kwds | dict(zip(keys, values)), pos + (i, ),
+                                   optimizer_status, level + 1)
 
 
-def _opt_generator(iters: dict,
+def _opt_generator(iters: list[tuple[str, Iterable]],
+                   filter: Optional[Callable[..., bool]],
+                   additional_kwds: dict,
                    kwds: dict,
                    pos: tuple[int],
                    optimizer_status: tuple,
                    opt_keys: tuple[str, ...],
                    opts: Union[OptimizerConfig, tuple[OptimizerConfig, ...]],
-                   filter=None):
+                   level=0):
 
     pipe = FeedbackPipe(opt_keys)
     opts = (opts, ) if isinstance(opts, OptimizerConfig) else opts
@@ -137,10 +144,12 @@ def _opt_generator(iters: dict,
                 pass
         o = OptimizerStatus(opt_keys, suggested, optimized, i, pipe)
         yield from _args_generator(iters,
+                                   filter,
+                                   additional_kwds,
                                    kwds | kw,
                                    pos + (i, ),
                                    optimizer_status + (o, ),
-                                   filter=filter)
+                                   level=level + 1)
         if optimized:
             break
         for feedback in pipe():
@@ -158,10 +167,11 @@ def _find_diff_pos(a: tuple, b: tuple):
             return i
 
 
-def scan_iters(
-        iters: dict[Union[str, tuple[str, ...]], Union[Iterable, Callable,
-                                                       tuple[Iterable, ...]]],
-        filter: Optional[Callable[..., bool]] = None) -> Iterable[StepStatus]:
+def scan_iters(iters: dict[Union[str, tuple[str, ...]],
+                           Union[Iterable, Callable, tuple[Iterable,
+                                                           ...]]] = {},
+               filter: Optional[Callable[..., bool]] = None,
+               additional_kwds: dict = {}) -> Iterable[StepStatus]:
     """
     Scan the given iterable of iterables.
 
@@ -172,6 +182,8 @@ def scan_iters(
     filter : Callable[..., bool]
         A filter function that is called for each step.
         If it returns False, the step is skipped.
+    additional_kwds : dict
+        Additional keyword arguments that are passed to the iterables.
 
     Returns
     -------
@@ -214,13 +226,14 @@ def scan_iters(
     if len(iters) == 0:
         return
 
-    iters = {k: iters[k] for k in reversed(iters)}
-
     last_pos = None
     index = ()
-    for iteration, step in enumerate(_args_generator(iters, filter=filter)):
+    for iteration, step in enumerate(
+            _args_generator(list(iters.items()),
+                            filter=filter,
+                            additional_kwds=additional_kwds)):
         if last_pos is None:
-            index = step.pos
+            index = (0, ) * len(step.pos)
         else:
             i = _find_diff_pos(last_pos, step.pos)
             index = tuple((j <= i) * n + (j == i) for j, n in enumerate(index))
