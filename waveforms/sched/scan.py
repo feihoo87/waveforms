@@ -82,9 +82,6 @@ def expand_task(task: Task):
                 task.runtime.prog.side_effects.setdefault(
                     cmd.address, 'zero()')
             else:
-                try:
-                    task.runtime.prog.side_effects.setdefault(
-                        cmd.address, task.cfg._history[cmd.address])
-                except:
-                    pass
+                task.runtime.prog.side_effects.setdefault(
+                    cmd.address, task.cfg._history.query(cmd.address))
         task.runtime.step += 1

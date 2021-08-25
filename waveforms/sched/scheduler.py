@@ -73,9 +73,7 @@ def clean_side_effects(task: Task, executor: Executor):
     cmds = []
     for k, v in task.runtime.prog.side_effects.items():
         cmds.append(WRITE(k, v))
-        executor.update(k, v, cache=False)
     executor.feed(task.id, -1, cmds)
-    task.cfg.clear_buffer()
 
 
 def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],

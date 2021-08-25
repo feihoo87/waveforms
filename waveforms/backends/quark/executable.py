@@ -10,6 +10,7 @@ from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.math.signal import shift
+from waveforms.namespace import _NOTSET
 from waveforms.sched.base import COMMAND, READ, SYNC, TRIG, WRITE, Executor
 from waveforms.waveform_parser import wave_eval
 
@@ -266,7 +267,9 @@ class QuarkExecutor(Executor):
         for cmd in cmds:
             if _is_feedable(cmd):
                 if isinstance(cmd, WRITE):
-                    writes[cmd.address] = (type(cmd).__name__, cmd.value)
+                    if not (isinstance(cmd.value, tuple)
+                            and isinstance(cmd.value[0], _NOTSET)):
+                        writes[cmd.address] = (type(cmd).__name__, cmd.value)
                 elif isinstance(cmd, SYNC):
                     commands.extend(list(writes.items()))
                     writes = {}

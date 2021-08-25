@@ -1,7 +1,10 @@
+import copy
+import re
 import warnings
 from itertools import permutations
 
 from waveforms.baseconfig import _flattenDictIter, _foldDict, _query, _update
+from waveforms.namespace import DictDriver
 from waveforms.quantum.circuit.qlisp.config import ConfigProxy
 
 
@@ -311,6 +314,7 @@ class QuarkConfig(ConfigProxy):
 
     def _cache_result(self, q, ret, record_history=False):
         """Cache the result."""
+        return
         if isinstance(ret, dict):
             for k, v in _flattenDictIter(ret):
                 key = f'{q}.{k}'
@@ -341,3 +345,54 @@ class QuarkConfig(ConfigProxy):
     def checkpoint(self):
         """Checkpoint."""
         return self.conn.checkpoint()
+
+
+class QuarkLocalConfig(ConfigProxy):
+    def __init__(self, data) -> None:
+        self._history = None
+        self.__driver = DictDriver(copy.deepcopy(data))
+
+    def query(self, q):
+        return self.__driver.query(q)
+
+    def keys(self, pattern='*'):
+        return self.__driver.keys(pattern)
+
+    def update(self, q, v, cache=False):
+        self.__driver.update_many({q: v})
+
+    def getQubit(self, name):
+        return self.query(name)
+
+    def getCoupler(self, name):
+        return self.query(name)
+
+    def getReadout(self, name):
+        return self.query(name)
+
+    def getReadoutLine(self, name):
+        return self.query(name)
+
+    def getGate(self, name, *qubits):
+        order_senstive = self.query(f"gate.{name}.__order_senstive__")
+        if order_senstive is None:
+            order_senstive = True
+        if len(qubits) == 1 or order_senstive:
+            qubits = '_'.join(qubits)
+            ret = self.query(f"gate.{name}.{qubits}")
+            if isinstance(ret, dict):
+                return ret
+            else:
+                raise Exception(f"gate {name} of {qubits} not calibrated.")
+        else:
+            for qlist in permutations(qubits):
+                try:
+                    ret = self.query(f"gate.{name}.{'_'.join(qlist)}")
+                    if isinstance(ret, dict):
+                        return ret
+                except:
+                    break
+            raise Exception(f"gate {name} of {qubits} not calibrated.")
+
+    def clear_buffer(self):
+        pass

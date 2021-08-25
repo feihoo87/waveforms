@@ -20,7 +20,7 @@ def _makeAWGChannelInfo(section: str, cfgDict: dict,
             ret['I'] = f"{section}.waveform.RF.I"
         if cfgDict['channel']['Q'] is not None:
             ret['Q'] = f"{section}.waveform.RF.Q"
-        ret['LO'] = cfgDict['setting']['LO']
+        ret['lofreq'] = cfgDict['setting']['LO']
         return ret
     elif name == 'AD.trigger':
         return f"{section}.waveform.TRIG"
@@ -61,23 +61,33 @@ class QuarkContext(Context):
         rlDict = self.cfg.getReadout(rl)
         chInfo = {
             'IQ': rlDict['channel']['ADC'],
-            'LO': rlDict['setting']['LO'],
+            'LO': rlDict['channel']['LO'],
+            'TRIG': rlDict['channel']['TRIG'],
+            'lofreq': rlDict['setting']['LO'],
             'trigger': f'{rl}.waveform.TRIG',
-            'sampleRate': rlDict['adcsr']
+            'sampleRate': rlDict['adcsr'],
+            'triggerDelay': rlDict['setting']['TRIGD'],
+            'triggerSkew': rlDict.get('trigger_skew', 0),
         }
         return chInfo
 
     def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        return chInfo['LO']
+        return chInfo['lofreq']
 
     def _getADChannelDetails(self, chInfo) -> dict:
-        hardware = {'channel': {}, 'params': {}}
+        hardware = {
+            'channel': {},
+            'params': {
+                'triggerDelay': chInfo['triggerDelay'],
+                'triggerSkew': chInfo['triggerSkew'],
+            }
+        }
         if isinstance(chInfo, dict):
-            if 'LO' in chInfo:
-                hardware['params']['LOFrequency'] = chInfo['LO']
+            if 'lofreq' in chInfo:
+                hardware['params']['LOFrequency'] = chInfo['lofreq']
 
             hardware['params']['sampleRate'] = {}
-            for ch in ['I', 'Q', 'IQ', 'Ref']:
+            for ch in ['I', 'Q', 'IQ', 'Ref', 'TRIG']:
                 if ch in chInfo:
                     hardware['channel'][ch] = chInfo[ch]
                     sampleRate = chInfo['sampleRate']

@@ -76,6 +76,7 @@ class Task(BaseTask):
         self.calibration_level = calibration_level
         self.no_record = False
         self._tags: set = TagSet()
+        self.__cfg = None
 
     def __del__(self):
         try:
@@ -91,6 +92,15 @@ class Task(BaseTask):
         if self.runtime.db is None:
             self.runtime.db = self.kernel.session()
         return self.runtime.db
+
+    @property
+    def cfg(self):
+        from waveforms.backends.quark.quarkconfig import QuarkLocalConfig
+
+        if self.__cfg is None:
+            self.__cfg = QuarkLocalConfig(self.runtime.prog.snapshot)
+            self.__cfg._history = QuarkLocalConfig(self.runtime.prog.snapshot)
+        return self.__cfg
 
     @property
     def tags(self):
@@ -193,7 +203,7 @@ class Task(BaseTask):
         """
         return the value of the key in the kernel config
         """
-        return self.kernel.query(key)
+        return self.cfg.query(key)
 
     def exec(self,
              circuit: QLisp,
