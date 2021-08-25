@@ -84,13 +84,11 @@ class DictDriver(NamespaceDriver):
             return [k for k in ret if k.startswith(s)]
 
     def update_many(self, key_value_pairs: dict[str, Any]):
-        updates = {}
         for key, value in key_value_pairs.items():
             keys = list(reversed(key.split('.')))
             for k in keys[:-1]:
                 value = {k: value}
-            updates[keys[-1]] = value
-        update_tree(self.dct, key_value_pairs)
+            update_tree(self.dct, {keys[-1]: value})
 
     def create_many(self, key_value_pairs: dict[str, Any]):
         self.update_many(key_value_pairs)
@@ -262,4 +260,3 @@ class NamespaceEventLog():
         self.updates = NamespaceCache()
         self.creates = NamespaceCache()
         self.deletes = NamespaceCache()
-        
