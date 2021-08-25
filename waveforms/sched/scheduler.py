@@ -6,7 +6,6 @@ import os
 import threading
 import time
 import uuid
-import warnings
 import weakref
 from pathlib import Path
 from queue import Empty, PriorityQueue
@@ -23,6 +22,7 @@ from .base import Scheduler as BaseScheduler
 from .base import ThreadWithKill
 from .scan import exec_circuit, expand_task
 from .task import Task, create_task
+from .terminal import Terminal
 
 log = logging.getLogger(__name__)
 
@@ -89,15 +89,20 @@ def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
                 current_stack.append(current_task)
             else:
                 with current_task.runtime._status_lock:
-                    current_task.runtime.status = 'running'
+                    if current_task.status in [
+                            'submiting', 'pending', 'compiling'
+                    ]:
+                        current_task.runtime.status = 'running'
 
         try:
             task = task_queue.get_nowait()
         except Empty:
             time.sleep(1)
             continue
-        if task.runtime.at > 0 and task.runtime.at > time.time():
-            task_queue.put(task)
+        if task.status == 'cancelled':
+            pass
+        elif task.runtime.at > 0 and task.runtime.at > time.time():
+            task_queue.put_nowait(task)
             time.sleep(1)
         elif (len(current_stack) == 0
               or task.is_children_of(current_stack[-1])):
@@ -209,7 +214,7 @@ class Scheduler(BaseScheduler):
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
 
-        self.system_user = self.login('BIG BROTHER', self.__uuid)
+        self.system_user = self.verify_user('BIG BROTHER', self.__uuid)
 
         self._read_data_thread = threading.Thread(target=waiting_loop,
                                                   args=(self._waiting_pool,
@@ -224,7 +229,7 @@ class Scheduler(BaseScheduler):
             daemon=True)
         self._submit_thread.start()
 
-    def login(self, username: str, password: str) -> User:
+    def verify_user(self, username: str, password: str) -> User:
         db = self.session()
         if username == 'BIG BROTHER' and password == self.__uuid:
             try:
@@ -241,6 +246,10 @@ class Scheduler(BaseScheduler):
             if not user.verify(password):
                 raise ValueError('Wrong password')
         return user
+
+    def login(self, username: str, password: str) -> Terminal:
+        user = self.verify_user(username, password)
+        return Terminal(self, user)
 
     def add_user(self, username: str, password: str):
         db = self.session()
@@ -275,19 +284,16 @@ class Scheduler(BaseScheduler):
         return {id: ref() for id, ref in self._task_pool.items()}
 
     def cancel(self):
-        self.executor.cancel()
-        self._queue.clear()
+        while not self._queue.empty():
+            task = self._queue.get_nowait()
+            task.cancel()
         while self._submit_stack:
-            task, thread = self._submit_stack.pop()
-            thread.kill()
-            with task.runtime._status_lock:
-                task.runtime.status = 'cancelled'
-
+            task = self._submit_stack.pop()
+            task.cancel()
+        self.executor.cancel()
         while self._waiting_result:
-            task_id, (task, thread) = self._waiting_result.popitem()
-            thread.kill()
-            with task.runtime._status_lock:
-                task.runtime.status = 'cancelled'
+            task_id, task = self._waiting_result.popitem()
+            task.cancel()
 
     def join(self, task):
         while True:
@@ -353,32 +359,34 @@ class Scheduler(BaseScheduler):
                             signal=signal,
                             compile_once=compile_once)
 
-    def exec(self, circuit, lib=None, cfg=None, signal='state', cmds=[]):
+    def exec(self,
+             circuit,
+             signal='state',
+             shots=1024,
+             lib=None,
+             cfg=None,
+             cmds=[]):
         """Execute a circuit.
         
         Parameters:
             circuit: a QLisp Circuit.
+            signal: a str of the name of the signal type to be returned.
+            shots: the number of shots to be executed.
             lib: a Library used by compiler,default is stdlib.
             cfg: configuration of system.
-            signal: a str of the name of the signal type to be returned.
             cmds: additional commands.
 
         Returns:
             A Task.
         """
-        from waveforms.sched import App
+        from waveforms.sched.task import RunCircuits
 
-        class A(App):
-            def scan_range(self):
-                yield 0
-
-            def main(self):
-                for _ in self.scan():
-                    self.runtime.cmds.extend(cmds)
-                    self.exec(circuit, lib=lib, cfg=cfg)
-
-        t = A()
-        t.signal = signal
+        t = RunCircuits(circuits=[circuit],
+                        shots=shots,
+                        signal=signal,
+                        lib=lib,
+                        cfg=cfg,
+                        cmds=cmds)
         self.submit(t)
         return t
 
@@ -434,9 +442,13 @@ class Scheduler(BaseScheduler):
         task._set_kernel(self, taskID)
         task.runtime.threads.update({
             'submit':
-            ThreadWithKill(target=submit_thread, args=(task, self.executor)),
+            ThreadWithKill(target=submit_thread,
+                           name=f"Submit-{task.id}",
+                           args=(task, self.executor)),
             'fetch_data':
-            ThreadWithKill(target=fetch_data, args=(task, self.executor))
+            ThreadWithKill(target=fetch_data,
+                           name=f"Fetch-{task.id}",
+                           args=(task, self.executor))
         })
         with task.runtime._status_lock:
             if not task.runtime.prog.with_feedback:

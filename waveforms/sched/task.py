@@ -319,6 +319,12 @@ class Task(BaseTask):
             'diags': np.asarray(self.runtime.result['diags'])
         }
 
+    def cancel(self):
+        for t in self.runtime.threads.values():
+            t.kill()
+        with self.runtime._status_lock:
+            self.runtime.status = 'cancelled'
+
 
 class ContainerTask(Task):
     def __init__(self, *args, **kwargs):
@@ -347,7 +353,7 @@ class UserInput(App):
         return CalibrationResult(suggested_calibration_level=100)
 
     def scan_range(self) -> Union[Iterable, Generator]:
-        return []
+        return {}
 
     def main(self):
         for key in self.keys:
@@ -355,6 +361,31 @@ class UserInput(App):
 
     def result(self):
         return {'data': []}
+
+
+class RunCircuits(App):
+    def __init__(self,
+                 circuits,
+                 shots=1024,
+                 signal='state',
+                 lib=None,
+                 cfg=None,
+                 cmds=[]):
+        super().__init__(signal=signal, shots=shots)
+        self.circuits = circuits
+        self.custom_lib = lib
+        self.custom_cfg = cfg
+        self.cmds = cmds
+
+    def scan_range(self):
+        return {'circuit': self.circuits}
+
+    def main(self):
+        for step in self.scan():
+            self.runtime.cmds.extend(self.cmds)
+            self.exec(step.kwds['circuit'],
+                      lib=self.custom_lib,
+                      cfg=self.custom_cfg)
 
 
 def _getAppClass(name: str) -> Type[App]:

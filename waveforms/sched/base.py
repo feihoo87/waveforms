@@ -187,7 +187,7 @@ class AnalyzeResult(NamedTuple):
 class Task(ABC):
     def __init__(self):
         self.__runtime = TaskRuntime()
-        self.__runtime.threads['compile'] = ThreadWithKill(target=self.main)
+        self.__runtime.threads['compile'] = ThreadWithKill(target=self.main, name=f"Compile-{self.name}-{id(self)}")
 
     @abstractmethod
     def scan_range(self):
