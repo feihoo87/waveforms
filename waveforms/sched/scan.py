@@ -14,20 +14,18 @@ from .scan_iters import scan_iters
 log = logging.getLogger(__name__)
 
 
-def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
-                 cfg: Config, signal: str, compile_once: bool) -> int:
+def exec_circuit(task: Task,
+                 circuit: Union[str, list],
+                 lib: Library,
+                 cfg: Config,
+                 signal: str,
+                 skip_compile: bool = False) -> int:
     """Execute a circuit."""
     from waveforms import compile
     from waveforms.backends.quark.executable import getCommands
 
     task.runtime.prog.steps[-1][2].extend(task.runtime.cmds)
-    if task.runtime.step == 0 or not compile_once:
-        code = compile(circuit, lib=lib, cfg=cfg)
-        cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
-        task.runtime.cmds.extend(cmds)
-        task.runtime.prog.data_maps[-1].update(dataMap)
-        task.runtime.prog.steps[-1][0].extend(circuit)
-    else:
+    if skip_compile and task.runtime.step > 0:
         for cmd in task.runtime.prog.commands[-1]:
             if (isinstance(cmd, READ) or cmd.address.endswith('.StartCapture')
                     or cmd.address.endswith('.CaptureMode')):
@@ -35,6 +33,12 @@ def exec_circuit(task: Task, circuit: Union[str, list], lib: Library,
         task.runtime.prog.data_maps[-1] = task.runtime.prog.data_maps[0]
         task.runtime.prog.steps[-1][2].extend(task.runtime.cmds)
         task.runtime.prog.steps[-1][3].update(task.runtime.prog.data_maps[-1])
+    else:
+        code = compile(circuit, lib=lib, cfg=cfg)
+        cmds, dataMap = getCommands(code, signal=signal, shots=task.shots)
+        task.runtime.cmds.extend(cmds)
+        task.runtime.prog.data_maps[-1].update(dataMap)
+        task.runtime.prog.steps[-1][0].extend(circuit)
     return task.runtime.step
 
 

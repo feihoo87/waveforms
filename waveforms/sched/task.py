@@ -5,6 +5,7 @@ import functools
 import importlib
 import logging
 import sys
+import warnings
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -209,7 +210,8 @@ class Task(BaseTask):
              circuit: QLisp,
              lib: Optional[Library] = None,
              cfg: Union[Config, ConfigProxy, None] = None,
-             compile_once: bool = False):
+             compile_once: bool = None,
+             skip_compile: bool = False):
         from waveforms import stdlib
 
         if lib is None:
@@ -217,13 +219,23 @@ class Task(BaseTask):
         if cfg is None:
             cfg = self.cfg
 
+        if compile_once is not None:
+            if self.runtime.step == 0:
+                warnings.warn(
+                    "compile_once is deprecated, use skip_compile instead",
+                    DeprecationWarning, 2)
+            if compile_once and self.runtime.step == 0:
+                skip_compile = True
+            else:
+                skip_compile = False
+
         self._collect_used_elements(circuit)
         return exec_circuit(self,
                             circuit,
                             lib=lib,
                             cfg=cfg,
                             signal=self.signal,
-                            compile_once=compile_once)
+                            skip_compile=skip_compile)
 
     def _collect_used_elements(self, circuit: QLisp) -> None:
         for _, qubits in circuit:
