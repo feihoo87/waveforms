@@ -69,7 +69,18 @@ def _addWaveforms(ctx, channel, wav):
 def _addMultChannelWaveforms(ctx, wav, chInfo):
     lofreq = ctx._getLOFrequencyOfChannel(chInfo)
     if 'I' in chInfo:
-        I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
+        try:
+            I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
+        except:
+            w = (2 * wav * cos(-2 * pi * lofreq))
+            print("====== ERROR WAVEFORM ======")
+            print("    lofreq =", lofreq)
+            print("")
+            print(w.bound)
+            print("")
+            print(w.seq)
+            print("====== ERROR WAVEFORM ======")
+            raise
         ctx.waveforms[chInfo['I']] += I
     if 'Q' in chInfo:
         Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
