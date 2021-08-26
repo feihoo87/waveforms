@@ -292,7 +292,7 @@ class Task(BaseTask):
         self.kernel.clean_side_effects(self)
 
     @abstractmethod
-    def scan_range(self) -> Union[Iterable, Generator]:
+    def scan_range(self) -> dict:
         pass
 
     @abstractmethod
