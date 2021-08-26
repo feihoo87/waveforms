@@ -224,7 +224,7 @@ class Task(BaseTask):
                 warnings.warn(
                     "compile_once is deprecated, use skip_compile instead",
                     DeprecationWarning, 2)
-            if compile_once and self.runtime.step == 0:
+            if compile_once and self.runtime.step != 0:
                 skip_compile = True
             else:
                 skip_compile = False
