@@ -39,6 +39,7 @@ def _getADInfo(measures):
             ADInfo[ad] = {
                 'start': np.inf,
                 'stop': 0,
+                'triggerDelay': task.hardware['params'].get('triggerDelay', 0),
                 'fList': [],
                 'sampleRate': task.hardware['params']['sampleRate']['IQ'],
                 'tasks': [],
@@ -94,8 +95,10 @@ def getCommands(code, signal='state', shots=1024):
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
+        delay = info['start'] + info['triggerDelay']
         cmds.append(WRITE(channel + '.coefficient', coefficient))
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
+        cmds.append(WRITE(channel + '.triggerDelay', delay))
         cmds.append(WRITE(channel + '.shots', shots))
 
     for channel in ADInfo:

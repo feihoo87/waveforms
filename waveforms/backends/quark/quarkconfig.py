@@ -37,6 +37,7 @@ class QuarkConfig(ConfigProxy):
         self.conn.create('tmp', {})
         self.conn.create('apps', {})
         self.conn.create('gate', {})
+        self.conn.create('home', {})
 
     def newGate(self, name, *qubits):
         """Create a new gate."""
@@ -345,6 +346,16 @@ class QuarkConfig(ConfigProxy):
     def checkpoint(self):
         """Checkpoint."""
         return self.conn.checkpoint()
+
+    def export(self):
+        """Export."""
+        return self.conn.snapshot()
+
+    def load(self, data):
+        """Load."""
+        self.conn.clear()
+        for k, v in data.items():
+            self.conn.create(k, v)
 
 
 class QuarkLocalConfig(ConfigProxy):
