@@ -416,7 +416,7 @@ class RunCircuits(App):
         self.cmds = cmds
 
     def scan_range(self):
-        return {'circuit': self.circuits}
+        return {'iters': {'circuit': self.circuits}}
 
     def main(self):
         for step in self.scan():
