@@ -23,7 +23,7 @@ def _finally_opaque(ctx, qubits):
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
-    gatecfg = ctx._getGateConfig(name, *qubits)
+    gatecfg = ctx.cfg._getGateConfig(name, *qubits)
 
     func = lib.getOpaque(name, gatecfg['type'])
     if func is None:
@@ -59,7 +59,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
 def _addWaveforms(ctx, channel, wav):
     name, *qubits = channel
-    chInfo = ctx._getAWGChannel(name, *qubits)
+    chInfo = ctx.cfg._getAWGChannel(name, *qubits)
     if isinstance(chInfo, str):
         ctx.waveforms[chInfo] += wav
     else:
@@ -67,7 +67,7 @@ def _addWaveforms(ctx, channel, wav):
 
 
 def _addMultChannelWaveforms(ctx, wav, chInfo):
-    lofreq = ctx._getLOFrequencyOfChannel(chInfo)
+    lofreq = ctx.cfg._getLOFrequencyOfChannel(chInfo)
     if 'I' in chInfo:
         try:
             I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
@@ -88,12 +88,12 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
 
 
 def _addMeasurementHardwareInfo(ctx: Context, task: MeasurementTask):
-    AD = ctx._getADChannel(task.qubit)
-    task.hardware.update(ctx._getADChannelDetails(AD))
+    AD = ctx.cfg._getADChannel(task.qubit)
+    task.hardware.update(ctx.cfg._getADChannelDetails(AD))
 
 
 def _allocQubits(ctx, qlisp):
-    for i, q in enumerate(ctx._getAllQubitLabels()):
+    for i, q in enumerate(ctx.cfg._getAllQubitLabels()):
         ctx.addressTable[q] = q
         ctx.addressTable[i] = q
 

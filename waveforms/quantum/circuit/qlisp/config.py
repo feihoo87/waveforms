@@ -9,7 +9,89 @@ import numpy as np
 from waveforms.baseconfig import BaseConfig, Trait
 
 
-class Config(BaseConfig):
+class ABCCompileConfigMixin(ABC):
+    """
+    Mixin for configs that can be used by compiler.
+    """
+
+
+class CompileConfigMixin(ABCCompileConfigMixin):
+    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+        def _getSharedCoupler(qubits):
+            s = set(qubits[0]['couplers'])
+            for qubit in qubits[1:]:
+                s = s & set(qubit['couplers'])
+            return s
+
+        qubits = [self.getQubit(q) for q in qubits]
+
+        if name.startswith('readoutLine.'):
+            #name = name.removeprefix('readoutLine.')
+            name = name[len('readoutLine.'):]
+            rl = self.getReadoutLine(qubits[0]['readoutLine'])
+            chInfo = rl.query('channels.' + name)
+        elif name.startswith('coupler.'):
+            #name = name.removeprefix('coupler.')
+            name = name[len('coupler.'):]
+            c = _getSharedCoupler(qubits).pop()
+            c = self.getCoupler(c)
+            chInfo = c.query('channels.' + name)
+        else:
+            chInfo = qubits[0].query('channels.' + name)
+        return chInfo
+
+    def _getReadoutADLO(self, qubit) -> float:
+        rl = self.getReadoutLine(self.getQubit(qubit).readoutLine)
+        lo = self.getChannel(rl.channels.AD.LO).status.frequency
+        return lo
+
+    def _getADChannel(self, qubit) -> Union[str, dict]:
+        rl = self.getQubit(qubit).readoutLine
+        rl = self.getReadoutLine(rl)
+        return rl.channels.AD
+
+    def _getLOFrequencyOfChannel(self, chInfo) -> float:
+        lo = self.getChannel(chInfo['LO'])
+        lofreq = lo.status.frequency
+        return lofreq
+
+    def _getADChannelDetails(self, chInfo) -> dict:
+        def _getADSampleRate(ctx, channel):
+            return ctx.getChannel(channel).params.sampleRate
+
+        hardware = {'channel': {}, 'params': {}}
+        if isinstance(chInfo, dict):
+            if 'LO' in chInfo:
+                loFreq = self._getLOFrequencyOfChannel(chInfo)
+                hardware['channel']['LO'] = chInfo['LO']
+                hardware['params']['LOFrequency'] = loFreq
+
+            hardware['params']['sampleRate'] = {}
+            for ch in ['I', 'Q', 'IQ', 'Ref']:
+                if ch in chInfo:
+                    hardware['channel'][ch] = chInfo[ch]
+                    sampleRate = _getADSampleRate(self, chInfo[ch])
+                    hardware['params']['sampleRate'][ch] = sampleRate
+        elif isinstance(chInfo, str):
+            hardware['channel'] = chInfo
+
+        return hardware
+
+    def _getGateConfig(self, name, *qubits) -> dict:
+        try:
+            gate = self.getGate(name, *qubits)
+        except:
+            return {'type': 'default', 'params': {}}
+        params = gate['params']
+        type = gate.get('type', 'default')
+        return {'type': type, 'params': params}
+
+    def _getAllQubitLabels(self) -> list[str]:
+        return sorted(self.cfg['chip']['qubits'].keys(),
+                      key=lambda s: int(s[1:]))
+
+
+class Config(BaseConfig, CompileConfigMixin):
     def __init__(self, path: Optional[Union[str, Path]] = None):
         super().__init__(path)
         if 'station' not in self:

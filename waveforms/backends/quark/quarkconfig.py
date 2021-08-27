@@ -2,13 +2,124 @@ import copy
 import re
 import warnings
 from itertools import permutations
+from typing import Union
 
 from waveforms.baseconfig import _flattenDictIter, _foldDict, _query, _update
 from waveforms.namespace import DictDriver
 from waveforms.quantum.circuit.qlisp.config import ConfigProxy
 
 
-class QuarkConfig(ConfigProxy):
+def _getSharedCoupler(qubitsDict: dict) -> set[str]:
+    s = set(qubitsDict[0]['couplers'])
+    for qubit in qubitsDict[1:]:
+        s = s & set(qubit['couplers'])
+    return s
+
+
+def _makeAWGChannelInfo(section: str, cfgDict: dict,
+                        name: str) -> Union[str, dict]:
+    ret = {}
+    if name == 'RF':
+        # if cfgDict['channel']['DDS'] is not None:
+        #     return f"{section}.waveform.DDS"
+        if cfgDict['channel']['I'] is not None:
+            ret['I'] = f"{section}.waveform.RF.I"
+        if cfgDict['channel']['Q'] is not None:
+            ret['Q'] = f"{section}.waveform.RF.Q"
+        ret['lofreq'] = cfgDict['setting']['LO']
+        return ret
+    elif name == 'AD.trigger':
+        return f"{section}.waveform.TRIG"
+    else:
+        return f"{section}.waveform.{name}"
+
+
+class CompileConfigMixin():
+    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+
+        qubitsDict = [self.getQubit(q) for q in qubits]
+
+        if name.startswith('readoutLine.'):
+            #name = name.removeprefix('readoutLine.')
+            name = name[len('readoutLine.'):]
+            section = qubitsDict[0]['probe']
+            cfgDict = self.getReadout(section)
+        elif name.startswith('coupler.'):
+            #name = name.removeprefix('coupler.')
+            name = name[len('coupler.'):]
+            section = _getSharedCoupler(qubitsDict).pop()
+            cfgDict = self.getCoupler(section)
+        else:
+            section = qubits[0]
+            cfgDict = qubitsDict[0]
+
+        chInfo = _makeAWGChannelInfo(section, cfgDict, name)
+
+        return chInfo
+
+    def _getReadoutADLO(self, qubit) -> float:
+        rl = self.getReadout(self.getQubit(qubit)['probe'])
+        lo = rl['setting']['LO']
+        return lo
+
+    def _getADChannel(self, qubit) -> Union[str, dict]:
+        rl = self.getQubit(qubit)['probe']
+        rlDict = self.getReadout(rl)
+        chInfo = {
+            'IQ': rlDict['channel']['ADC'],
+            'LO': rlDict['channel']['LO'],
+            'TRIG': rlDict['channel']['TRIG'],
+            'lofreq': rlDict['setting']['LO'],
+            'trigger': f'{rl}.waveform.TRIG',
+            'sampleRate': rlDict['adcsr'],
+            'triggerDelay': rlDict['setting']['TRIGD'],
+            'triggerSkew': rlDict.get('trigger_skew', 0),
+        }
+        return chInfo
+
+    def _getLOFrequencyOfChannel(self, chInfo) -> float:
+        return chInfo['lofreq']
+
+    def _getADChannelDetails(self, chInfo) -> dict:
+        hardware = {
+            'channel': {},
+            'params': {
+                'triggerDelay': chInfo['triggerDelay'],
+                'triggerSkew': chInfo['triggerSkew'],
+            }
+        }
+        if isinstance(chInfo, dict):
+            if 'lofreq' in chInfo:
+                hardware['params']['LOFrequency'] = chInfo['lofreq']
+
+            hardware['params']['sampleRate'] = {}
+            for ch in ['I', 'Q', 'IQ', 'Ref', 'TRIG']:
+                if ch in chInfo:
+                    hardware['channel'][ch] = chInfo[ch]
+                    sampleRate = chInfo['sampleRate']
+                    hardware['params']['sampleRate'][ch] = sampleRate
+        elif isinstance(chInfo, str):
+            hardware['channel'] = chInfo
+
+        return hardware
+
+    def _getGateConfig(self, name, *qubits) -> dict:
+        try:
+            gate = self.getGate(name, *qubits)
+            if not isinstance(gate, dict):
+                return {'type': 'default', 'params': {}}
+            params = gate['params']
+            type = gate.get('type', 'default')
+        except:
+            type = 'default'
+            params = {}
+        return {'type': type, 'params': params}
+
+    def _getAllQubitLabels(self) -> list[str]:
+        return self.keys('Q*')
+
+
+class QuarkConfig(ConfigProxy, CompileConfigMixin):
     def __init__(self, host='127.0.0.1'):
         self.host = host
         self._cache = {}
@@ -358,7 +469,7 @@ class QuarkConfig(ConfigProxy):
             self.conn.create(k, v)
 
 
-class QuarkLocalConfig(ConfigProxy):
+class QuarkLocalConfig(ConfigProxy, CompileConfigMixin):
     def __init__(self, data) -> None:
         self._history = None
         self.__driver = DictDriver(copy.deepcopy(data))

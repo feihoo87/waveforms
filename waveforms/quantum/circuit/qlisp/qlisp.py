@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple, Optional, Union
-from waveforms.math import signal
 
+from waveforms.math import signal
 from waveforms.waveform import Waveform, zero
 
 from .config import Config, getConfig
@@ -103,80 +104,6 @@ class Context():
     def qubit(self, q):
         return self.addressTable[q]
 
-    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
-        def _getSharedCoupler(qubits):
-            s = set(qubits[0]['couplers'])
-            for qubit in qubits[1:]:
-                s = s & set(qubit['couplers'])
-            return s
-
-        qubits = [self.cfg.getQubit(q) for q in qubits]
-
-        if name.startswith('readoutLine.'):
-            #name = name.removeprefix('readoutLine.')
-            name = name[len('readoutLine.'):]
-            rl = self.cfg.getReadoutLine(qubits[0]['readoutLine'])
-            chInfo = rl.query('channels.' + name)
-        elif name.startswith('coupler.'):
-            #name = name.removeprefix('coupler.')
-            name = name[len('coupler.'):]
-            c = _getSharedCoupler(qubits).pop()
-            c = self.cfg.getCoupler(c)
-            chInfo = c.query('channels.' + name)
-        else:
-            chInfo = qubits[0].query('channels.' + name)
-        return chInfo
-
-    def _getReadoutADLO(self, qubit) -> float:
-        rl = self.cfg.getReadoutLine(self.cfg.getQubit(qubit).readoutLine)
-        lo = self.cfg.getChannel(rl.channels.AD.LO).status.frequency
-        return lo
-
-    def _getADChannel(self, qubit) -> Union[str, dict]:
-        rl = self.cfg.getQubit(qubit).readoutLine
-        rl = self.cfg.getReadoutLine(rl)
-        return rl.channels.AD
-
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        lo = self.cfg.getChannel(chInfo['LO'])
-        lofreq = lo.status.frequency
-        return lofreq
-
-    def _getADChannelDetails(self, chInfo) -> dict:
-        def _getADSampleRate(ctx, channel):
-            return ctx.cfg.getChannel(channel).params.sampleRate
-
-        hardware = {'channel': {}, 'params': {}}
-        if isinstance(chInfo, dict):
-            if 'LO' in chInfo:
-                loFreq = self._getLOFrequencyOfChannel(chInfo)
-                hardware['channel']['LO'] = chInfo['LO']
-                hardware['params']['LOFrequency'] = loFreq
-
-            hardware['params']['sampleRate'] = {}
-            for ch in ['I', 'Q', 'IQ', 'Ref']:
-                if ch in chInfo:
-                    hardware['channel'][ch] = chInfo[ch]
-                    sampleRate = _getADSampleRate(self, chInfo[ch])
-                    hardware['params']['sampleRate'][ch] = sampleRate
-        elif isinstance(chInfo, str):
-            hardware['channel'] = chInfo
-
-        return hardware
-
-    def _getGateConfig(self, name, *qubits) -> dict:
-        try:
-            gate = self.cfg.getGate(name, *qubits)
-        except:
-            return {'type': 'default', 'params': {}}
-        params = gate['params']
-        type = gate.get('type', 'default')
-        return {'type': type, 'params': params}
-
-    def _getAllQubitLabels(self) -> list[str]:
-        return sorted(self.cfg['chip']['qubits'].keys(),
-                      key=lambda s: int(s[1:]))
-
 
 @dataclass
 class QLispCode():
@@ -189,21 +116,17 @@ class QLispCode():
     shots: int = 1024
 
 
-__context_factory = Context
-
-
 def set_context_factory(factory):
-    global __context_factory
-    __context_factory = factory
+    warnings.warn('set_context_factory is deprecated', DeprecationWarning, 2)
 
 
 def create_context(ctx: Optional[Context] = None, **kw) -> Context:
     if ctx is None:
-        return __context_factory(**kw)
+        return Context(**kw)
     else:
         if 'cfg' not in kw:
             kw['cfg'] = ctx.cfg
-        sub_ctx = __context_factory(**kw)
+        sub_ctx = Context(**kw)
         sub_ctx.time.update(ctx.time)
         sub_ctx.phases.update(ctx.phases)
         sub_ctx.biases.update(ctx.biases)

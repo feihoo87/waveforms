@@ -13,17 +13,14 @@ from waveforms.waveform_parser import wave_eval
 from quark import connect
 
 from .quarkconfig import QuarkConfig
-from .quarkcontext import QuarkContext
 
 log = logging.getLogger(__name__)
 
 
 def set_up_backend(host='127.0.0.1'):
     from waveforms.quantum.circuit.qlisp.config import set_config_factory
-    from waveforms.quantum.circuit.qlisp.qlisp import set_context_factory
 
     set_config_factory(lambda: QuarkConfig(host=host))
-    set_context_factory(QuarkContext)
 
 
 def assymblyData(*args, **kwargs):
@@ -252,7 +249,6 @@ class FakeExecutor(Executor):
 
         self._cfg = QuarkLocalConfig(config)
         set_config_factory(lambda: self._cfg)
-        set_context_factory(QuarkContext)
 
     def get_config(self):
         return self._cfg
