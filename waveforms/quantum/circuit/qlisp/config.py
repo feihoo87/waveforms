@@ -87,7 +87,7 @@ class CompileConfigMixin(ABCCompileConfigMixin):
         return {'type': type, 'params': params}
 
     def _getAllQubitLabels(self) -> list[str]:
-        return sorted(self.cfg['chip']['qubits'].keys(),
+        return sorted(self['chip']['qubits'].keys(),
                       key=lambda s: int(s[1:]))
 
 
