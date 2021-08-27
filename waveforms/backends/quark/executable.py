@@ -156,6 +156,14 @@ def _process_classify(data, gate_params_list, signal, classify):
     return result
 
 
+def _get_classify_func(fun_name):
+    dispatcher = {}
+    try:
+        return dispatcher[fun_name]
+    except:
+        return classifyData
+
+
 def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     if not dataMap:
         return raw_data
@@ -164,6 +172,7 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
     raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
     if 'cbits' in dataMap:
         data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
+        classify = _get_classify_func(gate_params_list.get('classify', None))
         result.update(
             _process_classify(data, gate_params_list, signal, classify))
         result['data'] = data
@@ -367,6 +376,7 @@ class QuarkExecutor(Executor):
         """
         self.conn.cancel()
         self.log.debug('cancel()')
+
 
 class FakeExecutor(Executor):
     def __init__(self, **kwds):
