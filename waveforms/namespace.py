@@ -1,7 +1,10 @@
 import json
+import pickle
 from abc import ABC, abstractmethod
 from threading import Lock
 from typing import Any
+
+import portalocker
 
 
 class _NOTSET():
@@ -125,6 +128,27 @@ class JSONDriver(DictDriver):
     def save(self):
         with open(self.path, 'w') as f:
             json.dump(self.dct, f)
+
+    def commit(self):
+        self.save()
+
+
+class PickleDriver(DictDriver):
+    def __init__(self, path):
+        super().__init__(dict())
+        self.path = path
+        self.load()
+
+    def load(self):
+        try:
+            with portalocker.Lock(self.path, 'rb') as f:
+                self.dct = pickle.load(f)
+        except:
+            self.dct = {}
+
+    def save(self):
+        with portalocker.Lock(self.path, 'wb') as f:
+            pickle.dump(self.dct, f)
 
     def commit(self):
         self.save()
