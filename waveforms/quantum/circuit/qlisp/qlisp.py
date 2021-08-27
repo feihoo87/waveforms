@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple, Optional, Union
+from waveforms.math import signal
 
 from waveforms.waveform import Waveform, zero
 
@@ -184,6 +185,8 @@ class QLispCode():
     waveforms: dict[str, Waveform] = field(repr=True)
     measures: dict[int, list[MeasurementTask]] = field(repr=True)
     end: float = field(default=0, repr=True)
+    signal: str = 'state'
+    shots: int = 1024
 
 
 __context_factory = Context

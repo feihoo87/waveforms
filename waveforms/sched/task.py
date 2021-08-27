@@ -5,9 +5,9 @@ import functools
 import importlib
 import logging
 import sys
-import warnings
 import threading
 import time
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -16,6 +16,7 @@ from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
 
 import blinker
 import numpy as np
+from waveforms.quantum.circuit.qlisp import get_arch
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.storage.crud import tag
@@ -62,7 +63,8 @@ class Task(BaseTask):
     def __init__(self,
                  signal: SIGNAL = 'count',
                  shots: int = 1024,
-                 calibration_level: int = 0):
+                 calibration_level: int = 0,
+                 arch: str = 'baqis'):
         """
         Args:
             signal: the signal to be measured
@@ -78,6 +80,7 @@ class Task(BaseTask):
         self.no_record = False
         self._tags: set = TagSet()
         self.__cfg = None
+        self.__runtime.arch = get_arch(arch)
 
     def __del__(self):
         try:
@@ -319,8 +322,6 @@ class Task(BaseTask):
         raise NotImplementedError()
 
     def _fetch_result(self):
-        from waveforms.backends.quark.executable import assymblyData
-
         i = len(self.runtime.result['data'])
         additional = self.kernel.fetch(self, i)
         if isinstance(additional, str):
@@ -329,7 +330,8 @@ class Task(BaseTask):
                    dataMap) in enumerate(zip(additional,
                                              self.runtime.prog.data_maps[i:]),
                                          start=i):
-            result = assymblyData(raw_data, dataMap, self.signal)
+            result = self.runtime.arch.assembly_data(raw_data, dataMap,
+                                                     self.signal)
             self.runtime.result['data'].append(result['data'])
             self.runtime.result['states'].append(result.get('state', None))
             self.runtime.result['counts'].append(result.get('count', None))

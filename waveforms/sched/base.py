@@ -14,6 +14,8 @@ from typing import (Any, Generator, Iterable, Literal, NamedTuple, Optional,
                     Sequence, Type, Union)
 
 from sqlalchemy.orm.session import Session
+from waveforms.quantum.circuit.qlisp import (COMMAND, FREE, PUSH, READ, SYNC,
+                                             TRIG, WRITE, Architecture)
 from waveforms.storage.models import Record, Report, User
 
 
@@ -24,47 +26,6 @@ class ThreadWithKill(threading.Thread):
 
     def kill(self):
         self._kill_event.set()
-
-
-class COMMAND():
-    """Commands for the executor"""
-    __slots__ = ('address', 'value')
-
-    def __init__(self, address: str, value: Any):
-        self.address = address
-        self.value = value
-
-
-class READ(COMMAND):
-    """Read a value from the scheduler"""
-    def __init__(self, address: str):
-        super().__init__(address, 'READ')
-
-    def __repr__(self) -> str:
-        return f"READ({self.address})"
-
-
-class WRITE(COMMAND):
-    def __repr__(self) -> str:
-        return f"WRITE({self.address}, {self.value})"
-
-
-class TRIG(COMMAND):
-    """Trigger the system"""
-    def __init__(self, address: str):
-        super().__init__(address, 0)
-
-    def __repr__(self) -> str:
-        return f"TRIG({self.address})"
-
-
-class SYNC(COMMAND):
-    """Synchronization command"""
-    def __init__(self, delay: float = 0):
-        super().__init__('SYNC', delay)
-
-    def __repr__(self) -> str:
-        return f"SYNC({self.value})"
 
 
 class Executor(ABC):
@@ -112,6 +73,7 @@ class Program:
     A program is a list of commands.
     """
     with_feedback: bool = False
+    arch: str = 'baqis'
 
     index: list = field(default_factory=list)
     commands: list[list[COMMAND]] = field(default_factory=list)
@@ -143,6 +105,7 @@ class TaskRuntime():
     user: User = None
 
     prog: Program = field(default_factory=Program)
+    arch: Architecture = None
 
     #################################################
     step: int = 0
