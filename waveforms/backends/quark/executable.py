@@ -89,6 +89,8 @@ def getCommands(code, signal='state', shots=1024):
     cmds = []
 
     for key, wav in code.waveforms.items():
+        wav = wav << code.end
+        wav = wav >> 99e-6
         cmds.append(WRITE(key, wav))
 
     ADInfo = _getADInfo(code.measures)
@@ -96,7 +98,7 @@ def getCommands(code, signal='state', shots=1024):
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
-        delay = info['start'] + info['triggerDelay']
+        delay = 0*info['start'] + info['triggerDelay']
         cmds.append(WRITE(channel + '.coefficient', coefficient))
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
         cmds.append(WRITE(channel + '.triggerDelay', delay))

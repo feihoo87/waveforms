@@ -231,12 +231,12 @@ def measure(ctx, qubits, cbit=None):
         weight = ctx.params.get('weight', f'square({duration}) >> {duration/2}')
         w = None
 
-    TRIGGER_CLOCK_CYCLE = 8e-9
+    # TRIGGER_CLOCK_CYCLE = 8e-9
 
-    t = np.floor_divide(ctx.time[qubit], TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
-    if t < ctx.time[qubit]:
-        t += TRIGGER_CLOCK_CYCLE
-    # t = ctx.time[qubit]
+    # t = np.floor_divide(ctx.time[qubit], TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
+    # if t < ctx.time[qubit]:
+    #     t += TRIGGER_CLOCK_CYCLE
+    t = ctx.time[qubit]
 
     phi = 2 * np.pi * (lo - frequency) * t
 
@@ -244,7 +244,7 @@ def measure(ctx, qubits, cbit=None):
     ctx.channel['readoutLine.RF',
                 qubit] += amp * pulse * cos(2 * pi * frequency, phi)
 
-    pulse = square(2 * duration) >> duration
+    # pulse = square(2 * duration) >> duration
     ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
 
     params = {k: v for k, v in ctx.params.items()}
