@@ -3,6 +3,7 @@ import random
 import re
 import threading
 import time
+import warnings
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -98,7 +99,7 @@ def getCommands(code, signal='state', shots=1024):
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
-        delay = 0*info['start'] + info['triggerDelay']
+        delay = 0 * info['start'] + info['triggerDelay']
         cmds.append(WRITE(channel + '.coefficient', coefficient))
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
         cmds.append(WRITE(channel + '.triggerDelay', delay))
@@ -338,6 +339,7 @@ class QuarkExecutor(Executor):
             list: list of results.
         """
         ret = self.conn.fetch(task_id, skip)
+        # ret = ret['READ']
         self.log.debug(f'fetch({task_id}, {skip})')
         if ret is None:
             return []
@@ -350,12 +352,18 @@ class QuarkExecutor(Executor):
             key (str): key to update
             value (Any): value to update
         """
+        warnings.warn('update() is deprecated, use cfg.update() instead',
+                      DeprecationWarning, 2)
+        self.set(key, value, cache)
         self.cfg.update(key, value, cache=cache)
         self.log.debug(f'update({key}, {value})')
 
     def update_all(self, data: list[tuple[str, Any]]) -> None:
         """update all keys to values
         """
+        warnings.warn(
+            'update_all() is deprecated, use cfg.update_all() instead',
+            DeprecationWarning, 2)
         self.cfg.update_all(data)
         self.log.debug(f'update_all({data})')
 
@@ -369,6 +377,8 @@ class QuarkExecutor(Executor):
     def query(self, key: str) -> Any:
         """query key
         """
+        warnings.warn('query() is deprecated, use cfg.query() instead',
+                      DeprecationWarning, 2)
         ret = self.cfg.query(key)
         self.log.debug(f'query({key})')
         return ret
@@ -381,15 +391,21 @@ class QuarkExecutor(Executor):
 
 
 class FakeExecutor(Executor):
-    def __init__(self, **kwds):
-        pass
+    def __init__(self, config={}, **kwds):
+        from waveforms.backends.quark.quarkconfig import QuarkLocalConfig
+        from waveforms.quantum.circuit.qlisp.config import set_config_factory
+        from waveforms.quantum.circuit.qlisp.qlisp import set_context_factory
+
+        self._cfg = QuarkLocalConfig(config)
+        set_config_factory(lambda: self._cfg)
+        set_context_factory(QuarkContext)
 
     def get_config(self):
-        return {}
+        return self._cfg
 
     @property
     def cfg(self):
-        return {}
+        return self._cfg
 
     def boot(self):
         pass
@@ -432,13 +448,7 @@ class FakeExecutor(Executor):
             return []
         return ret
 
-    def update(self, key: str, value: Any, cache: bool = False) -> None:
-        pass
-
     def save(self, task_id: int, path: str) -> None:
-        pass
-
-    def query(self, key: str) -> Any:
         pass
 
     def cancel(self) -> None:

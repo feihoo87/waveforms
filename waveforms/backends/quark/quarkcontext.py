@@ -3,7 +3,7 @@ from typing import Union
 from waveforms.quantum.circuit.qlisp.qlisp import Context
 
 
-def _getSharedCoupler(qubitsDict: dict) -> set:
+def _getSharedCoupler(qubitsDict: dict) -> set[str]:
     s = set(qubitsDict[0]['couplers'])
     for qubit in qubitsDict[1:]:
         s = s & set(qubit['couplers'])
@@ -51,7 +51,7 @@ class QuarkContext(Context):
 
         return chInfo
 
-    def _getReadoutADLO(self, qubit):
+    def _getReadoutADLO(self, qubit) -> float:
         rl = self.cfg.getReadout(self.cfg.getQubit(qubit)['probe'])
         lo = rl['setting']['LO']
         return lo

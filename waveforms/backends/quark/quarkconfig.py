@@ -407,3 +407,6 @@ class QuarkLocalConfig(ConfigProxy):
 
     def clear_buffer(self):
         pass
+
+    def export(self):
+        return copy.deepcopy(self.__driver.dct)

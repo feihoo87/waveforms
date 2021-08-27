@@ -26,7 +26,41 @@ class MeasurementTask(NamedTuple):
     time: float
     signal: str
     params: dict
-    hardware: dict
+    hardware: Union[dict, ADChannel, MultADChannel]
+
+
+class AWGChannel(NamedTuple):
+    name: str
+    sampleRate: float
+    size: int = -1
+    amplitude: Optional[float] = None
+    offset: Optional[float] = None
+
+
+class MultAWGChannel(NamedTuple):
+    name: str
+    I: Optional[AWGChannel] = None
+    Q: Optional[AWGChannel] = None
+    LO: Optional[str] = None
+    lo_freq: float = -1
+    lo_power: Optional[float] = None
+
+
+class ADChannel(NamedTuple):
+    name: str
+    sampleRate: float
+    triggerDelay: float
+
+
+class MultADChannel(NamedTuple):
+    name: str
+    I: Optional[ADChannel] = None
+    Q: Optional[ADChannel] = None
+    IQ: Optional[ADChannel] = None
+    Ref: Optional[ADChannel] = None
+    LO: Optional[str] = None
+    lo_freq: float = -1
+    lo_power: Optional[float] = None
 
 
 @dataclass
@@ -92,7 +126,7 @@ class Context():
             chInfo = qubits[0].query('channels.' + name)
         return chInfo
 
-    def _getReadoutADLO(self, qubit):
+    def _getReadoutADLO(self, qubit) -> float:
         rl = self.cfg.getReadoutLine(self.cfg.getQubit(qubit).readoutLine)
         lo = self.cfg.getChannel(rl.channels.AD.LO).status.frequency
         return lo

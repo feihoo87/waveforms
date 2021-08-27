@@ -4,12 +4,12 @@ import click
 @click.command()
 @click.option('--executor',
               default='127.0.0.1',
-              help='Run the server in debug mode.')
+              help='Executor address to use.')
 @click.option('--port', default=8080, help='Port to run the server on.')
 @click.option('--host', default='0.0.0.0', help='Host to run the server on.')
-@click.option('--db-url', default='sqlite:///waveforms.db',
-              help='Database URL to use.')
-@click.option('--data-path', default='waveforms/data',
+@click.option('--db-url', default=None, help='Database URL to use.')
+@click.option('--data-path',
+              default='waveforms/data',
               help='Path to the data directory.')
 @click.option('--debug', is_flag=True, help='Run in debug mode.')
 @click.option('--workers',
