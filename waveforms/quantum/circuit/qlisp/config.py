@@ -8,38 +8,7 @@ from typing import Any, Optional, Union
 import numpy as np
 from waveforms.baseconfig import BaseConfig, Trait
 
-
-class ABCCompileConfigMixin(ABC):
-    """
-    Mixin for configs that can be used by compiler.
-    """
-    @abstractmethod
-    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
-        pass
-
-    @abstractmethod
-    def _getReadoutADLO(self, qubit) -> float:
-        pass
-
-    @abstractmethod
-    def _getADChannel(self, qubit) -> Union[str, dict]:
-        pass
-
-    @abstractmethod
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        pass
-
-    @abstractmethod
-    def _getADChannelDetails(self, chInfo) -> dict:
-        pass
-
-    @abstractmethod
-    def _getGateConfig(self, name, *qubits) -> dict:
-        pass
-
-    @abstractmethod
-    def _getAllQubitLabels(self) -> list[str]:
-        pass
+from .qlisp import ABCCompileConfigMixin, getConfig, set_config_factory
 
 
 class CompileConfigMixin(ABCCompileConfigMixin):
@@ -487,26 +456,9 @@ class ConfigProxy(ABC):
         pass
 
 
-__config_factory = None
-
-
-def set_config_factory(factory):
-    global __config_factory
-    __config_factory = factory
-
-
-def setConfig(path: Union[Path, str, ConfigProxy]) -> None:
+def setConfig(path: Union[Path, str, ABCCompileConfigMixin]) -> None:
     factory = lambda path=Path(path): Config(path)
     set_config_factory(factory)
-
-
-def getConfig() -> Config:
-    if __config_factory is None:
-        raise FileNotFoundError(
-            'setConfig(path) or set_config_factory(factory) must be run first.'
-        )
-    else:
-        return __config_factory()
 
 
 __all__ = ['Config', 'getConfig', 'setConfig']

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import warnings
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, NamedTuple, Optional, Union
 
-from waveforms.math import signal
 from waveforms.waveform import Waveform, zero
-
-from .config import Config, getConfig
 
 
 def gateName(st):
@@ -65,9 +64,59 @@ class MultADChannel(NamedTuple):
     lo_power: Optional[float] = None
 
 
+class ABCCompileConfigMixin(ABC):
+    """
+    Mixin for configs that can be used by compiler.
+    """
+    @abstractmethod
+    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+        pass
+
+    @abstractmethod
+    def _getReadoutADLO(self, qubit) -> float:
+        pass
+
+    @abstractmethod
+    def _getADChannel(self, qubit) -> Union[str, dict]:
+        pass
+
+    @abstractmethod
+    def _getLOFrequencyOfChannel(self, chInfo) -> float:
+        pass
+
+    @abstractmethod
+    def _getADChannelDetails(self, chInfo) -> dict:
+        pass
+
+    @abstractmethod
+    def _getGateConfig(self, name, *qubits) -> dict:
+        pass
+
+    @abstractmethod
+    def _getAllQubitLabels(self) -> list[str]:
+        pass
+
+
+__config_factory = None
+
+
+def set_config_factory(factory):
+    global __config_factory
+    __config_factory = factory
+
+
+def getConfig() -> ABCCompileConfigMixin:
+    if __config_factory is None:
+        raise FileNotFoundError(
+            'setConfig(path) or set_config_factory(factory) must be run first.'
+        )
+    else:
+        return __config_factory()
+
+
 @dataclass
 class Context():
-    cfg: Config = field(default_factory=getConfig)
+    cfg: ABCCompileConfigMixin = field(default_factory=getConfig)
     scopes: list[dict[str, Any]] = field(default_factory=lambda: [dict()])
     qlisp: list = field(default_factory=list)
     time: dict[str,
@@ -107,7 +156,7 @@ class Context():
 
 @dataclass
 class QLispCode():
-    cfg: Config = field(repr=False)
+    cfg: ABCCompileConfigMixin = field(repr=False)
     qlisp: list = field(repr=True)
     waveforms: dict[str, Waveform] = field(repr=True)
     measures: dict[int, list[MeasurementTask]] = field(repr=True)
