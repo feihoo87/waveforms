@@ -322,6 +322,7 @@ class Scheduler(BaseScheduler):
              circuit,
              signal='state',
              shots=1024,
+             arch='baqis',
              lib=None,
              cfg=None,
              cmds=[]):
@@ -343,6 +344,7 @@ class Scheduler(BaseScheduler):
         t = RunCircuits(circuits=[circuit],
                         shots=shots,
                         signal=signal,
+                        arch=arch,
                         lib=lib,
                         cfg=cfg,
                         cmds=cmds)

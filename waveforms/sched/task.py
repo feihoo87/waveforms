@@ -409,11 +409,12 @@ class RunCircuits(App):
                  circuits,
                  shots=1024,
                  signal='state',
+                 arch='baqis',
                  lib=None,
                  cfg=None,
                  settings=None,
                  cmds=[]):
-        super().__init__(signal=signal, shots=shots)
+        super().__init__(signal=signal, shots=shots, arch=arch)
         self.circuits = circuits
         self.custom_lib = lib
         self.custom_cfg = cfg
