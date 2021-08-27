@@ -13,6 +13,33 @@ class ABCCompileConfigMixin(ABC):
     """
     Mixin for configs that can be used by compiler.
     """
+    @abstractmethod
+    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+        pass
+
+    @abstractmethod
+    def _getReadoutADLO(self, qubit) -> float:
+        pass
+
+    @abstractmethod
+    def _getADChannel(self, qubit) -> Union[str, dict]:
+        pass
+
+    @abstractmethod
+    def _getLOFrequencyOfChannel(self, chInfo) -> float:
+        pass
+
+    @abstractmethod
+    def _getADChannelDetails(self, chInfo) -> dict:
+        pass
+
+    @abstractmethod
+    def _getGateConfig(self, name, *qubits) -> dict:
+        pass
+
+    @abstractmethod
+    def _getAllQubitLabels(self) -> list[str]:
+        pass
 
 
 class CompileConfigMixin(ABCCompileConfigMixin):
@@ -87,8 +114,7 @@ class CompileConfigMixin(ABCCompileConfigMixin):
         return {'type': type, 'params': params}
 
     def _getAllQubitLabels(self) -> list[str]:
-        return sorted(self['chip']['qubits'].keys(),
-                      key=lambda s: int(s[1:]))
+        return sorted(self['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
 
 
 class Config(BaseConfig, CompileConfigMixin):

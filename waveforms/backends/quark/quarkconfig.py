@@ -6,7 +6,8 @@ from typing import Union
 
 from waveforms.baseconfig import _flattenDictIter, _foldDict, _query, _update
 from waveforms.namespace import DictDriver
-from waveforms.quantum.circuit.qlisp.config import ConfigProxy
+from waveforms.quantum.circuit.qlisp.config import (ABCCompileConfigMixin,
+                                                    ConfigProxy)
 
 
 def _getSharedCoupler(qubitsDict: dict) -> set[str]:
@@ -34,7 +35,7 @@ def _makeAWGChannelInfo(section: str, cfgDict: dict,
         return f"{section}.waveform.{name}"
 
 
-class CompileConfigMixin():
+class CompileConfigMixin(ABCCompileConfigMixin):
     def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
 
         qubitsDict = [self.getQubit(q) for q in qubits]
