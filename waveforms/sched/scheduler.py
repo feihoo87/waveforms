@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import uuid
+import warnings
 import weakref
 from pathlib import Path
 from queue import Empty, PriorityQueue
@@ -139,13 +140,13 @@ def submit(task: Task, current_stack: list[Task],
     task.runtime.threads['submit'].start()
 
     running_pool[task.id] = task
-    task.runtime.threads['fetch_data'].start()
+    task.runtime.threads['fetch'].start()
 
 
 def waiting_loop(running_pool: dict[int, Task], debug_mode: bool = False):
     while True:
         for taskID, task in list(running_pool.items()):
-            if not task.runtime.threads['fetch_data'].is_alive():
+            if not task.runtime.threads['fetch'].is_alive():
                 try:
                     if not debug_mode:
                         del running_pool[taskID]
@@ -311,7 +312,7 @@ class Scheduler(BaseScheduler):
         """
         return the value of the key in the kernel config
         """
-        return self.query(key)
+        return self.cfg.query(key)
 
     def generate_task_id(self):
         i = uuid.uuid3(self.__uuid, f"{next(self.counter)}").int
@@ -381,7 +382,7 @@ class Scheduler(BaseScheduler):
         """
         return self.executor.fetch(task.id, skip)
 
-    def submit(self, task: Task, dry_run: bool = False) -> Task:
+    def submit(self, task: Task, dry_run: bool = False, config=None) -> Task:
         """Submit a task.
         """
         with task.runtime._status_lock:
@@ -392,15 +393,21 @@ class Scheduler(BaseScheduler):
         taskID = self.generate_task_id()
         task._set_kernel(self, taskID)
         task.runtime.threads.update({
+            'compile':
+            ThreadWithKill(target=task.main, name=f"Compile-{task.id}"),
             'submit':
             ThreadWithKill(target=submit_thread,
                            name=f"Submit-{task.id}",
                            args=(task, self.executor)),
-            'fetch_data':
+            'fetch':
             ThreadWithKill(target=fetch_data,
                            name=f"Fetch-{task.id}",
                            args=(task, self.executor))
         })
+        if config is not None:
+            task.runtime.prog.snapshot = config
+        else:
+            task.runtime.prog.snapshot = self.cfg.export()
         with task.runtime._status_lock:
             if not task.runtime.prog.with_feedback:
                 task.runtime.threads['compile'].start()
@@ -421,10 +428,14 @@ class Scheduler(BaseScheduler):
         return task
 
     def query(self, key):
-        return self.cfg.query(key)
+        warnings.warn('query is deprecated, use get instead',
+                      DeprecationWarning, 2)
+        return self.get(key)
 
     def update(self, key, value, cache=False):
-        self.executor.update(key, value, cache=cache)
+        warnings.warn('update is deprecated, use set instead',
+                      DeprecationWarning, 2)
+        self.set(key, value)
 
     def create_task(self, app, args=(), kwds={}):
         """

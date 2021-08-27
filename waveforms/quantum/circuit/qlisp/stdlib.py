@@ -228,7 +228,7 @@ def measure(ctx, qubits, cbit=None):
         w = ctx.params['w']
         weight = None
     except:
-        weight = ctx.params.get('weight', f'step({duration}) >> {duration/2}')
+        weight = ctx.params.get('weight', f'square({duration}) >> {duration/2}')
         w = None
 
     # TRIGGER_CLOCK_CYCLE = 8e-9

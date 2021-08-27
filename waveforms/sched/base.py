@@ -60,8 +60,8 @@ class TRIG(COMMAND):
 
 class SYNC(COMMAND):
     """Synchronization command"""
-    def __init__(self, delay: float):
-        super().__init__('SYNC', delay=0)
+    def __init__(self, delay: float = 0):
+        super().__init__('SYNC', delay)
 
     def __repr__(self) -> str:
         return f"SYNC({self.value})"
@@ -187,7 +187,6 @@ class AnalyzeResult(NamedTuple):
 class Task(ABC):
     def __init__(self):
         self.__runtime = TaskRuntime()
-        self.__runtime.threads['compile'] = ThreadWithKill(target=self.main, name=f"Compile-{self.name}-{id(self)}")
 
     @abstractmethod
     def scan_range(self):
@@ -228,7 +227,6 @@ class Task(ABC):
     def _set_kernel(self, kernel, id):
         self.__runtime.id = id
         self.__runtime.kernel = kernel
-        self.__runtime.prog.snapshot = kernel.executor.conn.snapshot()
 
     @property
     def runtime(self):

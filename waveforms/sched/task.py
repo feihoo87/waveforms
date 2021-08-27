@@ -99,7 +99,8 @@ class Task(BaseTask):
         from waveforms.backends.quark.quarkconfig import QuarkLocalConfig
 
         if self.__cfg is None:
-            self.__cfg = QuarkLocalConfig(self.runtime.prog.snapshot)
+            self.__cfg = QuarkLocalConfig(
+                copy.deepcopy(self.runtime.prog.snapshot))
             self.__cfg._history = QuarkLocalConfig(self.runtime.prog.snapshot)
         return self.__cfg
 
