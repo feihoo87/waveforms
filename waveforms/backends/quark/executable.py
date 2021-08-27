@@ -46,6 +46,7 @@ def _getADInfo(measures):
                 'w': []
             }
         ADInfo[ad]['start'] = min(ADInfo[ad]['start'], task.time)
+        #ADInfo[ad]['start'] = np.floor_divide(ADInfo[ad]['start'], 8e-9) * 8e-9
         ADInfo[ad]['stop'] = max(ADInfo[ad]['stop'],
                                  task.time + task.params['duration'])
         ADInfo[ad]['tasks'].append(task)
@@ -366,3 +367,67 @@ class QuarkExecutor(Executor):
         """
         self.conn.cancel()
         self.log.debug('cancel()')
+
+class FakeExecutor(Executor):
+    def __init__(self, **kwds):
+        pass
+
+    def get_config(self):
+        return {}
+
+    @property
+    def cfg(self):
+        return {}
+
+    def boot(self):
+        pass
+
+    def shutdown(self):
+        pass
+
+    def reset(self):
+        pass
+
+    def start(self, *args):
+        pass
+
+    def feed(self,
+             task_id: int,
+             task_step: int,
+             cmds: list[COMMAND],
+             extra: dict = {}):
+        return True
+
+    def free(self, task_id: int) -> None:
+        pass
+
+    def free_all(self) -> None:
+        pass
+
+    def fetch(self, task_id: int, skip: int = 0) -> list:
+        """get results of task
+
+        Args:
+            task_id (int): uuid of task
+            skip (int, optional): skip. Defaults to 0.
+
+        Returns:
+            list: list of results.
+        """
+        ret = self.conn.fetch(task_id, skip)
+        self.log.debug(f'fetch({task_id}, {skip})')
+        if ret is None:
+            return []
+        return ret
+
+    def update(self, key: str, value: Any, cache: bool = False) -> None:
+        pass
+
+    def save(self, task_id: int, path: str) -> None:
+        pass
+
+    def query(self, key: str) -> Any:
+        pass
+
+    def cancel(self) -> None:
+        pass
