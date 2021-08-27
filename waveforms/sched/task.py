@@ -409,19 +409,29 @@ class RunCircuits(App):
                  signal='state',
                  lib=None,
                  cfg=None,
+                 settings=None,
                  cmds=[]):
         super().__init__(signal=signal, shots=shots)
         self.circuits = circuits
         self.custom_lib = lib
         self.custom_cfg = cfg
         self.cmds = cmds
+        self.settings = settings
 
     def scan_range(self):
-        return {'iters': {'circuit': self.circuits}}
+        ret = {'iters': {'circuit': self.circuits}}
+        if self.settings is not None:
+            if isinstance(self.settings, dict):
+                ret['iters']['settings'] = [self.settings] * len(self.circuits)
+            else:
+                ret['iters']['settings'] = self.settings
+        return ret
 
     def main(self):
         for step in self.scan():
             self.runtime.cmds.extend(self.cmds)
+            for k, v in step.kwds.get('settings', {}).items():
+                self.set(k, v)
             self.exec(step.kwds['circuit'],
                       lib=self.custom_lib,
                       cfg=self.custom_cfg)
