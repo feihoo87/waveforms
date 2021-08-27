@@ -37,7 +37,6 @@ def _makeAWGChannelInfo(section: str, cfgDict: dict,
 
 class CompileConfigMixin(ABCCompileConfigMixin):
     def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
-        print(f'_getAWGChannel: {name}, {qubits}')
 
         qubitsDict = [self.getQubit(q) for q in qubits]
 
@@ -56,8 +55,6 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             cfgDict = qubitsDict[0]
 
         chInfo = _makeAWGChannelInfo(section, cfgDict, name)
-
-        print(f'{chInfo}\n\n')
 
         return chInfo
 
