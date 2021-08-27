@@ -1,4 +1,5 @@
 import random
+import warnings
 
 import numpy as np
 from waveforms.baseconfig import _flattenDictIter
@@ -65,7 +66,9 @@ def _get_w_and_data_maps(ADInfo):
     return ADInfo, dataMap
 
 
-def getCommands(code):
+def assembly_code(code, **kwargs):
+    if kwargs:
+        warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
     cmds = []
 
     for key, wav in code.waveforms.items():
@@ -75,6 +78,7 @@ def getCommands(code):
 
     ADInfo = _getADInfo(code.measures)
     ADInfo, dataMap = _get_w_and_data_maps(ADInfo)
+    dataMap['signal'] = code.signal
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
@@ -146,7 +150,10 @@ def _get_classify_func(fun_name):
         return classifyData
 
 
-def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
+def assembly_data(raw_data, dataMap, **kwargs):
+    if kwargs:
+        warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
+
     if not dataMap:
         return raw_data
 
@@ -156,11 +163,12 @@ def assymblyData(raw_data, dataMap, signal='state', classify=classifyData):
         data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
         classify = _get_classify_func(gate_params_list.get('classify', None))
         result.update(
-            _process_classify(data, gate_params_list, signal, classify))
+            _process_classify(data, gate_params_list, dataMap['signal'],
+                              classify))
         result['data'] = data
     if 'data' in dataMap:
         result.update(_sort_data(raw_data, dataMap['data']))
     return result
 
 
-baqisArchitecture = Architecture('baqis', "", getCommands, assymblyData)
+baqisArchitecture = Architecture('baqis', "", assembly_code, assembly_data)
