@@ -71,5 +71,7 @@ _ALLXYSeq = [('I', 'I'), ('X', 'X'), ('Y', 'Y'), ('X', 'Y'), ('Y', 'X'),
              ('X', 'I'), ('Y', 'I'), ('X/2', 'X/2'), ('Y/2', 'Y/2')]
 
 
-def ALLXY(qubit):
-    return [[(gate, qubit) for gate in seq] for seq in _ALLXYSeq]
+def ALLXY(qubit, i):
+    assert 0 <= i < len(
+        _ALLXYSeq), f"i={i} is out of range(0, {len(_ALLXYSeq)})"
+    return [(gate, qubit) for gate in _ALLXYSeq[i]]
