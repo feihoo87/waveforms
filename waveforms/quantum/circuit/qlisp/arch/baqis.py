@@ -1,5 +1,4 @@
 import random
-import warnings
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -78,11 +77,7 @@ def _get_w_and_data_maps(AD_tasks: dict[str, ADTask]):
     return AD_tasks, dataMap
 
 
-def assembly_code(code, *args, **kwargs):
-    if args:
-        warnings.warn(f'Unused arguments: {args}', DeprecationWarning, 2)
-    if kwargs:
-        warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
+def assembly_code(code):
     cmds = []
 
     for key, wav in code.waveforms.items():
@@ -163,12 +158,7 @@ def _get_classify_func(fun_name):
         return classifyData
 
 
-def assembly_data(raw_data, dataMap, *args, **kwargs):
-    if args:
-        warnings.warn(f'Unused arguments: {args}', DeprecationWarning, 2)
-    if kwargs:
-        warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
-
+def assembly_data(raw_data, dataMap):
     if not dataMap:
         return raw_data
 

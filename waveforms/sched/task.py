@@ -330,8 +330,7 @@ class Task(BaseTask):
                    dataMap) in enumerate(zip(additional,
                                              self.runtime.prog.data_maps[i:]),
                                          start=i):
-            result = self.runtime.arch.assembly_data(raw_data, dataMap,
-                                                     self.signal)
+            result = self.runtime.arch.assembly_data(raw_data, dataMap)
             self.runtime.result['data'].append(result['data'])
             self.runtime.result['states'].append(result.get('state', None))
             self.runtime.result['counts'].append(result.get('count', None))
