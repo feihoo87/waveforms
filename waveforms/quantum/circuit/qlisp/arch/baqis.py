@@ -66,7 +66,9 @@ def _get_w_and_data_maps(ADInfo):
     return ADInfo, dataMap
 
 
-def assembly_code(code, **kwargs):
+def assembly_code(code, *args, **kwargs):
+    if args:
+        warnings.warn(f'Unused arguments: {args}', DeprecationWarning, 2)
     if kwargs:
         warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
     cmds = []
@@ -150,7 +152,9 @@ def _get_classify_func(fun_name):
         return classifyData
 
 
-def assembly_data(raw_data, dataMap, **kwargs):
+def assembly_data(raw_data, dataMap, *args, **kwargs):
+    if args:
+        warnings.warn(f'Unused arguments: {args}', DeprecationWarning, 2)
     if kwargs:
         warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
 
@@ -161,7 +165,8 @@ def assembly_data(raw_data, dataMap, **kwargs):
     raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
     if 'cbits' in dataMap:
         data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
-        classify = _get_classify_func(gate_params_list.get('classify', None))
+        classify = _get_classify_func(gate_params_list[0].get(
+            'classify', None))
         result.update(
             _process_classify(data, gate_params_list, dataMap['signal'],
                               classify))
