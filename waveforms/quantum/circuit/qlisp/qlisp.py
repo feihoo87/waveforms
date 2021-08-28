@@ -159,6 +159,7 @@ class QLispCode():
     end: float = field(default=0, repr=True)
     signal: str = 'state'
     shots: int = 1024
+    arch: str = 'general'
 
 
 def set_context_factory(factory):

@@ -84,6 +84,7 @@ def assembly_code(code, *args, **kwargs):
     ADInfo = _getADInfo(code.measures)
     ADInfo, dataMap = _get_w_and_data_maps(ADInfo)
     dataMap['signal'] = code.signal
+    dataMap['arch'] = 'baqis'
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
