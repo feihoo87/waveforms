@@ -188,7 +188,7 @@ def delay(ctx, qubits, time):
 
 @std.opaque('P')
 def P(ctx, qubits, phi):
-    from .assembler import call_opaque
+    from .compiler import call_opaque
 
     phi += ctx.phases[qubits[0]]
     ctx.phases[qubits[0]] = 0

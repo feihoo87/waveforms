@@ -69,23 +69,36 @@ class ABCCompileConfigMixin(ABC):
     Mixin for configs that can be used by compiler.
     """
     @abstractmethod
-    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+    def _getAWGChannel(self, name,
+                       *qubits) -> Union[AWGChannel, MultAWGChannel]:
         pass
 
     @abstractmethod
-    def _getADChannel(self, qubit) -> Union[str, dict]:
+    def _getADChannel(self, qubit) -> Union[ADChannel, MultADChannel]:
         pass
 
     @abstractmethod
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        pass
-
-    @abstractmethod
-    def _getADChannelDetails(self, chInfo) -> dict:
+    def _getLOFrequencyOfChannel(
+            self, chInfo: Union[MultAWGChannel, MultADChannel]) -> float:
         pass
 
     @abstractmethod
     def _getGateConfig(self, name, *qubits) -> dict:
+        """
+        Return the gate config for the given qubits.
+
+        Args:
+            name: Name of the gate.
+            qubits: Qubits to which the gate is applied.
+        
+        Returns:
+            The gate config.
+            {
+                "type": str,
+                "params": dict,
+            }
+            if no gate config is found, return None.
+        """
         pass
 
     @abstractmethod

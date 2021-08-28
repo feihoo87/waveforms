@@ -27,6 +27,8 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
     gatecfg = ctx.cfg._getGateConfig(name, *qubits)
+    if gatecfg is None:
+        gatecfg = {'type': 'default', 'params': {}}
 
     func = lib.getOpaque(name, gatecfg['type'])
     if func is None:
@@ -92,7 +94,7 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
 
 def _addMeasurementHardwareInfo(ctx: Context, task: MeasurementTask):
     AD = ctx.cfg._getADChannel(task.qubit)
-    task.hardware.update(ctx.cfg._getADChannelDetails(AD))
+    task.hardware.update(AD)
 
 
 def _allocQubits(ctx, qlisp):

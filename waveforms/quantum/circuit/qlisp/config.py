@@ -39,14 +39,9 @@ class CompileConfigMixin(ABCCompileConfigMixin):
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.getQubit(qubit).readoutLine
         rl = self.getReadoutLine(rl)
-        return rl.channels.AD
 
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        lo = self.getChannel(chInfo['LO'])
-        lofreq = lo.status.frequency
-        return lofreq
+        chInfo = rl.channels.AD
 
-    def _getADChannelDetails(self, chInfo) -> dict:
         def _getADSampleRate(ctx, channel):
             return ctx.getChannel(channel).params.sampleRate
 
@@ -67,6 +62,11 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             hardware['channel'] = chInfo
 
         return hardware
+
+    def _getLOFrequencyOfChannel(self, chInfo) -> float:
+        lo = self.getChannel(chInfo['LO'])
+        lofreq = lo.status.frequency
+        return lofreq
 
     def _getGateConfig(self, name, *qubits) -> dict:
         try:

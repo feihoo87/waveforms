@@ -41,13 +41,11 @@ class CompileConfigMixin(ABCCompileConfigMixin):
         qubitsDict = [self.getQubit(q) for q in qubits]
 
         if name.startswith('readoutLine.'):
-            #name = name.removeprefix('readoutLine.')
-            name = name[len('readoutLine.'):]
+            name = name.removeprefix('readoutLine.')
             section = qubitsDict[0]['probe']
             cfgDict = self.getReadout(section)
         elif name.startswith('coupler.'):
-            #name = name.removeprefix('coupler.')
-            name = name[len('coupler.'):]
+            name = name.removeprefix('coupler.')
             section = _getSharedCoupler(qubitsDict).pop()
             cfgDict = self.getCoupler(section)
         else:
@@ -71,12 +69,7 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             'triggerDelay': rlDict['setting']['TRIGD'],
             'triggerSkew': rlDict.get('trigger_skew', 0),
         }
-        return chInfo
 
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        return chInfo['lofreq']
-
-    def _getADChannelDetails(self, chInfo) -> dict:
         hardware = {
             'channel': {},
             'params': {
@@ -98,6 +91,9 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             hardware['channel'] = chInfo
 
         return hardware
+
+    def _getLOFrequencyOfChannel(self, chInfo) -> float:
+        return chInfo['lofreq']
 
     def _getGateConfig(self, name, *qubits) -> dict:
         try:
