@@ -36,11 +36,6 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             chInfo = qubits[0].query('channels.' + name)
         return chInfo
 
-    def _getReadoutADLO(self, qubit) -> float:
-        rl = self.getReadoutLine(self.getQubit(qubit).readoutLine)
-        lo = self.getChannel(rl.channels.AD.LO).status.frequency
-        return lo
-
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.getQubit(qubit).readoutLine
         rl = self.getReadoutLine(rl)

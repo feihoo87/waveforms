@@ -73,10 +73,6 @@ class ABCCompileConfigMixin(ABC):
         pass
 
     @abstractmethod
-    def _getReadoutADLO(self, qubit) -> float:
-        pass
-
-    @abstractmethod
     def _getADChannel(self, qubit) -> Union[str, dict]:
         pass
 

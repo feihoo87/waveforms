@@ -58,11 +58,6 @@ class CompileConfigMixin(ABCCompileConfigMixin):
 
         return chInfo
 
-    def _getReadoutADLO(self, qubit) -> float:
-        rl = self.getReadout(self.getQubit(qubit)['probe'])
-        lo = rl['setting']['LO']
-        return lo
-
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.getQubit(qubit)['probe']
         rlDict = self.getReadout(rl)

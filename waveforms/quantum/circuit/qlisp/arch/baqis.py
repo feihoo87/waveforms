@@ -10,6 +10,8 @@ from waveforms.waveform_parser import wave_eval
 
 from .base import COMMAND, READ, SYNC, TRIG, WRITE, Architecture
 
+TRIGGER_CLOCK_CYCLE = 8e-9
+
 
 def _getADInfo(measures):
     ADInfo = {}
@@ -27,7 +29,8 @@ def _getADInfo(measures):
                 'w': []
             }
         ADInfo[ad]['start'] = min(ADInfo[ad]['start'], task.time)
-        #ADInfo[ad]['start'] = np.floor_divide(ADInfo[ad]['start'], 8e-9) * 8e-9
+        ADInfo[ad]['start'] = np.floor_divide(
+            ADInfo[ad]['start'], TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
         ADInfo[ad]['stop'] = max(ADInfo[ad]['stop'],
                                  task.time + task.params['duration'])
         ADInfo[ad]['tasks'].append(task)
@@ -58,8 +61,10 @@ def _get_w_and_data_maps(ADInfo):
             else:
                 fun = wave_eval(task.params['weight']) >> task.time
                 weight = fun(t)
+                phase = 2 * np.pi * Delta * info['start']
                 w = getFTMatrix([Delta],
                                 numberOfPoints,
+                                phaseList=[phase],
                                 weight=weight,
                                 sampleRate=info['sampleRate'])[:, 0]
             info['w'].append(w)
@@ -74,8 +79,6 @@ def assembly_code(code, *args, **kwargs):
     cmds = []
 
     for key, wav in code.waveforms.items():
-        wav = wav << code.end
-        wav = wav >> 99e-6
         cmds.append(WRITE(key, wav))
 
     ADInfo = _getADInfo(code.measures)
@@ -84,7 +87,7 @@ def assembly_code(code, *args, **kwargs):
 
     for channel, info in ADInfo.items():
         coefficient = np.asarray(info['w'])
-        delay = 0 * info['start'] + info['triggerDelay']
+        delay = info['start'] + info['triggerDelay']
         cmds.append(WRITE(channel + '.coefficient', coefficient))
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
         cmds.append(WRITE(channel + '.triggerDelay', delay))

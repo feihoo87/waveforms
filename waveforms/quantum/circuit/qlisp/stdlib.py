@@ -218,7 +218,7 @@ def measure(ctx, qubits, cbit=None):
         else:
             cbit = max(ctx.measures.keys()) + 1
 
-    lo = ctx.cfg._getReadoutADLO(qubit)
+    # lo = ctx.cfg._getReadoutADLO(qubit)
     amp = ctx.params['amp']
     duration = ctx.params['duration']
     frequency = ctx.params['frequency']
@@ -232,20 +232,15 @@ def measure(ctx, qubits, cbit=None):
                                 f'square({duration}) >> {duration/2}')
         w = None
 
-    # TRIGGER_CLOCK_CYCLE = 8e-9
-
-    # t = np.floor_divide(ctx.time[qubit], TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
-    # if t < ctx.time[qubit]:
-    #     t += TRIGGER_CLOCK_CYCLE
     t = ctx.time[qubit]
 
-    phi = 2 * np.pi * (lo - frequency) * t
+    # phi = 2 * np.pi * (lo - frequency) * t
 
     pulse = square(duration) >> duration / 2 + t
     ctx.channel['readoutLine.RF',
-                qubit] += amp * pulse * cos(2 * pi * frequency, phi)
+                qubit] += amp * pulse * cos(2 * pi * frequency)
 
-    # pulse = square(2 * duration) >> duration
+    pulse = square(2 * duration) >> duration
     ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
 
     params = {k: v for k, v in ctx.params.items()}
