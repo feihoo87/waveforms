@@ -247,12 +247,7 @@ def measure(ctx, qubits, cbit=None):
     params['w'] = w
     params['weight'] = weight
     ctx.measures[cbit].append(
-        MeasurementTask(qubit,
-                        cbit,
-                        ctx.time[qubit],
-                        signal,
-                        params,
-                        hardware={}))
+        MeasurementTask(qubit, cbit, ctx.time[qubit], signal, params))
     ctx.time[qubit] = t + duration
     ctx.phases[qubit] = 0
 

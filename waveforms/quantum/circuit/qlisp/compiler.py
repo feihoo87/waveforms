@@ -59,8 +59,10 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
         _addWaveforms(ctx, channel, wav)
     for cbit, taskList in sub_ctx.measures.items():
         for task in taskList:
-            _addMeasurementHardwareInfo(ctx, task)
-            ctx.measures[cbit].append(task)
+            hardware = ctx.cfg._getADChannel(task.qubit)
+            ctx.measures[cbit].append(
+                MeasurementTask(task.qubit, task.cbit, task.time, task.signal,
+                                task.params, hardware))
 
 
 def _addWaveforms(ctx: Context, channel: tuple, wav: Waveform):
@@ -91,11 +93,6 @@ def _addMultChannelWaveforms(ctx: Context, wav, ch: MultAWGChannel):
     if ch.Q is not None:
         Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
         ctx.waveforms[ch.Q.name] += Q
-
-
-def _addMeasurementHardwareInfo(ctx: Context, task: MeasurementTask):
-    AD = ctx.cfg._getADChannel(task.qubit)
-    task.hardware.update(AD)
 
 
 def _allocQubits(ctx, qlisp):

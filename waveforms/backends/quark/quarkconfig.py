@@ -68,7 +68,7 @@ class CompileConfigMixin(ABCCompileConfigMixin):
                 info['Q'] = AWGChannel(chInfo['Q'], -1)
             return MultAWGChannel(**info)
 
-    def _getADChannel(self, qubit) -> Union[str, dict]:
+    def _getADChannel(self, qubit) -> Union[ADChannel, MultADChannel]:
         rl = self.getQubit(qubit)['probe']
         rlDict = self.getReadout(rl)
         chInfo = {
@@ -82,30 +82,12 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             'triggerSkew': rlDict.get('trigger_skew', 0),
         }
 
-        hardware = {
-            'channel': {},
-            'params': {
-                'triggerDelay': chInfo['triggerDelay'],
-                'triggerSkew': chInfo['triggerSkew'],
-            }
-        }
-        if isinstance(chInfo, dict):
-            if 'lofreq' in chInfo:
-                hardware['params']['LOFrequency'] = chInfo['lofreq']
-
-            hardware['params']['sampleRate'] = {}
-            for ch in ['I', 'Q', 'IQ', 'Ref', 'TRIG']:
-                if ch in chInfo:
-                    hardware['channel'][ch] = chInfo[ch]
-                    sampleRate = chInfo['sampleRate']
-                    hardware['params']['sampleRate'][ch] = sampleRate
-        elif isinstance(chInfo, str):
-            hardware['channel'] = chInfo
-
-        return hardware
-
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        return chInfo['lofreq']
+        return MultADChannel(
+            IQ=ADChannel(chInfo['IQ'], chInfo['sampleRate'], chInfo['trigger'],
+                         chInfo['triggerDelay']),
+            LO=chInfo['LO'],
+            lo_freq=chInfo['lofreq'],
+        )
 
     def _getGateConfig(self, name, *qubits) -> dict:
         try:

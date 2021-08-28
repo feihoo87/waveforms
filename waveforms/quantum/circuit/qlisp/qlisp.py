@@ -27,7 +27,7 @@ class MeasurementTask(NamedTuple):
     time: float
     signal: str
     params: dict
-    hardware: Union[dict, ADChannel, MultADChannel]
+    hardware: Union[ADChannel, MultADChannel] = None
 
 
 class AWGChannel(NamedTuple):
@@ -48,8 +48,9 @@ class MultAWGChannel(NamedTuple):
 
 class ADChannel(NamedTuple):
     name: str
-    sampleRate: float
-    triggerDelay: float
+    sampleRate: float = 1e9
+    trigger: str = ''
+    triggerDelay: float = 0
 
 
 class MultADChannel(NamedTuple):

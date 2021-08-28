@@ -1,5 +1,6 @@
 import random
 import warnings
+from dataclasses import dataclass, field
 
 import numpy as np
 from waveforms.baseconfig import _flattenDictIter
@@ -8,67 +9,73 @@ from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.math.signal import shift
 from waveforms.waveform_parser import wave_eval
 
+from ..qlisp import MeasurementTask
 from .base import COMMAND, READ, SYNC, TRIG, WRITE, Architecture
 
 TRIGGER_CLOCK_CYCLE = 8e-9
 
 
-def _getADInfo(measures):
-    ADInfo = {}
+@dataclass
+class ADTask():
+    start: float = np.inf
+    stop: float = 0
+    trigger: str = 'pulse'
+    triggerDelay: float = 0
+    sampleRate: float = 1e9
+    fList: list = field(default_factory=list)
+    tasks: list = field(default_factory=list)
+    wList: list = field(default_factory=list)
+
+
+def _getADInfo(
+        measures: dict[int, list[MeasurementTask]]) -> dict[str, ADTask]:
+    AD_tasks = {}
     for cbit in sorted(measures.keys()):
         task = measures[cbit][-1]
-        ad = task.hardware['channel']['IQ']
-        if ad not in ADInfo:
-            ADInfo[ad] = {
-                'start': np.inf,
-                'stop': 0,
-                'triggerDelay': task.hardware['params'].get('triggerDelay', 0),
-                'fList': [],
-                'sampleRate': task.hardware['params']['sampleRate']['IQ'],
-                'tasks': [],
-                'w': []
-            }
-        ADInfo[ad]['start'] = min(ADInfo[ad]['start'], task.time)
-        ADInfo[ad]['start'] = np.floor_divide(
-            ADInfo[ad]['start'], TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
-        ADInfo[ad]['stop'] = max(ADInfo[ad]['stop'],
-                                 task.time + task.params['duration'])
-        ADInfo[ad]['tasks'].append(task)
-    return ADInfo
+        ad = task.hardware.IQ.name
+        if ad not in AD_tasks:
+            AD_tasks[ad] = ADTask(triggerDelay=task.hardware.IQ.triggerDelay,
+                                  sampleRate=task.hardware.IQ.sampleRate)
+        ad_task = AD_tasks[ad]
+        ad_task.start = min(ad_task.start, task.time)
+        ad_task.start = np.floor_divide(
+            ad_task.start, TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
+        ad_task.stop = max(ad_task.stop, task.time + task.params['duration'])
+        ad_task.tasks.append(task)
+    return AD_tasks
 
 
-def _get_w_and_data_maps(ADInfo):
+def _get_w_and_data_maps(AD_tasks: dict[str, ADTask]):
     dataMap = {'cbits': {}}
 
-    for channel, info in ADInfo.items():
+    for channel, ad_task in AD_tasks.items():
         numberOfPoints = int(
-            (info['stop'] - info['start']) * info['sampleRate'])
+            (ad_task.stop - ad_task.start) * ad_task.sampleRate)
         if numberOfPoints % 1024 != 0:
             numberOfPoints = numberOfPoints + 1024 - numberOfPoints % 1024
-        t = np.arange(numberOfPoints) / info['sampleRate'] + info['start']
+        t = np.arange(numberOfPoints) / ad_task.sampleRate + ad_task.start
 
-        for task in info['tasks']:
-            Delta = task.params['frequency'] - task.hardware['params'][
-                'LOFrequency']
-            info['fList'].append(Delta)
-            dataMap['cbits'][task.cbit] = (channel, len(info['fList']) - 1,
+        for task in ad_task.tasks:
+            Delta = task.params['frequency'] - task.hardware.lo_freq
+            ad_task.fList.append(Delta)
+            dataMap['cbits'][task.cbit] = (channel, len(ad_task.fList) - 1,
                                            Delta, task.params, task.time,
-                                           info['start'], info['stop'])
+                                           ad_task.start, ad_task.stop)
             if task.params['w'] is not None:
                 w = np.zeros(numberOfPoints, dtype=complex)
                 w[:len(task.params['w'])] = task.params['w']
-                w = shift(w, task.time - info['start'])
+                w = shift(w, task.time - ad_task.start)
             else:
                 fun = wave_eval(task.params['weight']) >> task.time
                 weight = fun(t)
-                phase = 2 * np.pi * Delta * info['start']
+                phase = 2 * np.pi * Delta * ad_task.start
                 w = getFTMatrix([Delta],
                                 numberOfPoints,
                                 phaseList=[phase],
                                 weight=weight,
-                                sampleRate=info['sampleRate'])[:, 0]
-            info['w'].append(w)
-    return ADInfo, dataMap
+                                sampleRate=ad_task.sampleRate)[:, 0]
+            ad_task.wList.append(w)
+    return AD_tasks, dataMap
 
 
 def assembly_code(code, *args, **kwargs):
@@ -86,9 +93,9 @@ def assembly_code(code, *args, **kwargs):
     dataMap['signal'] = code.signal
     dataMap['arch'] = 'baqis'
 
-    for channel, info in ADInfo.items():
-        coefficient = np.asarray(info['w'])
-        delay = info['start'] + info['triggerDelay']
+    for channel, ad_task in ADInfo.items():
+        coefficient = np.asarray(ad_task.wList)
+        delay = ad_task.start + ad_task.triggerDelay
         cmds.append(WRITE(channel + '.coefficient', coefficient))
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
         cmds.append(WRITE(channel + '.triggerDelay', delay))

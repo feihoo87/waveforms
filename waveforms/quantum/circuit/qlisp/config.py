@@ -63,34 +63,48 @@ class CompileConfigMixin(ABCCompileConfigMixin):
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.getQubit(qubit).readoutLine
         rl = self.getReadoutLine(rl)
-
         chInfo = rl.channels.AD
 
-        def _getADSampleRate(ctx, channel):
-            return ctx.getChannel(channel).params.sampleRate
+        if isinstance(chInfo, str):
+            return self._makeADChannel(chInfo)
+        else:
+            return self._makeMultADChannel(chInfo)
 
-        hardware = {'channel': {}, 'params': {}}
-        if isinstance(chInfo, dict):
-            if 'LO' in chInfo:
-                loFreq = self._getLOFrequencyOfChannel(chInfo)
-                hardware['channel']['LO'] = chInfo['LO']
-                hardware['params']['LOFrequency'] = loFreq
+    def _makeADChannel(self,
+                       name: str,
+                       trigger: str = '',
+                       triggerDelay: float = 0) -> ADChannel:
+        info = {'name': name}
+        ch = self.getChannel(name)
+        info['sampleRate'] = ch.params.sampleRate
+        info['triggerDelay'] = triggerDelay
+        info['trigger'] = trigger
+        return ADChannel(**info)
 
-            hardware['params']['sampleRate'] = {}
-            for ch in ['I', 'Q', 'IQ', 'Ref']:
-                if ch in chInfo:
-                    hardware['channel'][ch] = chInfo[ch]
-                    sampleRate = _getADSampleRate(self, chInfo[ch])
-                    hardware['params']['sampleRate'][ch] = sampleRate
-        elif isinstance(chInfo, str):
-            hardware['channel'] = chInfo
-
-        return hardware
-
-    def _getLOFrequencyOfChannel(self, chInfo) -> float:
-        lo = self.getChannel(chInfo['LO'])
-        lofreq = lo.status.frequency
-        return lofreq
+    def _makeMultADChannel(self, chInfo: dict) -> MultADChannel:
+        info = {}
+        if 'I' in chInfo:
+            info['I'] = self._makeADChannel(chInfo['I'],
+                                            chInfo.get('trigger', ''),
+                                            chInfo.get('triggerDelay', 0))
+        if 'Q' in chInfo:
+            info['Q'] = self._makeADChannel(chInfo['Q'],
+                                            chInfo.get('trigger', ''),
+                                            chInfo.get('triggerDelay', 0))
+        if 'IQ' in chInfo:
+            info['IQ'] = self._makeADChannel(chInfo['IQ'],
+                                             chInfo.get('trigger', ''),
+                                             chInfo.get('triggerDelay', 0))
+        if 'Ref' in chInfo:
+            info['Ref'] = self._makeADChannel(chInfo['Ref'],
+                                              chInfo.get('trigger', ''),
+                                              chInfo.get('triggerDelay', 0))
+        if 'LO' in chInfo:
+            lo = self.getChannel(chInfo['LO'])
+            info['LO'] = chInfo['LO']
+            info['lo_freq'] = lo.status.frequency
+            info['lo_power'] = lo.status.power
+        return MultADChannel(**info)
 
     def _getGateConfig(self, name, *qubits) -> dict:
         try:
