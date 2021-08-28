@@ -194,13 +194,13 @@ config = {
                     "AD": {
                         "IQ": "AD.T1",
                         "LO": "PSG.ReadLO",
-                        "trigger": "AWG.RI.Marker1",
+                        "trigger": "AWG.RI1.Marker1",
                         "triggerDelay": 5e-07
                     },
                     "RF": {
-                        "I": "AWG.RI",
+                        "I": "AWG.RI1",
                         "LO": "PSG.ReadLO",
-                        "Q": "AWG.RQ"
+                        "Q": "AWG.RQ1"
                     }
                 },
                 "status": {},

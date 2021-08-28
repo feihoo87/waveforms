@@ -39,7 +39,6 @@ class AWGChannel(NamedTuple):
 
 
 class MultAWGChannel(NamedTuple):
-    name: str
     I: Optional[AWGChannel] = None
     Q: Optional[AWGChannel] = None
     LO: Optional[str] = None
@@ -54,7 +53,6 @@ class ADChannel(NamedTuple):
 
 
 class MultADChannel(NamedTuple):
-    name: str
     I: Optional[ADChannel] = None
     Q: Optional[ADChannel] = None
     IQ: Optional[ADChannel] = None
@@ -75,11 +73,6 @@ class ABCCompileConfigMixin(ABC):
 
     @abstractmethod
     def _getADChannel(self, qubit) -> Union[ADChannel, MultADChannel]:
-        pass
-
-    @abstractmethod
-    def _getLOFrequencyOfChannel(
-            self, chInfo: Union[MultAWGChannel, MultADChannel]) -> float:
         pass
 
     @abstractmethod

@@ -6,8 +6,11 @@ from typing import Union
 
 from waveforms.baseconfig import _flattenDictIter, _foldDict, _query, _update
 from waveforms.namespace import DictDriver
-from waveforms.quantum.circuit.qlisp.config import (ABCCompileConfigMixin,
-                                                    ConfigProxy)
+from waveforms.quantum.circuit.qlisp.config import ConfigProxy
+from waveforms.quantum.circuit.qlisp.qlisp import (ABCCompileConfigMixin,
+                                                   ADChannel, AWGChannel,
+                                                   MultADChannel,
+                                                   MultAWGChannel)
 
 
 def _getSharedCoupler(qubitsDict: dict) -> set[str]:
@@ -36,7 +39,8 @@ def _makeAWGChannelInfo(section: str, cfgDict: dict,
 
 
 class CompileConfigMixin(ABCCompileConfigMixin):
-    def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+    def _getAWGChannel(self, name,
+                       *qubits) -> Union[AWGChannel, MultAWGChannel]:
 
         qubitsDict = [self.getQubit(q) for q in qubits]
 
@@ -54,7 +58,15 @@ class CompileConfigMixin(ABCCompileConfigMixin):
 
         chInfo = _makeAWGChannelInfo(section, cfgDict, name)
 
-        return chInfo
+        if isinstance(chInfo, str):
+            return AWGChannel(chInfo, -1)
+        else:
+            info = {'lo_freq': chInfo['lofreq']}
+            if 'I' in chInfo:
+                info['I'] = AWGChannel(chInfo['I'], -1)
+            if 'Q' in chInfo:
+                info['Q'] = AWGChannel(chInfo['Q'], -1)
+            return MultAWGChannel(**info)
 
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.getQubit(qubit)['probe']

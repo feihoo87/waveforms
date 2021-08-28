@@ -1,14 +1,15 @@
 from typing import Optional, Sequence, Union
 
 from numpy import pi
-from waveforms.waveform import cos, sin, step
+from waveforms.waveform import Waveform, cos, sin, step
 
 from .arch import get_arch
 from .config import Config
 from .library import Library, libraries
 from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
-from .qlisp import (Context, MeasurementTask, QLispCode, QLispError,
+from .qlisp import (ADChannel, AWGChannel, Context, MeasurementTask,
+                    MultADChannel, MultAWGChannel, QLispCode, QLispError,
                     create_context, gateName, getConfig)
 from .stdlib import std
 
@@ -62,18 +63,18 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
             ctx.measures[cbit].append(task)
 
 
-def _addWaveforms(ctx, channel, wav):
+def _addWaveforms(ctx: Context, channel: tuple, wav: Waveform):
     name, *qubits = channel
-    chInfo = ctx.cfg._getAWGChannel(name, *qubits)
-    if isinstance(chInfo, str):
-        ctx.waveforms[chInfo] += wav
+    ch = ctx.cfg._getAWGChannel(name, *qubits)
+    if isinstance(ch, AWGChannel):
+        ctx.waveforms[ch.name] += wav
     else:
-        _addMultChannelWaveforms(ctx, wav, chInfo)
+        _addMultChannelWaveforms(ctx, wav, ch)
 
 
-def _addMultChannelWaveforms(ctx, wav, chInfo):
-    lofreq = ctx.cfg._getLOFrequencyOfChannel(chInfo)
-    if 'I' in chInfo:
+def _addMultChannelWaveforms(ctx: Context, wav, ch: MultAWGChannel):
+    lofreq = ch.lo_freq
+    if ch.I is not None:
         try:
             I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
         except:
@@ -86,10 +87,10 @@ def _addMultChannelWaveforms(ctx, wav, chInfo):
             print(w.seq)
             print("====== ERROR WAVEFORM ======")
             raise
-        ctx.waveforms[chInfo['I']] += I
-    if 'Q' in chInfo:
+        ctx.waveforms[ch.I.name] += I
+    if ch.Q is not None:
         Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
-        ctx.waveforms[chInfo['Q']] += Q
+        ctx.waveforms[ch.Q.name] += Q
 
 
 def _addMeasurementHardwareInfo(ctx: Context, task: MeasurementTask):

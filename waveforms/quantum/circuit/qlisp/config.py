@@ -1,4 +1,5 @@
 import pickle
+import re
 import warnings
 from abc import ABC, abstractmethod
 from itertools import chain, permutations
@@ -8,7 +9,9 @@ from typing import Any, Optional, Union
 import numpy as np
 from waveforms.baseconfig import BaseConfig, Trait
 
-from .qlisp import ABCCompileConfigMixin, getConfig, set_config_factory
+from .qlisp import (ABCCompileConfigMixin, ADChannel, AWGChannel,
+                    MultADChannel, MultAWGChannel, getConfig,
+                    set_config_factory)
 
 
 class CompileConfigMixin(ABCCompileConfigMixin):
@@ -22,19 +25,40 @@ class CompileConfigMixin(ABCCompileConfigMixin):
         qubits = [self.getQubit(q) for q in qubits]
 
         if name.startswith('readoutLine.'):
-            #name = name.removeprefix('readoutLine.')
-            name = name[len('readoutLine.'):]
+            name = name.removeprefix('readoutLine.')
             rl = self.getReadoutLine(qubits[0]['readoutLine'])
             chInfo = rl.query('channels.' + name)
         elif name.startswith('coupler.'):
-            #name = name.removeprefix('coupler.')
-            name = name[len('coupler.'):]
+            name = name.removeprefix('coupler.')
             c = _getSharedCoupler(qubits).pop()
             c = self.getCoupler(c)
             chInfo = c.query('channels.' + name)
         else:
             chInfo = qubits[0].query('channels.' + name)
-        return chInfo
+        if isinstance(chInfo, dict):
+            return self._makeMultAWGChannel(chInfo)
+        else:
+            return self._makeAWGChannel(chInfo)
+
+    def _makeAWGChannel(self, name: str) -> AWGChannel:
+        info = {'name': name}
+        if re.match(r'.*\.Marker[0-9]$', name):
+            ch = self.getChannel(name[:name.rfind('.')])
+        else:
+            ch = self.getChannel(name)
+        info['sampleRate'] = ch.params.sampleRate
+        return AWGChannel(**info)
+
+    def _makeMultAWGChannel(self, chInfo: dict) -> MultAWGChannel:
+        info = {}
+        if 'I' in chInfo:
+            info['I'] = self._makeAWGChannel(chInfo['I'])
+        if 'Q' in chInfo:
+            info['Q'] = self._makeAWGChannel(chInfo['Q'])
+        if 'LO' in chInfo:
+            lo = self.getChannel(chInfo['LO'])
+            info['lo_freq'] = lo.status.frequency
+        return MultAWGChannel(**info)
 
     def _getADChannel(self, qubit) -> Union[str, dict]:
         rl = self.getQubit(qubit).readoutLine
