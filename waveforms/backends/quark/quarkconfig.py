@@ -9,7 +9,7 @@ from waveforms.namespace import DictDriver
 from waveforms.quantum.circuit.qlisp.config import ConfigProxy
 from waveforms.quantum.circuit.qlisp.qlisp import (ABCCompileConfigMixin,
                                                    ADChannel, AWGChannel,
-                                                   MultADChannel,
+                                                   GateConfig, MultADChannel,
                                                    MultAWGChannel)
 
 
@@ -89,17 +89,17 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             lo_freq=chInfo['lofreq'],
         )
 
-    def _getGateConfig(self, name, *qubits) -> dict:
+    def _getGateConfig(self, name, *qubits) -> GateConfig:
         try:
             gate = self.getGate(name, *qubits)
             if not isinstance(gate, dict):
-                return {'type': 'default', 'params': {}}
+                return None
             params = gate['params']
             type = gate.get('type', 'default')
         except:
             type = 'default'
             params = {}
-        return {'type': type, 'params': params}
+        return GateConfig(name, qubits, type, params)
 
     def _getAllQubitLabels(self) -> list[str]:
         return self.keys('Q*')

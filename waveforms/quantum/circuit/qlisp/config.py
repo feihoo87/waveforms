@@ -9,7 +9,7 @@ from typing import Any, Optional, Union
 import numpy as np
 from waveforms.baseconfig import BaseConfig, Trait
 
-from .qlisp import (ABCCompileConfigMixin, ADChannel, AWGChannel,
+from .qlisp import (ABCCompileConfigMixin, ADChannel, AWGChannel, GateConfig,
                     MultADChannel, MultAWGChannel, getConfig,
                     set_config_factory)
 
@@ -106,14 +106,14 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             info['lo_power'] = lo.status.power
         return MultADChannel(**info)
 
-    def _getGateConfig(self, name, *qubits) -> dict:
+    def _getGateConfig(self, name, *qubits) -> GateConfig:
         try:
             gate = self.getGate(name, *qubits)
         except:
-            return {'type': 'default', 'params': {}}
+            return GateConfig(name, qubits)
         params = gate['params']
         type = gate.get('type', 'default')
-        return {'type': type, 'params': params}
+        return GateConfig(name, qubits, type, params)
 
     def _getAllQubitLabels(self) -> list[str]:
         return sorted(self['chip']['qubits'].keys(), key=lambda s: int(s[1:]))

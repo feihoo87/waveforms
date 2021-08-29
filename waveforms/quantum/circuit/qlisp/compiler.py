@@ -8,9 +8,9 @@ from .config import Config
 from .library import Library, libraries
 from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
-from .qlisp import (ADChannel, AWGChannel, Context, MeasurementTask,
-                    MultADChannel, MultAWGChannel, QLispCode, QLispError,
-                    create_context, gateName, getConfig)
+from .qlisp import (ADChannel, AWGChannel, Context, GateConfig,
+                    MeasurementTask, MultADChannel, MultAWGChannel, QLispCode,
+                    QLispError, create_context, gateName, getConfig)
 from .stdlib import std
 
 
@@ -29,18 +29,18 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     gate, qubits = st
     gatecfg = ctx.cfg._getGateConfig(name, *qubits)
     if gatecfg is None:
-        gatecfg = {'type': 'default', 'params': {}}
+        gatecfg = GateConfig(name, qubits)
 
-    func = lib.getOpaque(name, gatecfg['type'])
+    func = lib.getOpaque(name, gatecfg.type)
     if func is None:
-        raise KeyError('Undefined {type} type of {name} opaque.')
+        raise KeyError('Undefined {gatecfg.type} type of {name} opaque.')
 
     if isinstance(gate, str):
         args = ()
     else:
         args = gate[1:]
 
-    sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg['params']])
+    sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
 
     func(sub_ctx, qubits, *args)
 

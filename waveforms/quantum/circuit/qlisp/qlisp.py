@@ -63,6 +63,13 @@ class MultADChannel(NamedTuple):
     lo_power: Optional[float] = None
 
 
+class GateConfig(NamedTuple):
+    name: str
+    qubits: tuple
+    type: str = 'default'
+    params: dict = {}
+
+
 class ABCCompileConfigMixin(ABC):
     """
     Mixin for configs that can be used by compiler.
@@ -77,7 +84,7 @@ class ABCCompileConfigMixin(ABC):
         pass
 
     @abstractmethod
-    def _getGateConfig(self, name, *qubits) -> dict:
+    def _getGateConfig(self, name, *qubits) -> GateConfig:
         """
         Return the gate config for the given qubits.
 
@@ -86,12 +93,8 @@ class ABCCompileConfigMixin(ABC):
             qubits: Qubits to which the gate is applied.
         
         Returns:
-            The gate config.
-            {
-                "type": str,
-                "params": dict,
-            }
-            if no gate config is found, return None.
+            GateConfig for the given qubits.
+            if the gate is not found, return None.
         """
         pass
 
