@@ -1,5 +1,6 @@
-from typing import Any, NamedTuple, Callable
-from ..qlisp import QLispCode
+from typing import Any, Callable, NamedTuple
+
+from ..qlisp import MeasurementTask, QLispCode
 
 
 class COMMAND():

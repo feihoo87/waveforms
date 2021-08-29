@@ -8,8 +8,8 @@ from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.math.signal import shift
 from waveforms.waveform_parser import wave_eval
 
-from ..qlisp import MeasurementTask
-from .base import COMMAND, READ, SYNC, TRIG, WRITE, Architecture
+from .base import (COMMAND, READ, SYNC, TRIG, WRITE, Architecture, CommandList,
+                   DataMap, MeasurementTask, QLispCode, RawData, Result)
 
 TRIGGER_CLOCK_CYCLE = 8e-9
 
@@ -77,7 +77,7 @@ def _get_w_and_data_maps(AD_tasks: dict[str, ADTask]):
     return AD_tasks, dataMap
 
 
-def assembly_code(code):
+def assembly_code(code: QLispCode) -> tuple[CommandList, DataMap]:
     cmds = []
 
     for key, wav in code.waveforms.items():
@@ -158,7 +158,7 @@ def _get_classify_func(fun_name):
         return classifyData
 
 
-def assembly_data(raw_data, dataMap):
+def assembly_data(raw_data: RawData, dataMap: DataMap) -> Result:
     if not dataMap:
         return raw_data
 
