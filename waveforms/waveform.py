@@ -65,10 +65,6 @@ def _mul(x, y):
 
 
 def _add(x, y):
-    if x == _zero:
-        return y
-    if y == _zero:
-        return x
     x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
     t_list, v_list = list(x[0]), list(x[1])
     lo, hi = 0, len(t_list)
