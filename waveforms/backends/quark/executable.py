@@ -23,24 +23,24 @@ def set_up_backend(host='127.0.0.1'):
     set_config_factory(lambda: QuarkConfig(host=host))
 
 
-def assymblyData(code, *args, **kwargs):
+def assymblyData(raw_data, dataMap, *args, **kwargs):
     warnings.warn("assymblyData is deprecated, use getCommands instead",
                   DeprecationWarning, 2)
     if args:
         warnings.warn(f'Unused arguments: {args}', DeprecationWarning, 2)
     if kwargs:
         warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
-    return get_arch().assembly_data(code)
+    return get_arch().assembly_data(raw_data, dataMap)
 
 
-def getCommands(raw_data, dataMap, *args, **kwargs):
+def getCommands(code, *args, **kwargs):
     warnings.warn("getCommands is deprecated, use get_arch instead",
                   DeprecationWarning, 2)
     if args:
         warnings.warn(f'Unused arguments: {args}', DeprecationWarning, 2)
     if kwargs:
         warnings.warn(f'Unused arguments: {kwargs}', DeprecationWarning, 2)
-    return get_arch().assembly_code(raw_data, dataMap)
+    return get_arch().assembly_code(code)
 
 
 def _is_feedable(cmd):
