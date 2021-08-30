@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from numpy import mod, pi
-from waveforms.math import signal
 from waveforms.waveform import cos, cosPulse, gaussian, mixing, square, zero
 from waveforms.waveform_parser import wave_eval
 
@@ -240,8 +239,8 @@ def measure(ctx, qubits, cbit=None):
     ctx.channel['readoutLine.RF',
                 qubit] += amp * pulse * cos(2 * pi * frequency)
 
-    pulse = square(2 * duration) >> duration
-    ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
+    # pulse = square(2 * duration) >> duration
+    # ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
 
     params = {k: v for k, v in ctx.params.items()}
     params['w'] = w
