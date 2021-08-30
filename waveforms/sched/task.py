@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
                     Type, Union)
+from waveforms.quantum.circuit.qlisp.stdlib import T
 
 import blinker
 import numpy as np
@@ -364,6 +365,19 @@ class Task(BaseTask):
             t.kill()
         with self.runtime._status_lock:
             self.runtime.status = 'cancelled'
+
+    def join(self, timeout=None):
+        try:
+            start = time.time()
+            while True:
+                if self.runtime.status in ['cancelled', 'finished']:
+                    break
+                if timeout is not None and time.time() - start > timeout:
+                    raise TimeoutError(f"{self.name}(id={self.id}) timeout.")
+                time.sleep(0.1)
+        finally:
+            for t in self.runtime.threads.values():
+                t.kill()
 
 
 class ContainerTask(Task):

@@ -287,17 +287,11 @@ class Scheduler(BaseScheduler):
             task_id, task = self._waiting_result.popitem()
             task.cancel()
 
-    def join(self, task):
-        while True:
-            if task.status in ['finished', 'cancelled', 'failed']:
-                break
-            time.sleep(0.01)
-
-    async def join_async(self, task):
-        while True:
-            if task.status in ['finished', 'cancelled', 'failed']:
-                break
-            await asyncio.sleep(0.01)
+    def join(self, task, timeout=None):
+        warnings.warn(
+            'Scheduler.join(task) is deprecated, use task.join() instead',
+            DeprecationWarning, 2)
+        task.join(timeout)
 
     def set(self, key: str, value: Any, cache: bool = False):
         cmds = []
