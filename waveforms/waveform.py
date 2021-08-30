@@ -165,7 +165,8 @@ def _trigMul(x, y):
             else:
                 tmp = _mul(tmp, ((((mt, ), (n, )), ), (1, )))
         if len(trig) == 1:
-            expr = _mul(tmp, (((trig[0], ), (1, )), (v, )))
+            x = ((((trig[0], ), (1, )), ), (v, ))
+            expr = _mul(tmp, x)
         elif len(trig) == 2:
             expr = _trigMul_t(trig[0], trig[1], v)
             expr = _mul(tmp, expr)
