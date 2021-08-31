@@ -511,8 +511,10 @@ class Report(Base):
         self.file, _ = _save_object(buf, self.base_path)
 
 
-def create_tables(engine):
+def create_tables(engine, tables_only=False):
     Base.metadata.create_all(engine)
+    if tables_only:
+        return
 
     sys_role = Role(name='sys')
     kernel = User(name='BIG BROTHER')

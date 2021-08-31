@@ -205,6 +205,8 @@ class Scheduler(BaseScheduler):
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)
+        else:
+            create_tables(self.eng, tables_only=True)
 
         self.system_user = self.verify_user('BIG BROTHER', self.__uuid)
 
