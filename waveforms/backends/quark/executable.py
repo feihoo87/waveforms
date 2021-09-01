@@ -304,7 +304,7 @@ class FakeExecutor(Executor):
         self.log.debug(f'fetch({task_id}, {skip})')
         if ret is None:
             return []
-        return ret
+        return [d['READ'] for d in ret.values()]
 
     def save(self, task_id: int, path: str) -> None:
         pass
