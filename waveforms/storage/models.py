@@ -4,6 +4,7 @@ import pickle
 import time
 import zipfile
 from datetime import datetime
+from functools import singledispatchmethod
 from pathlib import Path
 from typing import Any, Optional
 
@@ -18,7 +19,27 @@ from sqlalchemy.orm import (backref, declarative_base, relationship,
 from sqlalchemy.orm.session import Session
 from waveforms.security import InvalidKey, encryptPassword, verifyPassword
 
+
+class _NOTSET():
+    def __repr__(self):
+        return 'N/A'
+
+
+NOTSET = _NOTSET()
+
 Base = declarative_base()
+
+DATA_PATH = Path.home() / 'data'
+
+
+def set_data_path(base_path: str) -> None:
+    global DATA_PATH
+    DATA_PATH = Path(base_path)
+
+
+def get_data_path() -> Path:
+    return DATA_PATH
+
 
 # association table
 user_roles = Table('user_roles', Base.metadata,
@@ -33,6 +54,11 @@ record_reports = Table(
 comment_tags = Table(
     'comment_tags', Base.metadata,
     Column('comment_id', ForeignKey('comments.id'), primary_key=True),
+    Column('tag_id', ForeignKey('tags.id'), primary_key=True))
+
+snapshot_tags = Table(
+    'snapshot_tags', Base.metadata,
+    Column('snapshot_id', ForeignKey('snapshots.id'), primary_key=True),
     Column('tag_id', ForeignKey('tags.id'), primary_key=True))
 
 record_tags = Table(
@@ -119,6 +145,136 @@ class User(Base):
         return f"User(name='{self.name}')"
 
 
+class ParamenterEdge(Base):
+    __tablename__ = 'parameter_edges'
+    parent_id = Column(ForeignKey('parameters.id'), primary_key=True)
+    child_id = Column(ForeignKey('parameters.id'), primary_key=True)
+    key = Column(String(50), primary_key=True)
+
+
+class Paramenter(Base):
+    __tablename__ = 'parameters'
+
+    id = Column(Integer, primary_key=True)
+    type = Column(String)
+    unit = Column(String)
+    integer = Column(Integer)
+    real = Column(Float)
+    imag = Column(Float)
+    string = Column(String)
+    buff = Column(LargeBinary)
+
+    children = relationship("ParamenterEdge",
+                            foreign_keys=[ParamenterEdge.parent_id],
+                            backref="parent")
+    parents = relationship("ParamenterEdge",
+                           foreign_keys=[ParamenterEdge.child_id],
+                           backref="child")
+
+    @property
+    def value(self):
+        if self.type == 'integer':
+            return self.integer
+        elif self.type == 'real':
+            return self.real
+        elif self.type == 'complex':
+            return self.real + 1j * self.imag
+        elif self.type == 'string':
+            return self.string
+        elif self.type == 'buffer':
+            return self.buff
+        elif self.type == 'boolean':
+            return self.integer == 1
+        elif self.type is None or self.type == 'none':
+            return None
+        elif self.type == 'tree':
+            return self.export()
+        else:
+            return pickle.loads(self.buff)
+
+    @value.setter
+    def value(self, value):
+        self._set_value(value)
+
+    @singledispatchmethod
+    def _set_value(self, value):
+        self.buff = pickle.dumps(value)
+        self.type = 'pickle'
+
+    @_set_value.register
+    def _(self, value: int):
+        self.integer = value
+        self.type = 'integer'
+
+    @_set_value.register
+    def _(self, value: bool):
+        self.integer = int(value)
+        self.type = 'boolean'
+
+    @_set_value.register
+    def _(self, value: float):
+        self.real = value
+        self.type = 'real'
+
+    @_set_value.register
+    def _(self, value: complex):
+        self.real = value.real
+        self.imag = value.imag
+        self.type = 'complex'
+
+    @_set_value.register
+    def _(self, value: str):
+        self.string = value
+        self.type = 'string'
+
+    @_set_value.register
+    def _(self, value: bytes):
+        self.buff = value
+        self.type = 'buffer'
+
+    @_set_value.register
+    def _(self, value: None):
+        self.type = 'none'
+
+    def export(self):
+        if self.type == 'tree':
+            return {a.key: a.child.export() for a in self.children}
+        else:
+            return self.value
+
+
+class Snapshot(Base):
+    __tablename__ = 'snapshots'
+
+    id = Column(Integer, primary_key=True)
+    root_id = Column(ForeignKey('parameters.id'))
+    previous_id = Column(Integer, ForeignKey('snapshots.id'))
+
+    followers = relationship("Snapshot",
+                             backref=backref('previous', remote_side=[id]))
+
+    root = relationship('Paramenter')
+    tags = relationship('Tag',
+                        secondary=snapshot_tags,
+                        back_populates='snapshots')
+
+    def export(self):
+        return self.root.export()
+
+
+class ReportParameters(Base):
+    __tablename__ = 'report_parameters'
+    parent_id = Column(ForeignKey('reports.id'), primary_key=True)
+    child_id = Column(ForeignKey('parameters.id'), primary_key=True)
+    key = Column(String(50), primary_key=True)
+
+    paramenter = relationship('Paramenter')
+
+    @property
+    def value(self):
+        return self.paramenter.value
+
+
 class Tag(Base):
     __tablename__ = 'tags'
 
@@ -137,6 +293,9 @@ class Tag(Base):
     samples = relationship('Sample',
                            secondary=sample_tags,
                            back_populates='tags')
+    snapshots = relationship('Snapshot',
+                             secondary=snapshot_tags,
+                             back_populates='tags')
 
     def __init__(self, text) -> None:
         super().__init__()
@@ -183,19 +342,17 @@ class Attachment(Base):
     user = relationship('User', back_populates='attachments')
     comment = relationship('Comment', back_populates='attachments')
 
-    base_path = Path.home() / 'data'
-
     @property
     def data(self) -> bytes:
         self.atime = datetime.utcnow()
-        with open(self.filename, 'rb') as f:
+        with open(get_data_path() / self.filename, 'rb') as f:
             data = f.read()
         return data
 
     @data.setter
     def data(self, data: bytes):
         self.mtime = datetime.utcnow()
-        self.filename, self.sha1 = _save_object(data, self.base_path)
+        self.filename, self.sha1 = _save_object(data)
 
 
 class InputText(Base):
@@ -334,8 +491,6 @@ class Record(Base):
     tags = relationship('Tag', secondary=record_tags, back_populates='records')
     comments = relationship('Comment', secondary=record_comments)
 
-    base_path = Path.home() / 'data'
-
     def __init__(self,
                  file: str = 'test.h5',
                  key: Optional[str] = None,
@@ -344,7 +499,6 @@ class Record(Base):
                  dims_units: list[str] = [],
                  vars_units: list[str] = [],
                  coords: Optional[dict] = None):
-        self.base_path = Path(file).parent
         self.file = file
         if key is None:
             self.key = '/Data' + time.strftime("%Y%m%d%H%M%S")
@@ -363,14 +517,14 @@ class Record(Base):
     @property
     def data(self):
         self.atime = datetime.utcnow()
-        with open(self.file, 'rb') as f:
+        with open(get_data_path() / self.file, 'rb') as f:
             data = pickle.load(f)
         return data
 
     @data.setter
     def data(self, data):
         buf = pickle.dumps(data)
-        self.file, _ = _save_object(buf, self.base_path)
+        self.file, _ = _save_object(buf)
 
     # def flush(self):
     #     if len(self._buff[0]) == 0:
@@ -495,20 +649,35 @@ class Report(Base):
 
     tags = relationship('Tag', secondary=report_tags, back_populates='reports')
     comments = relationship('Comment', secondary=report_comments)
-
-    base_path = Path.home() / 'data'
+    _parameters = relationship('ReportParameters')
 
     @property
     def obj(self):
         self.atime = datetime.utcnow()
-        with open(self.file, 'rb') as f:
+        with open(get_data_path() / self.file, 'rb') as f:
             data = pickle.load(f)
         return data
 
     @obj.setter
     def obj(self, data):
         buf = pickle.dumps(data)
-        self.file, _ = _save_object(buf, self.base_path)
+        self.file, _ = _save_object(buf)
+
+    def parameters(self):
+        return {p.key: p.value for p in self._parameters}
+
+    def set_parameter(self, **kwds):
+        for key, value in kwds.items():
+            for p in self._parameters:
+                if p.key == key:
+                    p.paramenter.value = value
+                    break
+            else:
+                p = Paramenter()
+                p.value = value
+                rp = ReportParameters(key=key)
+                rp.paramenter = p
+                self._parameters.append(rp)
 
 
 def create_tables(engine, tables_only=False):
@@ -549,11 +718,11 @@ def create_tables(engine, tables_only=False):
     session.commit()
 
 
-def _save_object(data: bytes, base_path) -> tuple[str, str]:
+def _save_object(data: bytes) -> tuple[str, str]:
     hashstr = hashlib.sha1(data).hexdigest()
-    file = Path(
-        base_path) / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
+    file = get_data_path(
+    ) / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
     file.parent.mkdir(parents=True, exist_ok=True)
     with open(file, 'wb') as f:
         f.write(data)
-    return str(file), hashstr
+    return str('/'.join(file.parts[-4:])), hashstr
