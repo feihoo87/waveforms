@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.exc import NoResultFound
 from sqlalchemy.pool import SingletonThreadPool
-from waveforms.storage.models import User, create_tables
+from waveforms.storage.models import User, create_tables, set_data_path
 
 from .base import WRITE, Executor
 from .base import Scheduler as BaseScheduler
@@ -199,6 +199,7 @@ class Scheduler(BaseScheduler):
         self.db = url
         self.data_path = Path(data_path)
         self.data_path.mkdir(parents=True, exist_ok=True)
+        set_data_path(self.data_path)
         if url.startswith('sqlite'):
             self.eng = create_engine(url,
                                      echo=debug_mode,
