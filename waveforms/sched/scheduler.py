@@ -198,6 +198,7 @@ class Scheduler(BaseScheduler):
             url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
         self.db = url
         self.data_path = Path(data_path)
+        self.data_path.mkdir(parents=True, exist_ok=True)
         if url.startswith('sqlite'):
             self.eng = create_engine(url,
                                      echo=debug_mode,
