@@ -74,7 +74,7 @@ def clean_side_effects(task: Task, executor: Executor):
     cmds = []
     for k, v in task.runtime.prog.side_effects.items():
         cmds.append(WRITE(k, v))
-    executor.feed(task.id, -1, cmds)
+    executor.feed(task.id, -2, cmds)
 
 
 def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
@@ -198,10 +198,13 @@ class Scheduler(BaseScheduler):
             url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
         self.db = url
         self.data_path = Path(data_path)
-        self.eng = create_engine(url,
-                                 echo=debug_mode,
-                                 poolclass=SingletonThreadPool,
-                                 connect_args={'check_same_thread': False})
+        if url.startswith('sqlite'):
+            self.eng = create_engine(url,
+                                     echo=debug_mode,
+                                     poolclass=SingletonThreadPool,
+                                     connect_args={'check_same_thread': False})
+        else:
+            self.eng = create_engine(url, echo=debug_mode)
         if (self.db == 'sqlite:///:memory:' or self.db.startswith('sqlite:///')
                 and not os.path.exists(self.db.removeprefix('sqlite:///'))):
             create_tables(self.eng)

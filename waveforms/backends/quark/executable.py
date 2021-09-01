@@ -198,11 +198,10 @@ class QuarkExecutor(Executor):
             list: list of results.
         """
         ret = self.conn.fetch(task_id, skip)
-        # ret = ret['READ']
         self.log.debug(f'fetch({task_id}, {skip})')
-        if ret is None:
+        if isinstance(ret, str) and ret.startswith('No data found'):
             return []
-        return ret
+        return [d['READ'] for d in ret]
 
     def update(self, key: str, value: Any, cache: bool = False) -> None:
         """update key to value
