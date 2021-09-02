@@ -19,12 +19,14 @@ requirements = [
     'blinker>=1.4',
     'cryptography>=3.4.7',
     'GitPython>=3.1.14',
+    'h5py>=2.7.0',
     'numpy>=1.13.3',
     'ply>=3.11',
     'portalocker>=1.4.0',
     'scikit-learn>=0.24.1',
     'scikit-optimize>=0.8.1',
     'scipy>=1.0.0',
+    'SQLAlchemy>=1.4.11',
     'xarray>=0.18.2'
 ]
 
@@ -47,9 +49,7 @@ setup(
     install_requires=requirements,
     extras_require={
         'storage': [
-            'h5py>=2.7.0',
-            'netcdf4>=1.5.7',
-            'SQLAlchemy>=1.4.11',
+            'netcdf4>=1.5.7'
         ],
         'test': [
             'pytest>=4.4.0',

@@ -1,20 +1,23 @@
+import contextlib
 import time
-import datetime
+from datetime import datetime
 
 from waveforms.storage.crud import create_cell, create_notebook
-import threading
 
 __current_notebook = None
+__session = None
 
 
-def get_current_notebook():
+def get_current_notebook(session=None):
     global __current_notebook
     if __current_notebook is None:
         try:
-            session = get_current_session()
-            __current_notebook = create_notebook(session, time.asctime())
-            session.commit()
-            session.close()
+            if session is None:
+                with current_session() as session:
+                    __current_notebook = create_notebook(
+                        session, time.asctime())
+            else:
+                __current_notebook = create_notebook(session, time.asctime())
         except RuntimeError:
             return None
     return __current_notebook
@@ -23,65 +26,67 @@ def get_current_notebook():
 def get_inputCells():
     try:
         from IPython import get_ipython
-        
+
         return get_ipython().user_ns['In']
-    except:
+    except Exception as e:
+        raise e
         return ['']
 
 
 def save_inputCells(session):
-    try:
-        notebook = get_current_notebook()
-        aready_saved = len(notebook.cells)
-        for cell in get_inputCells()[aready_saved:]:
-            create_cell(session, notebook, cell)
-    except:
-        session.rollback()
-    session.commit()
+    notebook = get_current_notebook(session)
+    aready_saved = len(notebook.cells)
+    for cell in get_inputCells()[aready_saved:]:
+        create_cell(session, notebook, cell)
 
 
 def update_inputCells(session):
-    try:
-        notebook = get_current_notebook()
+    notebook = get_current_notebook(session)
+    if notebook.cells:
         notebook.cells[-1].ftime = datetime.utcnow()
-    except:
-        session.rollback()
-    session.commit()
+    session.add(notebook)
 
 
-__session_pool = {}
 __sessionmaker = None
 
 
-def get_current_session():
+@contextlib.contextmanager
+def current_session():
+    global __session
     if __sessionmaker is None:
         raise RuntimeError('Sessionmaker is not set')
-    tid = threading.current_thread().ident
-    if tid not in __session_pool:
-        __session_pool[tid] = __sessionmaker()
-    return __session_pool[tid]
+    if __session is None:
+        __session = __sessionmaker()
+    try:
+        yield __session
+        __session.commit()
+    except:
+        __session.rollback()
 
 
 def set_sessionmaker(sessionmaker):
     global __sessionmaker
     __sessionmaker = sessionmaker
+    __session = __sessionmaker()
 
 
 def _autosave_cells(ipython):
     try:
-        save_inputCells(get_current_session())
+        with current_session() as session:
+            save_inputCells(session)
     except:
         pass
 
 
 def _update_timestamp(ipython):
     try:
-        update_inputCells(get_current_session())
+        with current_session() as session:
+            update_inputCells(session)
     except:
         pass
 
 
-def setup():
+def setup_ipy_events():
     try:
         from IPython import get_ipython
 

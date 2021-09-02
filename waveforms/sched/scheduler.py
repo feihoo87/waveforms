@@ -21,6 +21,7 @@ from waveforms.storage.models import User, create_tables, set_data_path
 from .base import WRITE, Executor
 from .base import Scheduler as BaseScheduler
 from .base import ThreadWithKill
+from .ipy_events import set_sessionmaker, setup_ipy_events
 from .task import Task, create_task
 from .terminal import Terminal
 
@@ -214,6 +215,9 @@ class Scheduler(BaseScheduler):
             create_tables(self.eng, tables_only=True)
 
         self.system_user = self.verify_user('BIG BROTHER', self.__uuid)
+
+        set_sessionmaker(sessionmaker(bind=self.eng))
+        setup_ipy_events()
 
         self._read_data_thread = threading.Thread(target=waiting_loop,
                                                   args=(self._waiting_pool,

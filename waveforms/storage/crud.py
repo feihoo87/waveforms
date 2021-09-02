@@ -98,7 +98,7 @@ def get_object_with_tags(session: Session,
         q = session.query(cls)
     if not hasattr(cls, 'tags'):
         return []
-    
+
     aliase = {tag: aliased(Tag) for tag in tags}
 
     for tag, a in aliase.items():
@@ -146,7 +146,7 @@ def create_cell(session: Session, notebook: Notebook, input_text: str) -> Cell:
     cell = Cell()
     cell.notebook = notebook
     cell.input = create_input_text(session, input_text)
-    cell.index = len(notebook.cells)
+    cell.index = len(notebook.cells) - 1
     session.add(cell)
     notebook.atime = cell.ctime
     return cell
