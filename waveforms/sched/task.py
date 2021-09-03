@@ -14,6 +14,7 @@ from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
 
 import blinker
 import numpy as np
+from waveforms.math.fit import count_to_diag, countState
 from waveforms.quantum.circuit.qlisp import get_arch
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
@@ -323,12 +324,14 @@ class Task(BaseTask):
         additional = self.kernel.fetch(self, i)
         if isinstance(additional, str):
             additional = []
-        for step, (raw_data,
+        for step, (result,
                    prog_frame) in enumerate(zip(additional,
                                                 self.runtime.prog.steps[i:]),
                                             start=i):
-            result = self.runtime.arch.assembly_data(raw_data,
-                                                     prog_frame.data_map)
+            if prog_frame.data_map['signal'] in ['count', 'diag']:
+                result['count'] = countState(result['state'])
+            if prog_frame.data_map['signal'] == 'diag':
+                result['diag'] = count_to_diag(result['count'])
             self.runtime.result['data'].append(result['data'])
             self.runtime.result['states'].append(result.get('state', None))
             self.runtime.result['counts'].append(result.get('count', None))

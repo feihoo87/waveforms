@@ -1,8 +1,10 @@
 import asyncio
+import copy
 import functools
 import itertools
 import logging
 import os
+import pickle
 import threading
 import time
 import uuid
@@ -123,7 +125,11 @@ def submit_thread(task: Task, executor: Executor):
         if i == len(task.runtime.prog.steps):
             time.sleep(0.1)
             continue
-        executor.feed(task.id, i, task.runtime.prog.steps[i].cmds)
+        data_map = copy.copy(task.runtime.prog.steps[i].data_map)
+        if data_map['signal'] in ['count', 'diag']:
+            data_map['signal'] = 'state'
+        executor.feed(task.id, i, task.runtime.prog.steps[i].cmds,
+                      {'dataMap': pickle.dumps(data_map)})
         i += 1
     clean_side_effects(task, executor)
 
