@@ -3,17 +3,14 @@ from __future__ import annotations
 import copy
 import functools
 import importlib
-import logging
 import sys
-import threading
 import time
 import warnings
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import (Any, Generator, Iterable, Literal, Optional, Sequence,
                     Type, Union)
-from waveforms.quantum.circuit.qlisp.stdlib import T
 
 import blinker
 import numpy as np
@@ -25,7 +22,6 @@ from waveforms.storage.models import Record, Report
 
 from .base import READ, TRIG, WRITE
 from .base import Task as BaseTask
-from .base import TaskRuntime
 from .scan import exec_circuit, expand_task
 
 
@@ -290,7 +286,7 @@ class Task(BaseTask):
             file_name = self.get('station.sample')
             time_str = time.strftime('%Y-%m-%d-%H-%M-%S',
                                      time.localtime(self.runtime.started_time))
-            name = f"{self.name}_{time_str}_{self.id}"
+            name = f"{self.name}"
             return f"{file_name}:/{name}"
 
     def clean_side_effects(self) -> None:
@@ -328,10 +324,11 @@ class Task(BaseTask):
         if isinstance(additional, str):
             additional = []
         for step, (raw_data,
-                   dataMap) in enumerate(zip(additional,
-                                             self.runtime.prog.data_maps[i:]),
-                                         start=i):
-            result = self.runtime.arch.assembly_data(raw_data, dataMap)
+                   prog_frame) in enumerate(zip(additional,
+                                                self.runtime.prog.steps[i:]),
+                                            start=i):
+            result = self.runtime.arch.assembly_data(raw_data,
+                                                     prog_frame.data_map)
             self.runtime.result['data'].append(result['data'])
             self.runtime.result['states'].append(result.get('state', None))
             self.runtime.result['counts'].append(result.get('count', None))

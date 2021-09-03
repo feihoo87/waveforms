@@ -15,7 +15,8 @@ from typing import (Any, Generator, Iterable, Literal, NamedTuple, Optional,
 
 from sqlalchemy.orm.session import Session
 from waveforms.quantum.circuit.qlisp import (COMMAND, FREE, PUSH, READ, SYNC,
-                                             TRIG, WRITE, Architecture)
+                                             TRIG, WRITE, Architecture,
+                                             DataMap, QLispCode)
 from waveforms.storage.models import Record, Report, User
 
 
@@ -68,6 +69,20 @@ class Executor(ABC):
 
 
 @dataclass
+class ProgramFrame():
+    """
+    A frame of a program.
+    """
+    step_id: int = 0
+    cmds: list[COMMAND] = field(default_factory=list)
+    data_map: DataMap = field(default_factory=dict)
+    code: Optional[QLispCode] = None
+
+    task_id: int = None
+    priority: int = None
+
+
+@dataclass
 class Program:
     """
     A program is a list of commands.
@@ -76,12 +91,9 @@ class Program:
     arch: str = 'baqis'
 
     index: list = field(default_factory=list)
-    commands: list[list[COMMAND]] = field(default_factory=list)
-    data_maps: list[dict] = field(default_factory=list)
     side_effects: dict = field(default_factory=dict)
 
-    steps: list[tuple[list[tuple], dict[str, Any], list[COMMAND]],
-                dict] = field(default_factory=list)
+    steps: list[ProgramFrame] = field(default_factory=list)
     shots: int = 1024
     signal: str = 'state'
 

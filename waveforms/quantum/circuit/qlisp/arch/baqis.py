@@ -1,7 +1,7 @@
 import random
 from dataclasses import dataclass, field
 from waveforms.waveform import square
-
+import copy
 import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
@@ -60,8 +60,10 @@ def _get_w_and_data_maps(AD_tasks: dict[str, ADTask]):
         for task in ad_task.tasks:
             Delta = task.params['frequency'] - task.hardware.lo_freq
             ad_task.fList.append(Delta)
+            params = copy.copy(task.params)
+            params['w'] = None
             dataMap['cbits'][task.cbit] = (channel, len(ad_task.fList) - 1,
-                                           Delta, task.params, task.time,
+                                           Delta, params, task.time,
                                            ad_task.start, ad_task.stop)
             if task.params['w'] is not None:
                 w = np.zeros(numberOfPoints, dtype=complex)

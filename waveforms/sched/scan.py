@@ -8,7 +8,7 @@ from waveforms.quantum.circuit.qlisp.config import Config
 from waveforms.quantum.circuit.qlisp.library import Library
 from waveforms.waveform import Waveform
 
-from .base import READ, Task
+from .base import READ, Task, ProgramFrame
 from .scan_iters import scan_iters
 
 log = logging.getLogger(__name__)
@@ -23,31 +23,26 @@ def exec_circuit(task: Task,
     """Execute a circuit."""
     from waveforms import compile
 
-    task.runtime.prog.steps[-1][2].extend(task.runtime.cmds)
     if skip_compile and task.runtime.step > 0:
-        for cmd in task.runtime.prog.commands[-1]:
+        for cmd in task.runtime.prog.steps[-2].cmds:
             if (isinstance(cmd, READ) or cmd.address.endswith('.StartCapture')
                     or cmd.address.endswith('.CaptureMode')):
                 task.runtime.cmds.append(cmd)
-        task.runtime.prog.data_maps[-1] = task.runtime.prog.data_maps[0]
-        task.runtime.prog.steps[-1][2].extend(task.runtime.cmds)
-        task.runtime.prog.steps[-1][3].update(task.runtime.prog.data_maps[-1])
+        task.runtime.prog.steps[-1].data_map = task.runtime.prog.steps[-2].data_map
     else:
         code = compile(circuit, lib=lib, cfg=cfg)
         code.signal = signal
         code.shots = task.shots
         cmds, dataMap = task.runtime.arch.assembly_code(code)
+        task.runtime.prog.steps[-1].code = code
+        task.runtime.prog.steps[-1].data_map.update(dataMap)
         task.runtime.cmds.extend(cmds)
-        task.runtime.prog.data_maps[-1].update(dataMap)
-        task.runtime.prog.steps[-1][0].extend(circuit)
     return task.runtime.step
 
 
 def expand_task(task: Task):
     task.runtime.step = 0
     task.runtime.prog.index = []
-    task.runtime.prog.commands = []
-    task.runtime.prog.data_maps = []
     task.runtime.prog.side_effects = {}
     task.runtime.prog.steps = []
     task.runtime.prog.shots = task.shots
@@ -61,8 +56,7 @@ def expand_task(task: Task):
             pass
 
         task.runtime.prog.index.append(step)
-        task.runtime.prog.data_maps.append({})
-        task.runtime.prog.steps.append(([], {}, [], {}))
+        task.runtime.prog.steps.append(ProgramFrame(task.runtime.step))
 
         for k, v in step.kwds.items():
             if k in task.runtime.result['index']:
@@ -73,7 +67,7 @@ def expand_task(task: Task):
         task.runtime.cmds = []
         yield step
         task.trig()
-        task.runtime.prog.commands.append(task.runtime.cmds)
+        task.runtime.prog.steps[-1].cmds = task.runtime.cmds
 
         for cmd in task.runtime.cmds:
             if isinstance(cmd.value, Waveform):

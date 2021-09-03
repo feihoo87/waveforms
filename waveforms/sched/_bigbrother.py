@@ -41,8 +41,8 @@ def scan(scheduler: Scheduler, task: Task,
     """
     task = copy_task(task)
     task.calibration_level = calibration_level
-    scheduler.submit(task)
-    scheduler.join(task)
+    task = scheduler.submit(task)
+    task.join()
     return task.analyze(task.result())
 
 

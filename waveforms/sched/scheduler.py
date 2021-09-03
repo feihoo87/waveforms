@@ -49,16 +49,6 @@ def fetch_data(task: Task, executor: Executor):
             if _is_finished(task):
                 executor.save(task.id, task.data_path)
                 task.runtime.finished_time = time.time()
-                if task.runtime.record is not None:
-                    try:
-                        data = task._fetch_result()
-                        data['program'] = task.runtime.prog
-                        task.runtime.record.data = data
-                        task.db.commit()
-                    except Exception as e:
-                        log.error(f"Failed to save record: {e}")
-                else:
-                    log.warning(f"No record for task {task.name}({task.id})")
                 with task.runtime._status_lock:
                     task.runtime.status = 'finished'
                 break
@@ -68,6 +58,16 @@ def fetch_data(task: Task, executor: Executor):
         log.exception(f"{task.name}({task.id}) is failed")
         executor.free(task.id)
     finally:
+        if task.runtime.record is not None:
+            try:
+                data = task.result()
+                data['program'] = task.runtime.prog
+                task.runtime.record.data = data
+                task.db.commit()
+            except Exception as e:
+                log.error(f"Failed to save record: {e}")
+        else:
+            log.warning(f"No record for task {task.name}({task.id})")
         log.debug(f'{task.name}({task.id}) is finished')
 
 
@@ -120,10 +120,10 @@ def submit_thread(task: Task, executor: Executor):
         if (i >= task.runtime.step
                 and not task.runtime.threads['compile'].is_alive()):
             break
-        if i == len(task.runtime.prog.commands):
+        if i == len(task.runtime.prog.steps):
             time.sleep(0.1)
             continue
-        executor.feed(task.id, i, task.runtime.prog.commands[i])
+        executor.feed(task.id, i, task.runtime.prog.steps[i].cmds)
         i += 1
     clean_side_effects(task, executor)
 
