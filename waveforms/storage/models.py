@@ -19,14 +19,6 @@ from sqlalchemy.orm import (backref, declarative_base, relationship,
 from sqlalchemy.orm.session import Session
 from waveforms.security import InvalidKey, encryptPassword, verifyPassword
 
-
-class _NOTSET():
-    def __repr__(self):
-        return 'N/A'
-
-
-NOTSET = _NOTSET()
-
 Base = declarative_base()
 
 DATA_PATH = Path.home() / 'data'
