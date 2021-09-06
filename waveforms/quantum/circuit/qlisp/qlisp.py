@@ -51,6 +51,7 @@ class ADChannel(NamedTuple):
     sampleRate: float = 1e9
     trigger: str = ''
     triggerDelay: float = 0
+    triggerClockCycle: float = 8e-9
 
 
 class MultADChannel(NamedTuple):

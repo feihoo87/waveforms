@@ -1,19 +1,17 @@
+import copy
 import random
 from dataclasses import dataclass, field
-from waveforms.waveform import square
-import copy
+
 import numpy as np
 from waveforms.baseconfig import _flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.math.signal import shift
+from waveforms.waveform import square
 from waveforms.waveform_parser import wave_eval
 
 from .base import (COMMAND, READ, SYNC, TRIG, WRITE, Architecture, CommandList,
                    DataMap, MeasurementTask, QLispCode, RawData, Result)
-
-TRIGGER_CLOCK_CYCLE = 8e-9
-TRIGGER_WIDTH = 1e-6
 
 
 @dataclass
@@ -23,6 +21,11 @@ class ADTask():
     trigger: str = ''
     triggerDelay: float = 0
     sampleRate: float = 1e9
+    triggerClockCycle: float = 8e-9
+    triggerLevel: float = 0
+    triggerSlope: str = 'rising'
+    triggerSource: str = 'external'
+    triggerDration: float = 1e-6
     fList: list = field(default_factory=list)
     tasks: list = field(default_factory=list)
     wList: list = field(default_factory=list)
@@ -35,13 +38,16 @@ def _getADInfo(
         task = measures[cbit][-1]
         ad = task.hardware.IQ.name
         if ad not in AD_tasks:
-            AD_tasks[ad] = ADTask(trigger=task.hardware.IQ.trigger,
-                                  triggerDelay=task.hardware.IQ.triggerDelay,
-                                  sampleRate=task.hardware.IQ.sampleRate)
+            AD_tasks[ad] = ADTask(
+                trigger=task.hardware.IQ.trigger,
+                triggerDelay=task.hardware.IQ.triggerDelay,
+                sampleRate=task.hardware.IQ.sampleRate,
+                triggerClockCycle=task.hardware.IQ.triggerClockCycle)
         ad_task = AD_tasks[ad]
         ad_task.start = min(ad_task.start, task.time)
-        ad_task.start = np.floor_divide(
-            ad_task.start, TRIGGER_CLOCK_CYCLE) * TRIGGER_CLOCK_CYCLE
+        ad_task.start = np.floor_divide(ad_task.start,
+                                        task.hardware.IQ.triggerClockCycle
+                                        ) * task.hardware.IQ.triggerClockCycle
         ad_task.stop = max(ad_task.stop, task.time + task.params['duration'])
         ad_task.tasks.append(task)
     return AD_tasks
@@ -98,8 +104,10 @@ def assembly_code(code: QLispCode) -> tuple[CommandList, DataMap]:
         delay = ad_task.start + ad_task.triggerDelay
         if ad_task.trigger:
             cmds.append(
-                WRITE(ad_task.trigger,
-                      square(TRIGGER_WIDTH) >> TRIGGER_WIDTH / 2))
+                WRITE(
+                    ad_task.trigger,
+                    square(ad_task.triggerDration) >>
+                    ad_task.triggerDration / 2))
         cmds.append(WRITE(channel + '.coefficient', coefficient))
         cmds.append(WRITE(channel + '.pointNum', coefficient.shape[-1]))
         cmds.append(WRITE(channel + '.triggerDelay', delay))

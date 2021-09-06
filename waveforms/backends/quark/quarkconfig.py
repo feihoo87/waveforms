@@ -79,12 +79,13 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             'trigger': f'{rl}.waveform.TRIG',
             'sampleRate': rlDict['adcsr'],
             'triggerDelay': rlDict['setting']['TRIGD'],
-            'triggerSkew': rlDict.get('trigger_skew', 0),
+            'triggerClockCycle': rlDict['setting'].get('triggerClockCycle',
+                                                       8e-9),
         }
 
         return MultADChannel(
             IQ=ADChannel(chInfo['IQ'], chInfo['sampleRate'], chInfo['trigger'],
-                         chInfo['triggerDelay']),
+                         chInfo['triggerDelay'], chInfo['triggerClockCycle']),
             LO=chInfo['LO'],
             lo_freq=chInfo['lofreq'],
         )
