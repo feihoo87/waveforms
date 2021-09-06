@@ -337,7 +337,8 @@ class Scheduler(BaseScheduler):
              arch='baqis',
              lib=None,
              cfg=None,
-             cmds=[]):
+             cmds=[],
+             no_record=False):
         """Execute a circuit.
         
         Parameters:
@@ -360,6 +361,7 @@ class Scheduler(BaseScheduler):
                         lib=lib,
                         cfg=cfg,
                         cmds=cmds)
+        t.no_record = no_record
         self.submit(t)
         return t
 
@@ -382,19 +384,6 @@ class Scheduler(BaseScheduler):
         from ._bigbrother import maintain
 
         return maintain(self, task)
-
-    def fetch(self, task: Task, skip: int = 0) -> list[dict]:
-        """Fetch result of task from the executor, skip the
-        first `skip` steps.
-
-        Args:
-            task: a task.
-            skip: the number of steps to skip.
-
-        Returns:
-            A list of dicts.
-        """
-        return self.executor.fetch(task.id, skip)
 
     def submit(self, task: Task, dry_run: bool = False, config=None) -> Task:
         """Submit a task.

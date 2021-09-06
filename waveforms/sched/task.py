@@ -321,7 +321,7 @@ class Task(BaseTask):
 
     def _fetch_result(self):
         i = len(self.runtime.result['data'])
-        additional = self.kernel.fetch(self, i)
+        additional = self.kernel.executor.fetch(self, i)
         if isinstance(additional, str):
             additional = []
         for step, (result,
