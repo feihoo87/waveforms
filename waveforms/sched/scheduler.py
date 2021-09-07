@@ -114,6 +114,7 @@ def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
 
 def submit_thread(task: Task, executor: Executor):
     """Submit a task."""
+    LIMIT = 10
     i = 0
     while True:
         t0 = time.time()
@@ -122,8 +123,9 @@ def submit_thread(task: Task, executor: Executor):
         if (i >= task.runtime.step
                 and not task.runtime.threads['compile'].is_alive()):
             break
-        if i + 1 >= len(task.runtime.prog.steps
-                        ) and task.runtime.threads['compile'].is_alive():
+        if (i + 1 >= len(task.runtime.prog.steps)
+                and task.runtime.threads['compile'].is_alive()) or (
+                    i - len(task.runtime.result['data']) > LIMIT):
             time.sleep(0.1)
             continue
         data_map = copy.copy(task.runtime.prog.steps[i].data_map)
