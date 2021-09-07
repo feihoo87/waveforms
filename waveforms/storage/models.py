@@ -469,7 +469,8 @@ class Record(Base):
     app = Column(String)
     file = Column(String)
     key = Column(String)
-    config = Column(String)
+    config = Column(JSON)
+    task_hash = Column(LargeBinary(32))
 
     user = relationship("User")
     samples = relationship("Sample",
@@ -530,6 +531,7 @@ class Report(Base):
     content = Column(Text)
     file = Column(String)
     key = Column(String)
+    task_hash = Column(LargeBinary(32))
 
     user = relationship("User")
     samples = relationship("Sample",

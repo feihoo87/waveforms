@@ -350,13 +350,14 @@ class Scheduler(BaseScheduler):
         """
         from waveforms.sched.task import RunCircuits
 
-        t = RunCircuits(circuits=[circuit],
-                        shots=shots,
-                        signal=signal,
-                        arch=arch,
-                        lib=lib,
-                        cfg=cfg,
-                        cmds=cmds)
+        t = self.create_task(RunCircuits,
+                             kwds=dict(circuits=[circuit],
+                                       shots=shots,
+                                       signal=signal,
+                                       arch=arch,
+                                       lib=lib,
+                                       cfg=cfg,
+                                       cmds=cmds))
         t.no_record = no_record
         self.submit(t)
         return t

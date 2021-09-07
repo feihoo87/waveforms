@@ -98,6 +98,7 @@ class Program:
     signal: str = 'state'
 
     snapshot: dict = field(default_factory=dict)
+    task_arguments: tuple[tuple, dict] = (tuple(), dict())
 
 
 @dataclass

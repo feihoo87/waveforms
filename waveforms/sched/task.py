@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import copy
 import functools
+import hashlib
 import importlib
+import pickle
 import sys
 import time
 import warnings
@@ -113,6 +115,13 @@ class Task(BaseTask):
     def record(self) -> Optional[Record]:
         return self.runtime.record
 
+    @cached_property
+    def task_hash(self):
+        args, kwds = self.runtime.prog.task_arguments
+        kwds = {k: kwds[k] for k in sorted(kwds.keys())}
+        buf = pickle.dumps((args, kwds))
+        return hashlib.sha256(buf).digest()
+
     def is_children_of(self, task: Task) -> bool:
         return self.parent is not None and self.parent == task.id
 
@@ -142,7 +151,7 @@ class Task(BaseTask):
 
         record = Record(file=str(file), key=key)
         record.app = self.name
-        record.base_path = file.parent
+        record.task_hash = self.task_hash
         for tag_text in self.tags:
             t = tag(self.db, tag_text)
             record.tags.append(t)
@@ -161,7 +170,7 @@ class Task(BaseTask):
         file = self.kernel.data_path / (file + '.hdf5')
 
         rp = Report(file=str(file), key=key)
-        rp.base_path = file.parent
+        rp.task_hash = self.task_hash
         for tag_text in self.tags:
             t = tag(self.db, tag_text)
             rp.tags.append(t)
@@ -468,6 +477,7 @@ def create_task(taskInfo: Union[tuple, Task]) -> Task:
     else:
         kwds = {}
     task = app(*args, **kwds)
+    task.runtime.prog.task_arguments = (args, kwds)
     return task
 
 
