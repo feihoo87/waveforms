@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import itertools
 import pickle
@@ -11,8 +12,8 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
-from sqlalchemy import (Boolean, Column, DateTime, Float, ForeignKey, Integer,
-                        LargeBinary, Sequence, String, Table, Text,
+from sqlalchemy import (JSON, Boolean, Column, DateTime, Float, ForeignKey,
+                        Integer, LargeBinary, Sequence, String, Table, Text,
                         create_engine)
 from sqlalchemy.orm import (backref, declarative_base, relationship,
                             sessionmaker)
@@ -337,9 +338,7 @@ class Attachment(Base):
     @property
     def data(self) -> bytes:
         self.atime = datetime.utcnow()
-        with open(get_data_path() / self.filename, 'rb') as f:
-            data = f.read()
-        return data
+        return _load_object(self.filename)
 
     @data.setter
     def data(self, data: bytes):
@@ -484,7 +483,7 @@ class Record(Base):
     comments = relationship('Comment', secondary=record_comments)
 
     def __init__(self,
-                 file: str = 'test.h5',
+                 file: str = None,
                  key: Optional[str] = None,
                  dims: list[str] = [],
                  vars: list[str] = [],
@@ -509,110 +508,12 @@ class Record(Base):
     @property
     def data(self):
         self.atime = datetime.utcnow()
-        with open(get_data_path() / self.file, 'rb') as f:
-            data = pickle.load(f)
-        return data
+        return _load_object(self.file)
 
     @data.setter
     def data(self, data):
         buf = pickle.dumps(data)
         self.file, _ = _save_object(buf)
-
-    # def flush(self):
-    #     if len(self._buff[0]) == 0:
-    #         if self.df is not None and self.ds is None:
-    #             self._df_to_ds()
-    #         return
-
-    #     def getitem(y, s):
-    #         ret = y
-    #         for i in s:
-    #             ret = ret[i]
-    #         return ret
-
-    #     self.mtime = datetime.utcnow()
-    #     self.atime = datetime.utcnow()
-    #     if self.coords is None:
-    #         index, values = self._buff
-    #     else:
-    #         index = []
-    #         values = []
-    #         shape = [len(v) for v in self.coords.values()]
-    #         for i, v in zip(*self._buff):
-    #             for n, c in enumerate(
-    #                     itertools.product(*self.coords.values())):
-    #                 s = np.unravel_index(n, shape)
-    #                 index.append(tuple(i) + c)
-    #                 values.append(tuple(getitem(y, s) for y in v))
-
-    #     df = pd.DataFrame(values,
-    #                       index=pd.MultiIndex.from_tuples(index,
-    #                                                       names=self.dims),
-    #                       columns=self.vars)
-
-    #     if self.df is None:
-    #         self.df = df
-    #     else:
-    #         self.df = self.df.append(df)
-    #     self._df_to_ds()
-    #     self._buff = ([], [])
-
-    # def _df_to_ds(self):
-    #     self.ds = xr.Dataset.from_dataframe(self.df)
-    #     for units, var in zip(self.vars_units, self.vars):
-    #         self.ds[var].attrs['units'] = units
-    #     for dim, units in zip(self.dims, self.dims_units):
-    #         self.ds[dim].attrs['units'] = units
-
-    # def append(self, index, values):
-    #     self._buff[0].extend(index)
-    #     self._buff[1].extend(values)
-
-    #     if len(self._buff[0]) > 1000:
-    #         self.flush()
-
-    # def set_values(self, *values):
-    #     self.df = pd.DataFrame(dict(zip(self.columnLabels, values)))
-
-    # def __getitem__(self, label):
-    #     return self.ds[label]
-
-    # def save(self):
-    #     self.flush()
-    #     buf = pickle.dumps(self.ds)
-    #     hashstr = hashlib.sha1(buf).hexdigest()
-    #     file = Path(self.file).parent / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
-    #     file.parent.mkdir(parents=True, exist_ok=True)
-    #     with open(file, 'wb') as f:
-    #         f.write(buf)
-    #     self.file = str(file)
-    #     return
-
-    #     if Path(self.file).exists():
-    #         mode = 'a'
-    #     else:
-    #         mode = 'w'
-
-    #     self.ds.to_netcdf(self.file,
-    #                       group=self.key,
-    #                       mode=mode,
-    #                       format='NETCDF4',
-    #                       engine='netcdf4')
-
-    # def data(self):
-    #     self.atime = datetime.utcnow()
-    #     self.flush()
-    #     if self.ds is None:
-    #         with open(self.file, 'rb') as f:
-    #             self.ds = pickle.load(f)
-    #     return self.ds
-
-    #     if self.ds is None:
-    #         self.ds = xr.open_dataset(self.file,
-    #                                   group=self.key,
-    #                                   mode='r',
-    #                                   engine='netcdf4')
-    #     return self.ds
 
 
 class Report(Base):
@@ -646,9 +547,7 @@ class Report(Base):
     @property
     def obj(self):
         self.atime = datetime.utcnow()
-        with open(get_data_path() / self.file, 'rb') as f:
-            data = pickle.load(f)
-        return data
+        return _load_object(self.file)
 
     @obj.setter
     def obj(self, data):
@@ -715,6 +614,12 @@ def _save_object(data: bytes) -> tuple[str, str]:
     file = get_data_path(
     ) / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
     file.parent.mkdir(parents=True, exist_ok=True)
-    with open(file, 'wb') as f:
+    with gzip.open(file, 'wb') as f:
         f.write(data)
     return str('/'.join(file.parts[-4:])), hashstr
+
+
+def _load_object(file: str) -> bytes:
+    with gzip.open(get_data_path() / file, 'rb') as f:
+        data = pickle.load(f)
+    return data

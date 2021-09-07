@@ -122,7 +122,7 @@ def submit_thread(task: Task, executor: Executor):
         if (i >= task.runtime.step
                 and not task.runtime.threads['compile'].is_alive()):
             break
-        if i - 1 >= len(task.runtime.prog.steps
+        if i + 1 >= len(task.runtime.prog.steps
                         ) and task.runtime.threads['compile'].is_alive():
             time.sleep(0.1)
             continue

@@ -135,30 +135,6 @@ class Task(BaseTask):
         self.db.add(self.runtime.record)
         self.db.commit()
 
-    # def set_frame(self, dims: list[tuple[str, str]],
-    #                   vars: list[tuple[str, str]],
-    #                   coords: dict[str, Sequence]) -> None:
-    #     '''
-    #     set_frame(dims=['shots', 'cbits'], vars=['IQ', 'state'], coords={'shots': [0, 1, 2], 'cbits': [0, 1, 2]})
-    #     '''
-    #     pass
-
-    # def set_record(self, save_raw: bool = False, **kwargs) -> None:
-    #     """
-    #     Define the record for the task.
-
-    #     Args:
-    #         save_raw: whether to store raw data or not
-    #         kwargs: the data to be stored
-
-    #     Example:
-    #         def_record(save_raw=True,
-    #                    sigma_z={'mean': ['shots']},
-    #                    S_z={'mean': ['shots'], 'sum': ['cbits']},
-    #                    S_p={'std': ['shots']},)
-    #     """
-    #     pass
-
     def create_record(self) -> Record:
         """Create a record"""
         file, key = self.data_path.split(':/')
@@ -321,7 +297,7 @@ class Task(BaseTask):
 
     def _fetch_result(self):
         i = len(self.runtime.result['data'])
-        additional = self.kernel.executor.fetch(self, i)
+        additional = self.kernel.executor.fetch(self.id, i)
         if isinstance(additional, str):
             additional = []
         for step, (result,
