@@ -7,6 +7,62 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 
+class Delete():
+    __slots__ = ()
+
+    def __repr__(self):
+        return 'Delete'
+
+
+class Update():
+    __slots__ = ('o', 'n')
+
+    def __init__(self, o, n):
+        self.o = o
+        self.n = n
+
+    def __repr__(self):
+        return f"Update: {self.o!r} ==> {self.n!r}"
+
+
+class Create():
+    __slots__ = ('n', )
+
+    def __init__(self, n):
+        self.n = n
+
+    def __repr__(self):
+        return f"Create: {self.n!r}"
+
+
+def diff(d1, d2):
+    ret = {}
+    for k in d2:
+        if k in d1:
+            if isinstance(d2[k], type(d1[k])) and d1[k] == d2[k]:
+                pass
+            elif isinstance(d1[k], dict) and isinstance(d2[k], dict):
+                ret[k] = diff(d1[k], d2[k])
+            else:
+                ret[k] = Update(d1[k], d2[k])
+        else:
+            ret[k] = Create(d2[k])
+    for k in d1:
+        if k not in d2:
+            ret[k] = Delete()
+    return ret
+
+
+def printDiff(d, lim=None, offset=0):
+    count = 0
+    for i, (k, v) in enumerate(_flattenDictIter(d)):
+        if i >= offset:
+            print(f"{k:40}", v)
+            count += 1
+            if lim is not None and count >= lim:
+                break
+
+
 def _flattenDictIter(d, prefix=[]):
     for k in d:
         if isinstance(d[k], dict):
