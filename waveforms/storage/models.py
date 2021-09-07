@@ -606,7 +606,10 @@ def create_tables(engine, tables_only=False):
     session.add(guest_user)
     session.add(kernel)
     session.add_all([t1, t2, t3, t4, a])
-    session.commit()
+    try:
+        session.commit()
+    except:
+        session.rollback()
 
 
 def _save_object(data: bytes) -> tuple[str, str]:
