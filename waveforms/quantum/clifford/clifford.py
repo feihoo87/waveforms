@@ -296,6 +296,10 @@ def mul(i1: int, i2: int) -> int:
     return ret
 
 
+def inv(i: int) -> int:
+    return mat2index(index2mat(i).T.conj())
+
+
 def _genSeq(i, gate=('CZ', 'CZ')):
     pulses = ['I', 'X', 'Y', 'X/2', 'Y/2', '-X/2', '-Y/2']
     phases = ['I', 'Z', 'S', '-S']

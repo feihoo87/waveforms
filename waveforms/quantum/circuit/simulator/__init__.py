@@ -101,6 +101,9 @@ def applySeq(seq, psi0=None):
         return U @ psi
 
     for gate, qubits in seq:
+        if (isinstance(gate, tuple)
+                and gate[0] in ['Measure', 'Delay', 'Barrier']):
+            continue
         if isinstance(qubits, tuple):
             M = max(qubits)
         else:
@@ -145,6 +148,8 @@ regesterGateMatrix('T',
                    np.array([[1, 0], [0, 1 / np.sqrt(2) + 1j / np.sqrt(2)]]))
 regesterGateMatrix('-T',
                    np.array([[1, 0], [0, 1 / np.sqrt(2) - 1j / np.sqrt(2)]]))
+regesterGateMatrix('W', rfUnitary(np.pi / 2, np.pi / 4))
+regesterGateMatrix('-W', rfUnitary(-np.pi / 2, np.pi / 4))
 
 # two qubits
 regesterGateMatrix(
@@ -169,8 +174,6 @@ regesterGateMatrix(
 
 if __name__ == '__main__':
     # Porter-Thomas distribution
-
-    regesterGateMatrix('W', rfUnitary(np.pi / 2, np.pi / 4))
 
     def randomSeq(depth, N):
         seq = []

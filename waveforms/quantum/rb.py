@@ -1,0 +1,71 @@
+import random
+from os import replace
+
+from .circuit.simulator import seq2mat
+from .clifford import cliffordOrder
+from .clifford.clifford import (generateTwoQubitCliffordSequence, inv,
+                                mat2index, mul)
+from .clifford.seq2mat import seq2qlisp
+
+_index2seq = [[seq] for seq in generateTwoQubitCliffordSequence()]
+
+
+def replace_qubit(circuit, qubits):
+    ret = []
+    for gate, target in circuit:
+        if isinstance(target, int):
+            ret.append((gate, qubits[target]))
+        else:
+            ret.append((gate, tuple(qubits[i] for i in target)))
+    return ret
+
+
+def circuit_to_index(circuit: list) -> int:
+    if not circuit:
+        return 0
+    return mat2index(seq2mat(circuit))
+
+
+def index_to_circuit(index: int, qubits=(0, ), base=None, rng=None) -> list:
+    if rng is None:
+        rng = random.Random()
+    if base is None:
+        base = _index2seq
+    seq = rng.choice(base[index])
+    if len(qubits) == 1:
+        seq = (seq[1], )
+    return seq2qlisp(seq, range(len(qubits)))
+
+
+def generateRBCircuit(qubits, cycle, seed, interleaves=[], base=None):
+    """Generate a random Clifford RB circuit.
+
+    Args:
+        qubits (list): The qubits to use.
+        cycle (int): The cycles of clifford sequence.
+        seed (int): The seed for the random number generator.
+        interleaves (list): The interleaves to use.
+        base (list): The basic two-qubit Clifford sequence.
+
+    Returns:
+        list: The RB circuit.
+    """
+
+    MAX = cliffordOrder(len(qubits))
+
+    interleaves_index = circuit_to_index(interleaves)
+
+    ret = []
+    index = 0
+    rng = random.Random(seed)
+
+    for _ in range(cycle):
+        i = rng.randrange(MAX)
+        index = mul(i, index)
+        ret.extend(index_to_circuit(i, qubits, base, rng))
+        index = mul(interleaves_index, index)
+        ret.extend(interleaves)
+
+    ret.extend(index_to_circuit(inv(index), qubits, base, rng))
+
+    return replace_qubit(ret, qubits)
