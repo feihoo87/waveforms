@@ -122,6 +122,9 @@ class QuarkExecutor(Executor):
         self.conn.start(*args)
         self.log.debug(f'start({args})')
 
+    def create_task(self, task_id: int, meta: dict = {}):
+        self.conn.reset(task_id, meta)
+
     def feed(self,
              task_id: int,
              task_step: int,
@@ -271,6 +274,9 @@ class FakeExecutor(Executor):
         pass
 
     def reset(self):
+        pass
+
+    def create_task(self, task_id: int, meta: dict = {}):
         pass
 
     def start(self, *args):

@@ -99,6 +99,7 @@ class Program:
 
     snapshot: dict = field(default_factory=dict)
     task_arguments: tuple[tuple, dict] = (tuple(), dict())
+    meta: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -199,6 +200,10 @@ class Task(ABC):
     @property
     def kernel(self):
         return self.__runtime.kernel
+
+    @property
+    def meta(self):
+        return self.__runtime.prog.meta
 
     def _set_kernel(self, kernel, id):
         self.__runtime.id = id
