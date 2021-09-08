@@ -116,7 +116,7 @@ def submit_thread(task: Task, executor: Executor):
     """Submit a task."""
     LIMIT = 10
     i = 0
-    executor.create_task(task.id, task.meta())
+    executor.create_task(task.id, task.meta)
     while True:
         t0 = time.time()
         if task.runtime.threads['submit']._kill_event.is_set():
