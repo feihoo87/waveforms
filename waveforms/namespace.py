@@ -6,32 +6,7 @@ from typing import Any
 
 import portalocker
 
-
-class _NOTSET():
-    def __repr__(self):
-        return 'N/A'
-
-
-NOTSET = _NOTSET()
-
-
-def update_tree(result, updates):
-    for k, v in updates.items():
-        if isinstance(v, dict):
-            if k not in result or not isinstance(result[k], dict):
-                result[k] = {}
-            update_tree(result[k], v)
-        else:
-            result[k] = v
-
-
-def query_tree(q, dct):
-    keys = q.split('.')
-    for i, key in enumerate(keys):
-        if key not in dct:
-            return (NOTSET, '.'.join(keys[:i + 1]))
-        dct = dct[key]
-    return dct
+from .dicttree import NOTSET, query_tree, update_tree
 
 
 class NamespaceDriver(ABC):
@@ -183,7 +158,7 @@ class NamespaceCache():
             self._clear()
 
     def _cache(self, key: str, value: Any):
-        if isinstance(value, tuple) and isinstance(value[0], _NOTSET):
+        if isinstance(value, tuple) and value[0] is NOTSET:
             self._cache_notset(value[1])
             return
         self._cache_keys(key, value)
@@ -249,7 +224,7 @@ class NamespaceCache():
             if key.startswith(k + '.') or key == k:
                 return (NOTSET, k), True
         ret = query_tree(key, self.caches)
-        if isinstance(ret, tuple) and isinstance(ret[0], _NOTSET):
+        if isinstance(ret, tuple) and ret[0] is NOTSET:
             return None, False
         return ret, self._fully_cached(key)
 
