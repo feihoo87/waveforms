@@ -1,5 +1,4 @@
 import random
-from os import replace
 
 from .circuit.simulator import seq2mat
 from .clifford import cliffordOrder
@@ -27,6 +26,8 @@ def circuit_to_index(circuit: list) -> int:
 
 
 def index_to_circuit(index: int, qubits=(0, ), base=None, rng=None) -> list:
+    if len(qubits) > 2:
+        raise ValueError('Only support 1 or 2 qubits')
     if rng is None:
         rng = random.Random()
     if base is None:
@@ -37,7 +38,7 @@ def index_to_circuit(index: int, qubits=(0, ), base=None, rng=None) -> list:
     return seq2qlisp(seq, range(len(qubits)))
 
 
-def generateRBCircuit(qubits, cycle, seed, interleaves=[], base=None):
+def generateRBCircuit(qubits, cycle, seed=None, interleaves=[], base=None):
     """Generate a random Clifford RB circuit.
 
     Args:
