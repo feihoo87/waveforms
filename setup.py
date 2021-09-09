@@ -17,6 +17,7 @@ exec(open('waveforms/version.py').read())
 
 requirements = [
     'blinker>=1.4',
+    'click>=7.1.2',
     'cryptography>=3.4.7',
     'GitPython>=3.1.14',
     'h5py>=2.7.0',
