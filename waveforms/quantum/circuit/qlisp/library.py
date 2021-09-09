@@ -46,6 +46,7 @@ def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
 
 def opaque(name: str,
            type: str = 'default',
+           params: Optional[dict] = None,
            scope: dict[str, dict[str, Callable]] = None):
     def decorator(func: Callable[..., None], name: str = name):
         sig = signature(func)
@@ -58,7 +59,7 @@ def opaque(name: str,
 
         if name not in scope:
             scope[name] = {}
-        scope[name][type] = wrapper
+        scope[name][type] = wrapper, params
         return wrapper
 
     return decorator
@@ -74,8 +75,11 @@ class Library():
     def gate(self, qnum: int = 1, name: Optional[str] = None):
         return gate(qnum=qnum, name=name, scope=self.gates)
 
-    def opaque(self, name: str, type: str = 'default'):
-        return opaque(name, type=type, scope=self.opaques)
+    def opaque(self,
+               name: str,
+               type: str = 'default',
+               params: Optional[dict] = None):
+        return opaque(name, type=type, params=params, scope=self.opaques)
 
     def getGate(self, name: str):
         gate = self.gates.get(name, None)
@@ -86,9 +90,12 @@ class Library():
                     break
         return gate
 
-    def getOpaque(self, name: str, type: str = 'default'):
+    def getOpaque(self,
+                  name: str,
+                  type: str = 'default',
+                  query_params: bool = False):
         if name in self.opaques:
-            opaque = self.opaques[name].get(type, None)
+            opaque, params = self.opaques[name].get(type, (None, {}))
         else:
             opaque = None
         if opaque is None and len(self.parents) > 0:
@@ -96,7 +103,10 @@ class Library():
                 opaque = lib.getOpaque(name, type)
                 if opaque is not None:
                     break
-        return opaque
+        if query_params:
+            return opaque, params
+        else:
+            return opaque
 
     def getQasmLib(self, name: str):
         incfile = self.qasmLib.get(name, None)

@@ -138,7 +138,15 @@ def crz(qubits, lambda_):
     yield ('Cnot', (c, t))
 
 
-@std.opaque('rfUnitary')
+@std.opaque('rfUnitary',
+            params={
+                'shape': (str, 'cosPulse'),
+                'amp': (list, [[0, 1], [0, 0.653]]),
+                'duration': (list, [[0, 1], [10e-9, 10e-9]]),
+                'phase': (list, [[-1, 1], [-1, 1]]),
+                'frequency': (float, 5e9),
+                'DRAGScaling': (float, 1e-10)
+            })
 def rfUnitary(ctx, qubits, theta, phi):
     import numpy as np
 
@@ -205,7 +213,16 @@ def barrier(ctx, qubits):
         ctx.time[qubit] = time
 
 
-@std.opaque('Measure')
+@std.opaque('Measure',
+            params={
+                'duration': (float, 1e-6),
+                'amp': (float, 0.1),
+                'frequency': (float, 6.5e9),
+                'signal': (str, 'state'),
+                'weight': (str, 'const(1)'),
+                'phi': (float, 0),
+                'threshold': (float, 0),
+            })
 def measure(ctx, qubits, cbit=None):
     import numpy as np
     from waveforms import exp, step
@@ -308,7 +325,13 @@ def parametric(ctx, qubits):
     ctx.phases[qubits[1]] += ctx.params['phi2']
 
 
-@std.opaque('CZ')
+@std.opaque('CZ',
+            params={
+                'duration': (float, 50e-9),
+                'amp': (float, 0.8),
+                'phi1': (float, 0),
+                'phi2': (float, 0),
+            })
 def CZ(ctx, qubits):
     t = max(ctx.time[q] for q in qubits)
 
@@ -326,11 +349,29 @@ def CZ(ctx, qubits):
     ctx.phases[qubits[1]] += ctx.params['phi2']
 
 
-@std.opaque('CZ', type='parametric')
+@std.opaque('CZ',
+            type='parametric',
+            params={
+                'duration': (float, 50e-9),
+                'amp': (float, 0.3),
+                'offset': (float, -0.2),
+                'frequency': (float, 123e6),
+                'phi1': (float, 0),
+                'phi2': (float, 0)
+            })
 def CZ(ctx, qubits):
     parametric(ctx, qubits)
 
 
-@std.opaque('iSWAP', type='parametric')
+@std.opaque('iSWAP',
+            type='parametric',
+            params={
+                'duration': (float, 50e-9),
+                'amp': (float, 0.3),
+                'offset': (float, -0.2),
+                'frequency': (float, 123e6),
+                'phi1': (float, 0),
+                'phi2': (float, 0)
+            })
 def iSWAP(ctx, qubits):
     parametric(ctx, qubits)
