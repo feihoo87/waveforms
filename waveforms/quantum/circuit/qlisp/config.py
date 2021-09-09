@@ -113,7 +113,7 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             return GateConfig(name, qubits)
         params = gate['params']
         type = gate.get('type', 'default')
-        return GateConfig(name, qubits, type, params)
+        return GateConfig(name, gate['qubits'], type, params)
 
     def _getAllQubitLabels(self) -> list[str]:
         return sorted(self['chip']['qubits'].keys(), key=lambda s: int(s[1:]))
@@ -288,20 +288,28 @@ class Config(BaseConfig, CompileConfigMixin):
         if name not in self['gates']:
             raise KeyError(f'"{name}" gate not defined.')
         if name == 'rfUnitary':
-            return self.getObject(f"gates.{name}.{','.join(qubits)}",
-                                  cls='rfUnitary')
+            ret = self.getObject(f"gates.{name}.{','.join(qubits)}",
+                                 cls='rfUnitary')
+            ret['qubits'] = tuple(qubits)
+            return ret
         elif name == 'Measure':
-            return self.getObject(f"gates.{name}.{','.join(qubits)}",
-                                  cls='Measure')
+            ret = self.getObject(f"gates.{name}.{','.join(qubits)}",
+                                 cls='Measure')
+            ret['qubits'] = tuple(qubits)
+            return ret
         if ('__order_senstive__' in self['gates'][name]
                 and self['gates'][name]['__order_senstive__']):
-            return self.getObject(f"gates.{name}.{','.join(qubits)}",
-                                  cls='Gate')
+            ret = self.getObject(f"gates.{name}.{','.join(qubits)}",
+                                 cls='Gate')
+            ret['qubits'] = tuple(qubits)
+            return ret
         else:
             for qlist in permutations(qubits):
                 try:
-                    return self.getObject(f"gates.{name}.{','.join(qlist)}",
-                                          cls='Gate')
+                    ret = self.getObject(f"gates.{name}.{','.join(qlist)}",
+                                         cls='Gate')
+                    ret['qubits'] = tuple(qlist)
+                    return ret
                 except:
                     pass
             else:

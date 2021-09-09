@@ -490,6 +490,7 @@ class QuarkLocalConfig(ConfigProxy, CompileConfigMixin):
             qubits = '_'.join(qubits)
             ret = self.query(f"gate.{name}.{qubits}")
             if isinstance(ret, dict):
+                ret['qubits'] = tuple(qubits)
                 return ret
             else:
                 raise Exception(f"gate {name} of {qubits} not calibrated.")
@@ -498,6 +499,7 @@ class QuarkLocalConfig(ConfigProxy, CompileConfigMixin):
                 try:
                     ret = self.query(f"gate.{name}.{'_'.join(qlist)}")
                     if isinstance(ret, dict):
+                        ret['qubits'] = tuple(qlist)
                         return ret
                 except:
                     break

@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from numpy import mod, pi
-from waveforms.waveform import cos, cosPulse, gaussian, mixing, square, zero
+from waveforms.waveform import (cos, cosPulse, gaussian, mixing, sin, square,
+                                zero)
 from waveforms.waveform_parser import wave_eval
 
 from .library import Library
@@ -285,3 +286,51 @@ def Pulse(ctx, qubits, channel, waveform):
 @std.opaque('setBias')
 def setBias(ctx, qubits, channel, bias):
     ctx.biases[(channel, *qubits)] = bias
+
+
+def parametric(ctx, qubits):
+    t = max(ctx.time[q] for q in qubits)
+
+    duration = ctx.params['duration']
+    amp = ctx.params['amp']
+    offset = ctx.params['offset']
+    frequency = ctx.params['frequency']
+
+    if duration > 0:
+        pulse = square(duration) >> duration / 2
+        pulse = offset * pulse + amp * pulse * sin(2 * pi * frequency)
+        ctx.channel[('coupler.Z', *qubits)] += pulse >> t
+
+    for qubit in qubits:
+        ctx.time[qubit] = t + duration
+
+    ctx.phases[qubits[0]] += ctx.params['phi1']
+    ctx.phases[qubits[1]] += ctx.params['phi2']
+
+
+@std.opaque('CZ')
+def CZ(ctx, qubits):
+    t = max(ctx.time[q] for q in qubits)
+
+    duration = ctx.params['duration']
+    amp = ctx.params['amp']
+
+    if amp > 0 and duration > 0:
+        pulse = amp * (cos(pi / duration) * square(duration)) >> duration / 2
+        ctx.channel[('coupler.Z', *qubits)] += pulse >> t
+
+    for qubit in qubits:
+        ctx.time[qubit] = t + duration
+
+    ctx.phases[qubits[0]] += ctx.params['phi1']
+    ctx.phases[qubits[1]] += ctx.params['phi2']
+
+
+@std.opaque('CZ', type='parametric')
+def CZ(ctx, qubits):
+    parametric(ctx, qubits)
+
+
+@std.opaque('iSWAP', type='parametric')
+def iSWAP(ctx, qubits):
+    parametric(ctx, qubits)

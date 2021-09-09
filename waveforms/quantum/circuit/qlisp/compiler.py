@@ -42,7 +42,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
     sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
 
-    func(sub_ctx, qubits, *args)
+    func(sub_ctx, gatecfg.qubits, *args)
 
     for channel, bias in sub_ctx.biases.items():
         if ctx.biases[channel] != bias:
