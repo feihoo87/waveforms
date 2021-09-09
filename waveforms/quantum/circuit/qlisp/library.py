@@ -79,6 +79,8 @@ class Library():
                name: str,
                type: str = 'default',
                params: Optional[dict] = None):
+        if params is None:
+            params = {}
         return opaque(name, type=type, params=params, scope=self.opaques)
 
     def getGate(self, name: str):
@@ -90,23 +92,17 @@ class Library():
                     break
         return gate
 
-    def getOpaque(self,
-                  name: str,
-                  type: str = 'default',
-                  query_params: bool = False):
+    def getOpaque(self, name: str, type: str = 'default'):
         if name in self.opaques:
             opaque, params = self.opaques[name].get(type, (None, {}))
         else:
-            opaque = None
+            opaque, params = None, {}
         if opaque is None and len(self.parents) > 0:
             for lib in self.parents:
-                opaque = lib.getOpaque(name, type)
+                opaque, params = lib.getOpaque(name, type)
                 if opaque is not None:
                     break
-        if query_params:
-            return opaque, params
-        else:
-            return opaque
+        return opaque, params
 
     def getQasmLib(self, name: str):
         incfile = self.qasmLib.get(name, None)

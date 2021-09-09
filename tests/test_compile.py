@@ -58,14 +58,17 @@ def lib():
 
     lib = libraries(stdlib)
 
-    @lib.opaque('CZ')
+    @lib.opaque('CZ',
+                params={
+                    'duration': (float, 50e-9),
+                    'amp': (float, 0.8)
+                })
     def CZ(ctx, qubits):
         control, target = qubits
         from waveforms.waveform import cos, square
 
-        gate = ctx.cfg.getGate('CZ', control, target)
-        duration = gate.params.duration
-        amp = gate.params.amp
+        duration = ctx.params['duration']
+        amp = ctx.params['amp']
         t = max(ctx.time[control], ctx.time[target])
 
         if amp > 0 and duration > 0:
@@ -73,17 +76,22 @@ def lib():
             ctx.channel['coupler.Z', control, target] += amp * pulse >> t
         ctx.time[control] = ctx.time[target] = t + duration
 
-    @lib.opaque('iSWAP')
+    @lib.opaque('iSWAP',
+                params={
+                    'duration': (float, 50e-9),
+                    'amp': (float, 0.8),
+                    'offset': (float, 0),
+                    'frequency': (float, 10e6),
+                })
     def iSWAP(ctx, qubits):
         from waveforms.waveform import sin, square
 
         control, target = qubits
 
-        gate = ctx.cfg.getGate('iSWAP', control, target)
-        duration = gate.params.duration
-        amp = gate.params.amp
-        offset = gate.params.offset
-        frequency = gate.params.frequency
+        duration = ctx.params['duration']
+        amp = ctx.params['amp']
+        offset = ctx.params['offset']
+        frequency = ctx.params['frequency']
 
         t = max(ctx.time[control], ctx.time[target])
         if duration > 0:
