@@ -5,7 +5,7 @@ import time
 import warnings
 from typing import Any, NamedTuple
 
-from waveforms.namespace import _NOTSET
+from waveforms.namespace import NOTSET
 from waveforms.quantum.circuit.qlisp.arch import get_arch
 from waveforms.sched.base import COMMAND, READ, SYNC, TRIG, WRITE, Executor
 from waveforms.waveform_parser import wave_eval
@@ -146,7 +146,7 @@ class QuarkExecutor(Executor):
             if _is_feedable(cmd):
                 if isinstance(cmd, WRITE):
                     if not (isinstance(cmd.value, tuple)
-                            and isinstance(cmd.value[0], _NOTSET)):
+                            and cmd.value[0] is NOTSET):
                         writes[cmd.address] = (type(cmd).__name__, cmd.value)
                 elif isinstance(cmd, SYNC):
                     commands.extend(list(writes.items()))
