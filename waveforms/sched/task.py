@@ -383,6 +383,10 @@ class UserInput(App):
         self.keys = keys
         self.no_record = True
 
+    @property
+    def name(self):
+        return 'UserInput'
+
     def check(self):
         # never pass
         return -1
@@ -418,6 +422,10 @@ class RunCircuits(App):
         self.custom_cfg = cfg
         self.cmds = cmds
         self.settings = settings
+
+    @property
+    def name(self):
+        return 'RunCircuits'
 
     def scan_range(self):
         ret = {'iters': {'circuit': self.circuits}}
