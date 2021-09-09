@@ -29,27 +29,24 @@ def foldDict(d: dict[str, Any]) -> dict[str, Any]:
     return ret
 
 
-def singleton(cls):
-    _instance = {}
+class Singleton(type):
+    _instances = {}
 
-    def inner():
-        if cls not in _instance:
-            _instance[cls] = cls()
-        return _instance[cls]
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton,
+                                        cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
 
-    return inner
 
-
-@singleton
-class _NOTSET():
+class _NOTSET(metaclass=Singleton):
     __slots__ = ()
 
     def __repr__(self):
         return 'N/A'
 
 
-@singleton
-class _UNKNOW():
+class _UNKNOW(metaclass=Singleton):
     __slots__ = ()
 
     def __repr__(self) -> str:
@@ -60,7 +57,6 @@ NOTSET = _NOTSET()
 UNKNOW = _UNKNOW()
 
 
-@singleton
 class Delete():
     __slots__ = ()
 
