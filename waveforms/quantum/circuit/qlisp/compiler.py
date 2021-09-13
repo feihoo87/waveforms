@@ -31,11 +31,11 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
 
-    func, params_type = lib.getOpaque(name, gatecfg.type)
+    func, params_declaration = lib.getOpaque(name, gatecfg.type)
     if func is None:
         raise KeyError('Undefined {gatecfg.type} type of {name} opaque.')
-    for k, v in params_type.items():
-        if k not in gatecfg.params:
+    for p in params_declaration:
+        if p.name not in gatecfg.params:
             pass
             # raise ValueError(
             #     f'{name} (type={gatecfg.type}) opaque of {qubits} missing parameter {k}.'

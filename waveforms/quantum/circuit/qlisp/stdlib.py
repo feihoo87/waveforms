@@ -5,7 +5,7 @@ from waveforms.waveform import (cos, cosPulse, gaussian, mixing, sin, square,
                                 zero)
 from waveforms.waveform_parser import wave_eval
 
-from .library import Library
+from .library import Library, Parameter
 from .qlisp import MeasurementTask
 
 std = Library()
@@ -138,15 +138,76 @@ def crz(qubits, lambda_):
     yield ('Cnot', (c, t))
 
 
+@std.opaque('Delay')
+def delay(ctx, qubits, time):
+    qubit, = qubits
+    ctx.time[qubit] += time
+
+
+@std.opaque('P')
+def P(ctx, qubits, phi):
+    from .compiler import call_opaque
+
+    phi += ctx.phases[qubits[0]]
+    ctx.phases[qubits[0]] = 0
+
+    call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
+    call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, -pi / 2), *qubits), ctx, std)
+
+
+@std.opaque('Barrier')
+def barrier(ctx, qubits):
+    time = max(ctx.time[qubit] for qubit in qubits)
+    for qubit in qubits:
+        ctx.time[qubit] = time
+
+
+@std.opaque('rfPulse')
+def rfPulse(ctx, qubits, waveform):
+    qubit, = qubits
+
+    if isinstance(waveform, str):
+        waveform = wave_eval(waveform)
+
+    ctx.channel['RF', qubit] += waveform >> ctx.time[qubit]
+
+
+@std.opaque('fluxPulse')
+def fluxPulse(ctx, qubits, waveform):
+    qubit, = qubits
+
+    if isinstance(waveform, str):
+        waveform = wave_eval(waveform)
+
+    ctx.channel['Z', qubit] += waveform >> ctx.time[qubit]
+
+
+@std.opaque('Pulse')
+def Pulse(ctx, qubits, channel, waveform):
+
+    if isinstance(waveform, str):
+        waveform = wave_eval(waveform)
+
+    t = max(ctx.time[qubit] for qubit in qubits)
+
+    ctx.channel[(channel, *qubits)] += waveform >> t
+
+
+@std.opaque('setBias')
+def setBias(ctx, qubits, channel, bias):
+    ctx.biases[(channel, *qubits)] = bias
+
+
 @std.opaque('rfUnitary',
-            params={
-                'shape': (str, 'cosPulse'),
-                'amp': (list, [[0, 1], [0, 0.653]]),
-                'duration': (list, [[0, 1], [10e-9, 10e-9]]),
-                'phase': (list, [[-1, 1], [-1, 1]]),
-                'frequency': (float, 5e9),
-                'DRAGScaling': (float, 1e-10)
-            })
+            params=[
+                Parameter('shape', str, 'cosPulse'),
+                Parameter('amp', list, [[0, 1], [0, 0.653]]),
+                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
+                Parameter('phase', list, [[-1, 1], [-1, 1]]),
+                Parameter('frequency', float, 5e9, 'Hz'),
+                Parameter('DRAGScaling', float, 1e-10, 'a.u.')
+            ])
 def rfUnitary(ctx, qubits, theta, phi):
     import numpy as np
 
@@ -188,41 +249,16 @@ def rfUnitary(ctx, qubits, theta, phi):
     ctx.time[qubit] += duration
 
 
-@std.opaque('Delay')
-def delay(ctx, qubits, time):
-    qubit, = qubits
-    ctx.time[qubit] += time
-
-
-@std.opaque('P')
-def P(ctx, qubits, phi):
-    from .compiler import call_opaque
-
-    phi += ctx.phases[qubits[0]]
-    ctx.phases[qubits[0]] = 0
-
-    call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
-    call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
-    call_opaque((('rfUnitary', pi / 2, -pi / 2), *qubits), ctx, std)
-
-
-@std.opaque('Barrier')
-def barrier(ctx, qubits):
-    time = max(ctx.time[qubit] for qubit in qubits)
-    for qubit in qubits:
-        ctx.time[qubit] = time
-
-
 @std.opaque('Measure',
-            params={
-                'duration': (float, 1e-6),
-                'amp': (float, 0.1),
-                'frequency': (float, 6.5e9),
-                'signal': (str, 'state'),
-                'weight': (str, 'const(1)'),
-                'phi': (float, 0),
-                'threshold': (float, 0),
-            })
+            params=[
+                Parameter('duration', float, 1e-6, 's'),
+                Parameter('amp', float, 0.1, 'a.u.'),
+                Parameter('frequency', float, 6.5e9, 'Hz'),
+                Parameter('signal', str, 'state'),
+                Parameter('weight', str, 'const(1)'),
+                Parameter('phi', float, 0),
+                Parameter('threshold', float, 0)
+            ])
 def measure(ctx, qubits, cbit=None):
     import numpy as np
     from waveforms import exp, step
@@ -269,42 +305,6 @@ def measure(ctx, qubits, cbit=None):
     ctx.phases[qubit] = 0
 
 
-@std.opaque('rfPulse')
-def rfPulse(ctx, qubits, waveform):
-    qubit, = qubits
-
-    if isinstance(waveform, str):
-        waveform = wave_eval(waveform)
-
-    ctx.channel['RF', qubit] += waveform >> ctx.time[qubit]
-
-
-@std.opaque('fluxPulse')
-def fluxPulse(ctx, qubits, waveform):
-    qubit, = qubits
-
-    if isinstance(waveform, str):
-        waveform = wave_eval(waveform)
-
-    ctx.channel['Z', qubit] += waveform >> ctx.time[qubit]
-
-
-@std.opaque('Pulse')
-def Pulse(ctx, qubits, channel, waveform):
-
-    if isinstance(waveform, str):
-        waveform = wave_eval(waveform)
-
-    t = max(ctx.time[qubit] for qubit in qubits)
-
-    ctx.channel[(channel, *qubits)] += waveform >> t
-
-
-@std.opaque('setBias')
-def setBias(ctx, qubits, channel, bias):
-    ctx.biases[(channel, *qubits)] = bias
-
-
 def parametric(ctx, qubits):
     t = max(ctx.time[q] for q in qubits)
 
@@ -326,12 +326,12 @@ def parametric(ctx, qubits):
 
 
 @std.opaque('CZ',
-            params={
-                'duration': (float, 50e-9),
-                'amp': (float, 0.8),
-                'phi1': (float, 0),
-                'phi2': (float, 0),
-            })
+            params=[
+                Parameter('duration', float, 50e-9, 's'),
+                Parameter('amp', float, 0.8, 'a.u.'),
+                Parameter('phi1', float, 0),
+                Parameter('phi2', float, 0)
+            ])
 def CZ(ctx, qubits):
     t = max(ctx.time[q] for q in qubits)
 
@@ -351,14 +351,14 @@ def CZ(ctx, qubits):
 
 @std.opaque('CZ',
             type='parametric',
-            params={
-                'duration': (float, 50e-9),
-                'amp': (float, 0.3),
-                'offset': (float, -0.2),
-                'frequency': (float, 123e6),
-                'phi1': (float, 0),
-                'phi2': (float, 0)
-            })
+            params=[
+                Parameter('duration', float, 50e-9, 's'),
+                Parameter('amp', float, 0.8, 'a.u.'),
+                Parameter('offset', float, 0, 'a.u.'),
+                Parameter('frequency', float, 0, 'Hz'),
+                Parameter('phi1', float, 0),
+                Parameter('phi2', float, 0)
+            ])
 def CZ(ctx, qubits):
     parametric(ctx, qubits)
 
@@ -366,12 +366,12 @@ def CZ(ctx, qubits):
 @std.opaque('iSWAP',
             type='parametric',
             params={
-                'duration': (float, 50e-9),
-                'amp': (float, 0.3),
-                'offset': (float, -0.2),
-                'frequency': (float, 123e6),
-                'phi1': (float, 0),
-                'phi2': (float, 0)
+                Parameter('duration', float, 50e-9, 's'),
+                Parameter('amp', float, 0.8, 'a.u.'),
+                Parameter('offset', float, 0, 'a.u.'),
+                Parameter('frequency', float, 0, 'Hz'),
+                Parameter('phi1', float, 0),
+                Parameter('phi2', float, 0)
             })
 def iSWAP(ctx, qubits):
     parametric(ctx, qubits)

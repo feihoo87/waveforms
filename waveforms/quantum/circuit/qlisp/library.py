@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from functools import wraps
 from inspect import signature
-from typing import Callable, Iterable, Optional, Union
+from typing import Callable, Iterable, NamedTuple, Optional, Union
 
 from .qlisp import Context
+
+_NODEFAULT = object()
+
+
+class Parameter(NamedTuple):
+    name: str
+    type: type
+    default: Union[int, float, str, None] = _NODEFAULT
+    unit: str = ''
+    doc: str = ''
 
 
 def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
@@ -46,8 +56,11 @@ def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
 
 def opaque(name: str,
            type: str = 'default',
-           params: Optional[dict] = None,
+           params: Optional[list] = None,
            scope: dict[str, dict[str, Callable]] = None):
+
+    params = [p if isinstance(p, Parameter) else Parameter(*p) for p in params]
+
     def decorator(func: Callable[..., None], name: str = name):
         sig = signature(func)
 

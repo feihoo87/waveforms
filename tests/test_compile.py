@@ -1,6 +1,6 @@
 import pytest
 from waveforms.quantum import compile, libraries, stdlib
-from waveforms.quantum.circuit.qlisp.library import Library
+from waveforms.quantum.circuit.qlisp.library import Library, Parameter
 from waveforms.quantum.circuit.qlisp.qlisp import QLispCode
 
 from config import config
@@ -59,10 +59,10 @@ def lib():
     lib = libraries(stdlib)
 
     @lib.opaque('CZ',
-                params={
-                    'duration': (float, 50e-9),
-                    'amp': (float, 0.8)
-                })
+                params=[
+                    Parameter('duration', float, 50e-9, 's'),
+                    Parameter('amp', float, 0.8, 'a.u.')
+                ])
     def CZ(ctx, qubits):
         control, target = qubits
         from waveforms.waveform import cos, square
@@ -77,12 +77,10 @@ def lib():
         ctx.time[control] = ctx.time[target] = t + duration
 
     @lib.opaque('iSWAP',
-                params={
-                    'duration': (float, 50e-9),
-                    'amp': (float, 0.8),
-                    'offset': (float, 0),
-                    'frequency': (float, 10e6),
-                })
+                params=[('duration', float, 50e-9, 's'),
+                        ('amp', float, 0.8, 'a.u.'),
+                        ('offset', float, 0, 'a.u.'),
+                        ('frequency', float, 10e6, 'Hz')])
     def iSWAP(ctx, qubits):
         from waveforms.waveform import sin, square
 
