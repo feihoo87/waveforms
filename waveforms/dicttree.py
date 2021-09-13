@@ -1,4 +1,5 @@
 import copy
+import sys
 from typing import Any, Generator
 
 
@@ -57,7 +58,7 @@ NOTSET = _NOTSET()
 UNKNOW = _UNKNOW()
 
 
-class Delete():
+class Delete(metaclass=Singleton):
     __slots__ = ()
 
     def __repr__(self):
@@ -77,6 +78,9 @@ class Update():
     def __repr__(self):
         return f"Update: {self.o!r} ==> {self.n!r}"
 
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o, Update) and self.n == o.n
+
 
 class Create():
     __slots__ = ('n', 'delete')
@@ -90,6 +94,10 @@ class Create():
             return f"Delete and Create: {self.n!r}"
         else:
             return f"Create: {self.n!r}"
+
+    def __eq__(self, o: object) -> bool:
+        return isinstance(o,
+                          Create) and self.n == o.n and self.delete == o.delete
 
 
 def diff(d1: dict, d2: dict) -> dict:
@@ -129,17 +137,23 @@ def patch(source, diff, in_place=False):
             elif v is DELETE:
                 del ret[k]
             else:
-                raise Exception(f"Unsupported patch: {v!r}")
+                raise ValueError(f"Unsupported patch: {v!r}")
     return ret
 
 
-def merge(diff1, diff2):
+def merge(diff1, diff2, origin=None):
+    if origin is not None:
+        updated = patch(patch(origin, diff1), diff2)
+        return diff(origin, updated)
+
     ret = {}
     for k, v in diff1.items():
         if k in diff2:
             v2 = diff2[k]
-            if isinstance(v, dict):
-                ret[k] = merge(v, v2)
+            if isinstance(v, dict) and isinstance(v2, dict):
+                d = merge(v, v2)
+                if d:
+                    ret[k] = d
             else:
                 if isinstance(v, Update) and isinstance(v2, Update):
                     ret[k] = Update(v.o, v2.n)
@@ -156,8 +170,10 @@ def merge(diff1, diff2):
                         ret[k] = Create(v2.n, delete=True)
                     else:
                         ret[k] = Update(UNKNOW, v2.n)
+                elif isinstance(v2, Create) and v2.delete:
+                    ret[k] = v2
                 else:
-                    raise Exception(f"Unsupported merge: {v!r} {v2!r}")
+                    raise ValueError(f"Unsupported merge: {v!r} {v2!r}")
         else:
             ret[k] = v
     for k, v in diff2.items():
@@ -166,11 +182,11 @@ def merge(diff1, diff2):
     return ret
 
 
-def print_diff(d, lim=None, offset=0):
+def print_diff(d, lim=None, offset=0, file=sys.stdout):
     count = 0
     for i, (k, v) in enumerate(flattenDictIter(d)):
         if i >= offset:
-            print(f"{k:40}", v)
+            print(f"{k:40}", v, file=file)
             count += 1
             if lim is not None and count >= lim:
                 break
