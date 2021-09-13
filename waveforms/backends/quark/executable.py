@@ -164,11 +164,15 @@ class QuarkExecutor(Executor):
         if len(commands) == 0:
             return False
 
+        cmds = {'WRITE': [], 'TRIG': [], 'READ': []}
+
+        for address, (cmd, value) in commands:
+            cmds[cmd].append((cmd, address, value, ''))
+
         priority = 0
-        self.conn.feed(priority, task_id, task_step, commands, extra=extra)
+        self.conn.feed(priority, task_id, task_step, cmds, extra=extra)
         self.log.debug(
-            f'feed({priority}, {task_id}, {task_step}, {commands}, extra={extra})'
-        )
+            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})')
         return True
 
     def free(self, task_id: int) -> None:
@@ -204,7 +208,10 @@ class QuarkExecutor(Executor):
         self.log.debug(f'fetch({task_id}, {skip})')
         if isinstance(ret, str) and ret.startswith('No data found'):
             return []
-        return [d['READ'] for d in ret]
+        result = [d['READ'] for d in ret[:-1]]
+        if 'READ' in ret[-1]:
+            result.append(ret[-1]['READ'])
+        return result
 
     def update(self, key: str, value: Any, cache: bool = False) -> None:
         """update key to value
