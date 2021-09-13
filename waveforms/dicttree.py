@@ -114,7 +114,7 @@ def patch(source, diff, in_place=False):
     if in_place:
         ret = source
     else:
-        ret = copy.deepcopy(source)
+        ret = copy.copy(source)
     for k, v in diff.items():
         if isinstance(v, dict):
             ret[k] = patch(source[k], v, in_place=in_place)
