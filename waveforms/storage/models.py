@@ -138,14 +138,14 @@ class User(Base):
         return f"User(name='{self.name}')"
 
 
-class ParamenterEdge(Base):
+class ParameterEdge(Base):
     __tablename__ = 'parameter_edges'
     parent_id = Column(ForeignKey('parameters.id'), primary_key=True)
     child_id = Column(ForeignKey('parameters.id'), primary_key=True)
     key = Column(String(50), primary_key=True)
 
 
-class Paramenter(Base):
+class Parameter(Base):
     __tablename__ = 'parameters'
 
     id = Column(Integer, primary_key=True)
@@ -157,11 +157,11 @@ class Paramenter(Base):
     string = Column(String)
     buff = Column(LargeBinary)
 
-    children = relationship("ParamenterEdge",
-                            foreign_keys=[ParamenterEdge.parent_id],
+    children = relationship("ParameterEdge",
+                            foreign_keys=[ParameterEdge.parent_id],
                             backref="parent")
-    parents = relationship("ParamenterEdge",
-                           foreign_keys=[ParamenterEdge.child_id],
+    parents = relationship("ParameterEdge",
+                           foreign_keys=[ParameterEdge.child_id],
                            backref="child")
 
     @property
@@ -246,7 +246,7 @@ class Snapshot(Base):
     followers = relationship("Snapshot",
                              backref=backref('previous', remote_side=[id]))
 
-    root = relationship('Paramenter')
+    root = relationship('Parameter')
     tags = relationship('Tag',
                         secondary=snapshot_tags,
                         back_populates='snapshots')
@@ -261,11 +261,11 @@ class ReportParameters(Base):
     child_id = Column(ForeignKey('parameters.id'), primary_key=True)
     key = Column(String(50), primary_key=True)
 
-    paramenter = relationship('Paramenter')
+    parameter = relationship('Parameter')
 
     @property
     def value(self):
-        return self.paramenter.value
+        return self.parameter.value
 
 
 class Tag(Base):
@@ -563,13 +563,13 @@ class Report(Base):
         for key, value in kwds.items():
             for p in self._parameters:
                 if p.key == key:
-                    p.paramenter.value = value
+                    p.parameter.value = value
                     break
             else:
-                p = Paramenter()
+                p = Parameter()
                 p.value = value
                 rp = ReportParameters(key=key)
-                rp.paramenter = p
+                rp.parameter = p
                 self._parameters.append(rp)
 
 
