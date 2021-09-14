@@ -5,6 +5,8 @@ import random
 from math import ceil, floor, inf, isqrt, log
 from typing import Generator, Iterator, List, Optional, Set, Union
 
+SIEVE_LIMIT = 50000
+
 
 def __sieve(lst: List[int], p_lst: List[int]) -> None:
     """Sieve of Eratosthenes"""
@@ -19,7 +21,7 @@ def __sieve(lst: List[int], p_lst: List[int]) -> None:
 
 __least_primes: List[int] = [2]
 
-__sieve(iter(range(3, 50000, 2)), __least_primes)
+__sieve(iter(range(3, SIEVE_LIMIT, 2)), __least_primes)
 
 __primes_set: Set[int] = set(__least_primes)
 
@@ -75,11 +77,9 @@ def millerRabinTest(q: int) -> bool:
 
 
 def is_prime(q: int) -> bool:
-    if q < 2:
-        return False
     if q in __primes_set:
         return True
-    if q % 2 == 0 or q % 3 == 0:
+    if q <= SIEVE_LIMIT or q % 2 == 0 or q % 3 == 0:
         return False
     if millerRabinTest(q):
         __primes_set.add(q)
