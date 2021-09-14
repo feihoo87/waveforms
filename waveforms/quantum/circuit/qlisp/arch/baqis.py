@@ -3,7 +3,7 @@ import random
 from dataclasses import dataclass, field
 
 import numpy as np
-from waveforms.baseconfig import _flattenDictIter
+from waveforms.dicttree import flattenDictIter
 from waveforms.math import getFTMatrix
 from waveforms.math.fit import classifyData, count_to_diag, countState
 from waveforms.math.signal import shift
@@ -68,9 +68,10 @@ def _get_w_and_data_maps(AD_tasks: dict[str, ADTask]):
             ad_task.fList.append(Delta)
             params = copy.copy(task.params)
             params['w'] = None
-            dataMap['cbits'][task.cbit] = (channel, len(ad_task.fList) - 1,
-                                           Delta, params, task.time,
-                                           ad_task.start, ad_task.stop)
+            dataMap['cbits'][task.cbit] = ('READ.' + channel,
+                                           len(ad_task.fList) - 1, Delta,
+                                           params, task.time, ad_task.start,
+                                           ad_task.stop)
             if task.params['w'] is not None:
                 w = np.zeros(numberOfPoints, dtype=complex)
                 w[:len(task.params['w'])] = task.params['w']
@@ -180,7 +181,7 @@ def assembly_data(raw_data: RawData, dataMap: DataMap) -> Result:
         return raw_data
 
     result = {}
-    raw_data = {k: v[0] + 1j * v[1] for k, v in _flattenDictIter(raw_data)}
+    raw_data = {k: v[0] + 1j * v[1] for k, v in flattenDictIter(raw_data)}
     if 'cbits' in dataMap:
         data, gate_params_list = _sort_cbits(raw_data, dataMap['cbits'])
         classify = _get_classify_func(gate_params_list[0].get(

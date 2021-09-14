@@ -170,10 +170,13 @@ class QuarkExecutor(Executor):
             cmds[cmd].append((cmd, address, value, ''))
 
         priority = 0
-        self.conn.feed(priority, task_id, task_step, cmds, extra=extra)
+        self.conn.feed(priority, task_id, task_step, cmds, extra=extra, eof=-2)
         self.log.debug(
-            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})')
+            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})', eof=-2)
         return True
+
+    def busy(self):
+        return self.conn.status()
 
     def free(self, task_id: int) -> None:
         """release resources of task

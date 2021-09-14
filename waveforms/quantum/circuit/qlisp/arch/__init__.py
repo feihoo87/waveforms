@@ -1,6 +1,7 @@
 """Multiple architecture support"""
 from .baqis import baqisArchitecture
-from .base import COMMAND, FREE, PUSH, READ, SYNC, TRIG, WRITE, Architecture
+from .base import (COMMAND, FREE, PUSH, READ, SYNC, TRIG, WRITE, Architecture,
+                   general_architecture)
 
 __regested_architectures = {}
 
@@ -13,4 +14,5 @@ def register_arch(arch: Architecture):
     __regested_architectures[arch.name] = arch
 
 
+register_arch(general_architecture)
 register_arch(baqisArchitecture)

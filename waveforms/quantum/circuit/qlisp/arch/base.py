@@ -71,3 +71,16 @@ class Architecture(NamedTuple):
     description: str
     assembly_code: Callable[[QLispCode], tuple[CommandList, DataMap]]
     assembly_data: Callable[[RawData, DataMap], Result]
+
+
+general_architecture = Architecture(
+    name='general',
+    description='General architecture',
+    assembly_code=lambda code: (
+        [],
+        {
+            'arch': 'general'
+        },
+    ),
+    assembly_data=lambda data, _: data.get('READ', {}),
+)

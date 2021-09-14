@@ -140,6 +140,8 @@ def submit_thread(task: Task, executor: Executor):
 
 def submit(task: Task, current_stack: list[Task],
            running_pool: dict[int, Task], executor: Executor):
+    while executor.busy():
+        time.sleep(1)
     with task.runtime._status_lock:
         task.runtime.status = 'submiting'
     if task.runtime.prog.with_feedback:
