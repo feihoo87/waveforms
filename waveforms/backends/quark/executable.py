@@ -194,7 +194,7 @@ class QuarkExecutor(Executor):
         self.conn.submit(task_info)
         self.log.debug(f'submit({task_info})')
 
-    def fetch(self, task_id: int, skip: int = 0) -> list:
+    def fetch(self, task_id: int, skip: int = 0, extract='READ') -> list:
         """get results of task
 
         Args:
@@ -208,9 +208,9 @@ class QuarkExecutor(Executor):
         self.log.debug(f'fetch({task_id}, {skip})')
         if isinstance(ret, str) and ret.startswith('No data found'):
             return []
-        result = [d['READ'] for d in ret[:-1]]
-        if 'READ' in ret[-1]:
-            result.append(ret[-1]['READ'])
+        result = [d[extract] for d in ret[:-1]]
+        if extract in ret[-1]:
+            result.append(ret[-1][extract])
         return result
 
     def update(self, key: str, value: Any, cache: bool = False) -> None:
