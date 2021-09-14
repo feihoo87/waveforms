@@ -1,5 +1,7 @@
 from typing import Any, Callable, NamedTuple
 
+from waveforms.dicttree import flattenDict
+
 from ..qlisp import MeasurementTask, QLispCode
 
 
@@ -82,5 +84,5 @@ general_architecture = Architecture(
             'arch': 'general'
         },
     ),
-    assembly_data=lambda data, _: data.get('READ', {}),
+    assembly_data=lambda data, _: flattenDict(data),
 )
