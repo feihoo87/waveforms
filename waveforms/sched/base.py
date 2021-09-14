@@ -16,7 +16,7 @@ from typing import (Any, Generator, Iterable, Literal, NamedTuple, Optional,
 from sqlalchemy.orm.session import Session
 from waveforms.quantum.circuit.qlisp import (COMMAND, FREE, PUSH, READ, SYNC,
                                              TRIG, WRITE, Architecture,
-                                             DataMap, QLispCode)
+                                             DataMap, QLispCode, arch)
 from waveforms.storage.models import Record, Report, User
 
 
@@ -239,8 +239,11 @@ class Task(ABC):
     def cancel(self):
         pass
 
-    def __deepcopy__(self):
-        memo = {id(self.__runtime): TaskRuntime(prog=self.__runtime.prog)}
+    def __deepcopy__(self, memo):
+        memo[id(self.__runtime)] = TaskRuntime(
+            arch=self.__runtime.arch,
+            prog=self.__runtime.prog,
+            used_elements=self.__runtime.used_elements)
         ret = copy.copy(self)
         for attr, value in self.__dict__.items():
             setattr(ret, attr, copy.deepcopy(value, memo))
