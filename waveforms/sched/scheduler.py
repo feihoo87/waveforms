@@ -30,71 +30,19 @@ from .terminal import Terminal
 log = logging.getLogger(__name__)
 
 
-def _is_finished(task: Task) -> bool:
-    """Check if a task is finished."""
-    if task.kernel is None:
-        return False
-    finished_step = len(task._fetch_result()['data'])
-    return task.status not in ['submiting', 'pending', 'compiling'
-                               ] and finished_step >= task.runtime.step
-
-
-def fetch_data(task: Task, executor: Executor):
-    try:
-        while True:
-            if threading.current_thread()._kill_event.is_set():
-                with task.runtime._status_lock:
-                    task.runtime.status = 'cancelled'
-                break
-            time.sleep(1)
-
-            if _is_finished(task):
-                executor.save(task.id, task.data_path)
-                task.runtime.finished_time = time.time()
-                with task.runtime._status_lock:
-                    task.runtime.status = 'finished'
-                break
-    except:
-        with task.runtime._status_lock:
-            task.runtime.status = 'failed'
-        log.exception(f"{task.name}({task.id}) is failed")
-        executor.free(task.id)
-    finally:
-        if task.runtime.record is not None:
-            try:
-                data = task.result()
-                data['program'] = task.runtime.prog
-                task.runtime.record.data = data
-                task.db.commit()
-            except Exception as e:
-                log.error(f"Failed to save record: {e}")
-        else:
-            log.warning(f"No record for task {task.name}({task.id})")
-        log.debug(f'{task.name}({task.id}) is finished')
-
-
 def clean_side_effects(task: Task, executor: Executor):
     cmds = []
     for k, v in task.runtime.prog.side_effects.items():
         cmds.append(WRITE(k, v))
-    executor.feed(task.id, -2, cmds)
+    return executor.feed(task.id, -2, cmds, next_feed_time=30)
 
 
-def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
-                running_pool: dict[int, Task], executor: Executor):
+def submit_loop(task_queue: PriorityQueue, current_stack: list[Task]):
     while True:
         if len(current_stack) > 0:
             current_task = current_stack.pop()
-
-            if current_task.runtime.threads['submit'].is_alive():
+            if current_task.runtime.threads['run'].is_alive():
                 current_stack.append(current_task)
-            else:
-                with current_task.runtime._status_lock:
-                    if current_task.status in [
-                            'submiting', 'pending', 'compiling'
-                    ]:
-                        current_task.runtime.status = 'running'
-
         try:
             task = task_queue.get_nowait()
         except Empty:
@@ -107,41 +55,108 @@ def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
             time.sleep(1)
         elif (len(current_stack) == 0
               or task.is_children_of(current_stack[-1])):
-            submit(task, current_stack, running_pool, executor)
+            submit(task, current_stack)
         else:
             task_queue.put_nowait(task)
-
-
-def submit_thread(task: Task, executor: Executor):
-    """Submit a task."""
-    LIMIT = 10
-    i = 0
-    executor.create_task(task.id, task.meta_info)
-    while True:
-        t0 = time.time()
-        if task.runtime.threads['submit']._kill_event.is_set():
-            break
-        if (i >= task.runtime.step
-                and not task.runtime.threads['compile'].is_alive()):
-            break
-        if (i + 1 >= len(task.runtime.prog.steps)
-                and task.runtime.threads['compile'].is_alive()) or (
-                    i - len(task.runtime.result['data']) > LIMIT):
             time.sleep(0.1)
-            continue
-        data_map = copy.copy(task.runtime.prog.steps[i].data_map)
-        if data_map['signal'] in ['count', 'diag']:
-            data_map['signal'] = 'state'
-        executor.feed(task.id, i, task.runtime.prog.steps[i].cmds,
-                      {'dataMap': pickle.dumps(data_map)})
-        i += 1
-    clean_side_effects(task, executor)
 
 
-def submit(task: Task, current_stack: list[Task],
-           running_pool: dict[int, Task], executor: Executor):
-    while executor.busy():
-        time.sleep(1)
+def _feed_step(task, feed_step, executor):
+    data_map = copy.copy(task.runtime.prog.steps[feed_step].data_map)
+    if data_map['signal'] in ['count', 'diag']:
+        data_map['signal'] = 'state'
+
+    extra = {'dataMap': pickle.dumps(data_map)}
+
+    while True:
+        succeed = executor.feed(task.id,
+                                feed_step,
+                                task.runtime.prog.steps[feed_step].cmds,
+                                extra,
+                                next_feed_time=30)
+        if succeed == 0 and feed_step == 0:
+            with task.runtime._status_lock:
+                task.runtime.status = 'pending'
+            time.sleep(1)
+        elif succeed == 1:
+            with task.runtime._status_lock:
+                task.runtime.status = 'submiting'
+            break
+        else:
+            raise RuntimeError(
+                f"Failed to feed {task.name}({task.id}), Executor busy.")
+
+
+def _save_data(task):
+    if task.runtime.record is not None:
+        try:
+            data = task.result()
+            data['program'] = task.runtime.prog
+            task.runtime.record.data = data
+            task.db.commit()
+        except Exception as e:
+            log.error(f"Failed to save record: {e}")
+    else:
+        log.warning(f"No record for task {task.name}({task.id})")
+
+
+def task_run_thread(task: Task, executor: Executor):
+    LIMIT = 10
+    feed_step = 0
+    feed_more = True
+    feed_finished = False
+    side_effect_cleared = False
+
+    executor.create_task(task.id, task.meta_info)
+
+    try:
+        while True:
+            if threading.current_thread()._kill_event.is_set():
+                with task.runtime._status_lock:
+                    task.runtime.status = 'cancelled'
+                break
+            if (not feed_finished and feed_step >= task.runtime.step
+                    and not task.runtime.threads['compile'].is_alive()):
+                clean_side_effects(task, executor)
+                feed_more = False
+                feed_finished = True
+                side_effect_cleared = True
+                with task.runtime._status_lock:
+                    if task.status in ['submiting', 'pending', 'compiling']:
+                        task.runtime.status = 'running'
+            if (feed_finished or feed_step + 1 >= len(task.runtime.prog.steps)
+                    and task.runtime.threads['compile'].is_alive()) or (
+                        feed_step - len(task.runtime.result['data']) > LIMIT):
+                feed_more = False
+            else:
+                feed_more = True
+
+            if feed_more:
+                _feed_step(task, feed_step, executor)
+                feed_step += 1
+
+            finished_step = len(task._fetch_result()['data'])
+            if (feed_finished and finished_step >= task.runtime.step):
+                executor.save(task.id, task.data_path)
+                task.runtime.finished_time = time.time()
+                with task.runtime._status_lock:
+                    task.runtime.status = 'finished'
+                break
+            if not feed_more:
+                time.sleep(1)
+    except:
+        with task.runtime._status_lock:
+            task.runtime.status = 'failed'
+        log.exception(f"{task.name}({task.id}) is failed")
+        executor.free(task.id)
+    finally:
+        if not side_effect_cleared:
+            clean_side_effects(task, executor)
+        _save_data(task)
+        log.debug(f'{task.name}({task.id}) is finished')
+
+
+def submit(task: Task, current_stack: list[Task]):
     with task.runtime._status_lock:
         task.runtime.status = 'submiting'
     if task.runtime.prog.with_feedback:
@@ -149,22 +164,7 @@ def submit(task: Task, current_stack: list[Task],
 
     current_stack.append(task)
     task.runtime.started_time = time.time()
-    task.runtime.threads['submit'].start()
-
-    running_pool[task.id] = task
-    task.runtime.threads['fetch'].start()
-
-
-def waiting_loop(running_pool: dict[int, Task], debug_mode: bool = False):
-    while True:
-        for taskID, task in list(running_pool.items()):
-            if not task.runtime.threads['fetch'].is_alive():
-                try:
-                    if not debug_mode:
-                        del running_pool[taskID]
-                except:
-                    pass
-        time.sleep(0.1)
+    task.runtime.threads['run'].start()
 
 
 class Scheduler(BaseScheduler):
@@ -226,18 +226,11 @@ class Scheduler(BaseScheduler):
         set_sessionmaker(sessionmaker(bind=self.eng))
         setup_ipy_events()
 
-        self._read_data_thread = threading.Thread(target=waiting_loop,
-                                                  args=(self._waiting_pool,
-                                                        debug_mode),
+        self._main_loop_thread = threading.Thread(target=submit_loop,
+                                                  args=(self._queue,
+                                                        self._submit_stack),
                                                   daemon=True)
-        self._read_data_thread.start()
-
-        self._submit_thread = threading.Thread(
-            target=submit_loop,
-            args=(self._queue, self._submit_stack, self._waiting_pool,
-                  self.executor),
-            daemon=True)
-        self._submit_thread.start()
+        self._main_loop_thread.start()
 
     def verify_user(self, username: str, password: str) -> User:
         db = self.session()
@@ -316,7 +309,11 @@ class Scheduler(BaseScheduler):
         if not cache:
             cmds.append(WRITE(key, value))
         if len(cmds) > 0:
-            if self.executor.feed(0, -1, cmds):
+            succeed = self.executor.feed(0, -1, cmds, next_feed_time=0)
+            if succeed == 0:
+                raise RuntimeError(
+                    f'Failed to set {key} to {value}, executor busy.')
+            if succeed == 1:
                 self.executor.free(0)
         self.cfg.update(key, value, cache=cache)
 
@@ -376,7 +373,7 @@ class Scheduler(BaseScheduler):
             parameters: a dict of parameters.
         """
         for key, value in parameters.items():
-            self.update(key, value)
+            self.set(key, value)
         self.cfg.clear_buffer()
 
     def maintain(self, task: Task) -> Task:
@@ -394,18 +391,15 @@ class Scheduler(BaseScheduler):
                 raise RuntimeError(
                     f'Task({task.id}, status={task.status}) has been submited!'
                 )
-        taskID = self.generate_task_id()
-        task._set_kernel(self, taskID)
+        if task.kernel is None:
+            taskID = self.generate_task_id()
+            task._set_kernel(self, taskID)
         task.runtime.threads.update({
             'compile':
             ThreadWithKill(target=task.main, name=f"Compile-{task.id}"),
-            'submit':
-            ThreadWithKill(target=submit_thread,
-                           name=f"Submit-{task.id}",
-                           args=(task, self.executor)),
-            'fetch':
-            ThreadWithKill(target=fetch_data,
-                           name=f"Fetch-{task.id}",
+            'run':
+            ThreadWithKill(target=task_run_thread,
+                           name=f"Run-{task.id}",
                            args=(task, self.executor))
         })
         if config is not None:
@@ -454,7 +448,8 @@ class Scheduler(BaseScheduler):
             a task
         """
         task = create_task((app, args, kwds))
-        task._set_kernel(self, -1)
+        taskID = self.generate_task_id()
+        task._set_kernel(self, taskID)
         task.runtime.user = self.system_user
         return task
 

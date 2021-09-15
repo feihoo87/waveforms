@@ -129,7 +129,8 @@ class QuarkExecutor(Executor):
              task_id: int,
              task_step: int,
              cmds: list[COMMAND],
-             extra: dict = {}):
+             extra: dict = {},
+             next_feed_time: float = 5) -> None:
         """feed api of quark
 
         Args:
@@ -162,7 +163,7 @@ class QuarkExecutor(Executor):
         commands.extend(others)
 
         if len(commands) == 0:
-            return False
+            return -1
 
         cmds = {'WRITE': [], 'TRIG': [], 'READ': []}
 
@@ -170,13 +171,14 @@ class QuarkExecutor(Executor):
             cmds[cmd].append((cmd, address, value, ''))
 
         priority = 0
-        self.conn.feed(priority, task_id, task_step, cmds, extra=extra, eof=-2)
+        succeed = self.conn.feed(priority, task_id, task_step, cmds, extra=extra, timeout=next_feed_time)
         self.log.debug(
-            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})', eof=-2)
-        return True
-
-    def busy(self):
-        return self.conn.status()
+            f'feed({priority}, {task_id}, {task_step}, {cmds}, extra={extra})', timeout=next_feed_time)
+        if isinstance(succeed, str) and succeed.startswith('Busy'):
+            succeed = 0
+        else:
+            succeed = 1
+        return int(succeed)
 
     def free(self, task_id: int) -> None:
         """release resources of task
@@ -211,10 +213,10 @@ class QuarkExecutor(Executor):
         self.log.debug(f'fetch({task_id}, {skip})')
         if isinstance(ret, str) and ret.startswith('No data found'):
             return []
-        result = [d[extract] for d in ret[:-1]]
-        if extract in ret[-1]:
-            result.append(ret[-1][extract])
-        return result
+        # result = [d[extract] for d in ret[:-1]]
+        # if extract in ret[-1]:
+        #     result.append(ret[-1][extract])
+        return ret
 
     def update(self, key: str, value: Any, cache: bool = False) -> None:
         """update key to value
