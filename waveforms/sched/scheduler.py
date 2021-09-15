@@ -173,7 +173,6 @@ class Scheduler(BaseScheduler):
         self.__uuid = uuid.uuid1()
         self._task_pool = {}
         self._queue = PriorityQueue()
-        self._waiting_pool = {}
         self._submit_stack = []
         self.mutex = set()
         self.executor = None
@@ -208,7 +207,7 @@ class Scheduler(BaseScheduler):
         self.executor = executor
         if url is None:
             url = 'sqlite:///{}'.format(data_path / 'waveforms.db')
-        self.db = url
+        self.db_url = url
         self.data_path = Path(data_path)
         self.data_path.mkdir(parents=True, exist_ok=True)
         set_data_path(self.data_path)
@@ -233,22 +232,22 @@ class Scheduler(BaseScheduler):
         self._main_loop_thread.start()
 
     def verify_user(self, username: str, password: str) -> User:
-        db = self.session()
-        if username == 'BIG BROTHER' and password == self.__uuid:
-            try:
-                user = db.query(User).filter(User.name == username).one()
-            except NoResultFound:
-                user = User(name=username)
-                db.add(user)
-                db.commit()
-        else:
-            try:
-                user = db.query(User).filter(User.name == username).one()
-            except NoResultFound:
-                raise ValueError('User not found')
-            if not user.verify(password):
-                raise ValueError('Wrong password')
-        return user
+        with self.session() as db:
+            if username == 'BIG BROTHER' and password == self.__uuid:
+                try:
+                    user = db.query(User).filter(User.name == username).one()
+                except NoResultFound:
+                    user = User(name=username)
+                    db.add(user)
+                    db.commit()
+            else:
+                try:
+                    user = db.query(User).filter(User.name == username).one()
+                except NoResultFound:
+                    raise ValueError('User not found')
+                if not user.verify(password):
+                    raise ValueError('Wrong password')
+            return user
 
     def login(self, username: str, password: str) -> Terminal:
         user = self.verify_user(username, password)
