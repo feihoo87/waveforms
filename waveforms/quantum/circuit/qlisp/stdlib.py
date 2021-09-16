@@ -257,7 +257,9 @@ def rfUnitary(ctx, qubits, theta, phi):
                 Parameter('signal', str, 'state'),
                 Parameter('weight', str, 'const(1)'),
                 Parameter('phi', float, 0),
-                Parameter('threshold', float, 0)
+                Parameter('threshold', float, 0),
+                Parameter('ring_up_amp', float, 0.1, 'a.u.'),
+                Parameter('ring_up_time', float, 50e-9, 's')
             ])
 def measure(ctx, qubits, cbit=None):
     import numpy as np
@@ -276,6 +278,8 @@ def measure(ctx, qubits, cbit=None):
     duration = ctx.params['duration']
     frequency = ctx.params['frequency']
     signal = ctx.params.get('signal', 'state')
+    ring_up_amp = ctx.params.get('ring_up_amp', amp)
+    ring_up_time = ctx.params.get('ring_up_time', 50e-9)
 
     try:
         w = ctx.params['w']
@@ -289,7 +293,9 @@ def measure(ctx, qubits, cbit=None):
 
     # phi = 2 * np.pi * (lo - frequency) * t
 
-    pulse = square(duration) >> duration / 2 + t
+    pulse = (ring_up_amp * (step(0) >> t) - (ring_up_amp - amp) *
+             (step(0) >> (t + ring_up_time)) - amp * (step(0) >>
+                                                      (t + duration)))
     ctx.channel['readoutLine.RF',
                 qubit] += amp * pulse * cos(2 * pi * frequency)
 
