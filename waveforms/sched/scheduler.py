@@ -167,6 +167,13 @@ def submit(task: Task, current_stack: list[Task]):
     task.runtime.threads['run'].start()
 
 
+def _delete_weakref(ref, dct, key):
+    try:
+        dct.pop(key)
+    except:
+        pass
+
+
 class Scheduler(BaseScheduler):
     def __init__(self):
         self.counter = itertools.count()
@@ -417,11 +424,11 @@ class Scheduler(BaseScheduler):
 
         self._queue.put_nowait(task)
 
-        def delete(ref, dct, key):
-            dct.pop(key)
-
         self._task_pool[task.id] = weakref.ref(
-            task, functools.partial(delete, dct=self._task_pool, key=task.id))
+            task,
+            functools.partial(_delete_weakref,
+                              dct=self._task_pool,
+                              key=task.id))
         return task
 
     def query(self, key):
