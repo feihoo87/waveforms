@@ -206,7 +206,8 @@ def setBias(ctx, qubits, channel, bias):
                 Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
                 Parameter('phase', list, [[-1, 1], [-1, 1]]),
                 Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('DRAGScaling', float, 1e-10, 'a.u.')
+                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('buffer', float, 0, 's'),
             ])
 def rfUnitary(ctx, qubits, theta, phi):
     import numpy as np
@@ -225,28 +226,37 @@ def rfUnitary(ctx, qubits, theta, phi):
     if phi > pi:
         phi -= 2 * pi
 
-    shape = ctx.params['shape']
-    duration = np.interp(theta / np.pi, *ctx.params['duration'])
-    amp = np.interp(theta / np.pi, *ctx.params['amp'])
-    phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
+    while theta > 0:
+        if theta > pi / 2:
+            theta1 = pi / 2
+            theta -= pi / 2
+        else:
+            theta1 = theta
+            theta = 0
+        shape = ctx.params['shape']
+        buffer = ctx.params.get('buffer', 0)
+        duration = np.interp(theta1 / np.pi, *ctx.params['duration'])
+        amp = np.interp(theta1 / np.pi, *ctx.params['amp'])
+        phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
 
-    pulseLib = {
-        'CosPulse': cosPulse,
-        'Gaussian': gaussian,
-        'square': square,
-        'DC': square,
-    }
+        pulseLib = {
+            'CosPulse': cosPulse,
+            'Gaussian': gaussian,
+            'square': square,
+            'DC': square,
+        }
 
-    if duration > 0 and amp != 0:
-        pulse = pulseLib[shape](duration) >> (duration / 2 + ctx.time[qubit])
-        pulse, _ = mixing(pulse,
-                          phase=phase,
-                          freq=ctx.params['frequency'],
-                          DRAGScaling=ctx.params['DRAGScaling'])
-        ctx.channel['RF', qubit] += amp * pulse
-    else:
-        ctx.channel['RF', qubit] += zero()
-    ctx.time[qubit] += duration
+        if duration > 0 and amp != 0:
+            pulse = pulseLib[shape](duration) >> (
+                (duration + buffer) / 2 + ctx.time[qubit])
+            pulse, _ = mixing(pulse,
+                              phase=phase,
+                              freq=ctx.params['frequency'],
+                              DRAGScaling=ctx.params['DRAGScaling'])
+            ctx.channel['RF', qubit] += amp * pulse
+        else:
+            ctx.channel['RF', qubit] += zero()
+        ctx.time[qubit] += duration + buffer
 
 
 @std.opaque('Measure',
@@ -296,8 +306,7 @@ def measure(ctx, qubits, cbit=None):
     pulse = (ring_up_amp * (step(0) >> t) - (ring_up_amp - amp) *
              (step(0) >> (t + ring_up_time)) - amp * (step(0) >>
                                                       (t + duration)))
-    ctx.channel['readoutLine.RF',
-                qubit] += amp * pulse * cos(2 * pi * frequency)
+    ctx.channel['readoutLine.RF', qubit] += pulse * cos(2 * pi * frequency)
 
     # pulse = square(2 * duration) >> duration
     # ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
