@@ -21,20 +21,25 @@ def plotEllipse(c0, a, b, phi, ax):
     ax.plot(s.real, s.imag)
 
 
-def plotDistribution(s0, s1, fig=None, info=None, hotThresh=10000):
+def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
     from waveforms.math.fit import getThresholdInfo
 
     if info is None:
         info = getThresholdInfo(s0, s1)
     thr, phi = info['threshold'], info['phi']
     visibility, p0, p1 = info['visibility']
-    print(
-        f"thr={thr:.6f}, phi={phi:.6f}, visibility={visibility:.3f}, {p0}, {1-p1}"
-    )
+    # print(
+    #     f"thr={thr:.6f}, phi={phi:.6f}, visibility={visibility:.3f}, {p0}, {1-p1}"
+    # )
 
-    if fig is None:
-        fig = plt.figure()
-    ax1 = fig.add_subplot(121)
+    if axes is not None:
+        ax1, ax2 = axes
+    else:
+        if fig is None:
+            fig = plt.figure()
+        ax1 = fig.add_subplot(121)
+        ax2 = fig.add_subplot(122)
+
     if (len(s0) + len(s1)) < hotThresh:
         ax1.plot(np.real(s0), np.imag(s0), '.', alpha=0.2)
         ax1.plot(np.real(s1), np.imag(s1), '.', alpha=0.2)
@@ -81,7 +86,6 @@ def plotDistribution(s0, s1, fig=None, info=None, hotThresh=10000):
     ax1.plot(np.real(c0), np.imag(c0), 'o', color='C3')
     ax1.plot(np.real(c1), np.imag(c1), 'o', color='C4')
 
-    ax2 = fig.add_subplot(122)
     re0, re1 = info['signal']
     ax2.hist(re0, bins=50, alpha=0.5)
     ax2.hist(re1, bins=50, alpha=0.5)
