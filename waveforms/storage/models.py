@@ -465,12 +465,20 @@ class Record(Base):
     mtime = Column(DateTime, default=datetime.utcnow)
     atime = Column(DateTime, default=datetime.utcnow)
     user_id = Column(Integer, ForeignKey('users.id'))
+    parent_id = Column(Integer, ForeignKey('records.id'))
 
     app = Column(String)
     file = Column(String)
     key = Column(String)
     config = Column(JSON)
     task_hash = Column(LargeBinary(32))
+
+    parent = relationship("Record",
+                          remote_side=[id],
+                          back_populates="children")
+    children = relationship("Record",
+                            remote_side=[parent_id],
+                            back_populates="parent")
 
     user = relationship("User")
     samples = relationship("Sample",
