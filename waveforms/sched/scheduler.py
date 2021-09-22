@@ -341,7 +341,8 @@ class Scheduler(BaseScheduler):
              lib=None,
              cfg=None,
              cmds=[],
-             no_record=False):
+             no_record=False,
+             parent=None):
         """Execute a circuit.
         
         Parameters:
@@ -357,15 +358,27 @@ class Scheduler(BaseScheduler):
         """
         from waveforms.sched.task import RunCircuits
 
+        if isinstance(circuit, list) and isinstance(circuit[0], tuple):
+            circuits = [circuit]
+        elif isinstance(circuit, list) and isinstance(
+                circuit[0], list) and isinstance(circuit[0][0], tuple):
+            circuits = circuit
+        else:
+            raise TypeError('circuit must be a list of tuples')
+
         t = self.create_task(RunCircuits,
-                             kwds=dict(circuits=[circuit],
+                             kwds=dict(circuits=circuits,
                                        shots=shots,
                                        signal=signal,
                                        arch=arch,
                                        lib=lib,
                                        cfg=cfg,
                                        cmds=cmds))
+        if parent is not None:
+            t.parent = parent.id
+            t.runtime.prog.snapshot = parent.cfg.export()
         t.no_record = no_record
+
         self.submit(t)
         return t
 

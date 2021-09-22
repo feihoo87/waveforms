@@ -34,6 +34,11 @@ class CalibrationResult():
     parameters: dict = field(default_factory=dict)
 
 
+@dataclass
+class DataFrame():
+    pass
+
+
 SIGNAL = Literal['trace', 'raw', 'state', 'count', 'diag']
 QLisp = list[tuple]
 
@@ -152,6 +157,9 @@ class Task(BaseTask):
         record = Record(file=str(file), key=key)
         record.app = self.name
         record.task_hash = self.task_hash
+        if self.parent is not None:
+            record.parent_id = self.kernel.get_task_by_id(
+                self.parent).runtime.record.id
         for tag_text in self.tags:
             t = tag(self.db, tag_text)
             record.tags.append(t)
@@ -192,6 +200,12 @@ class Task(BaseTask):
         return the value of the key in the kernel config
         """
         return self.cfg.query(key)
+
+    def push(self, frame: dict):
+        if 'data' not in frame:
+            self.runtime.result['data'].append(None)
+        for k, v in frame['data'].items():
+            self.runtime.result[k].append(v)
 
     def exec(self,
              circuit: QLisp,
