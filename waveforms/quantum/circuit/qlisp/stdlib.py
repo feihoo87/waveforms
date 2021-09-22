@@ -8,6 +8,8 @@ from waveforms.waveform_parser import wave_eval
 from .library import Library, Parameter
 from .qlisp import MeasurementTask
 
+EPS = 1e-9
+
 std = Library()
 std.qasmLib = {
     'qelib1.inc': Path(__file__).parent.parent / 'qasm' / 'libs' / 'qelib1.inc'
@@ -36,11 +38,16 @@ def H(qubit):
 
 @std.gate()
 def U(q, theta, phi, lambda_):
-    if theta == 0:
+    if abs(theta) < EPS:
         yield (('P', phi + lambda_), q)
     else:
         yield (('P', lambda_), q)
-        yield (('rfUnitary', theta, pi / 2), q)
+        if (theta - pi / 2) < EPS:
+            yield (('rfUnitary', pi / 2, pi / 2), q)
+        else:
+            yield (('rfUnitary', pi / 2, 0), q)
+            yield (('rfUnitary', pi / 2, pi - theta), q)
+            yield (('P', theta), q)
         yield (('P', phi), q)
 
 
@@ -151,9 +158,9 @@ def P(ctx, qubits, phi):
     phi += ctx.phases[qubits[0]]
     ctx.phases[qubits[0]] = 0
 
-    # call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
-    # call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
-    # call_opaque((('rfUnitary', pi / 2, -pi / 2), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
+    call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, -pi / 2), *qubits), ctx, std)
 
 
 @std.opaque('Barrier')
@@ -212,7 +219,6 @@ def setBias(ctx, qubits, channel, bias):
             ])
 def rfUnitary(ctx, qubits, theta, phi):
     import numpy as np
-    from .compiler import call_opaque
 
     qubit, = qubits
 
@@ -228,13 +234,18 @@ def rfUnitary(ctx, qubits, theta, phi):
     if phi > pi:
         phi -= 2 * pi
 
-    if abs(theta - pi / 2) < 1e-9:
-        shape = ctx.params['shape']
+    while theta > 0:
+        if theta > pi / 2:
+            theta1 = pi / 2
+            theta -= pi / 2
+        else:
+            theta1 = theta
+            theta = 0
+        shape = ctx.params.get('shape', 'CosPulse')
         buffer = ctx.params.get('buffer', 0)
-        DRAGScaling = ctx.params.get('DRAGScaling', 0)
         delta = ctx.params.get('delta', 0)
-        duration = np.interp(theta / np.pi, *ctx.params['duration'])
-        amp = np.interp(theta / np.pi, *ctx.params['amp'])
+        duration = np.interp(theta1 / np.pi, *ctx.params['duration'])
+        amp = np.interp(theta1 / np.pi, *ctx.params['amp'])
         phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
 
         pulseLib = {
@@ -245,22 +256,16 @@ def rfUnitary(ctx, qubits, theta, phi):
         }
 
         if duration > 0 and amp != 0:
-            pulse = pulseLib[shape](duration)
-            I, Q = mixing(amp * pulse,
-                          phase=phase,
-                          freq=delta,
-                          DRAGScaling=DRAGScaling)
-            t = ((duration + buffer) / 2 + ctx.time[qubit])
-            wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
-            ctx.channel['RF', qubit] += wav
+            pulse = pulseLib[shape](duration) >> (
+                (duration + buffer) / 2 + ctx.time[qubit])
+            pulse, _ = mixing(pulse,
+                              phase=phase,
+                              freq=ctx.params['frequency'] - delta,
+                              DRAGScaling=ctx.params['DRAGScaling'])
+            ctx.channel['RF', qubit] += amp * pulse
         else:
             ctx.channel['RF', qubit] += zero()
         ctx.time[qubit] += duration + buffer
-    else:
-        call_opaque((('rfUnitary', pi / 2, phi - pi / 2), qubit), ctx, std)
-        call_opaque((('rfUnitary', pi / 2, phi - theta - 3 * pi / 2), qubit),
-                    ctx, std)
-        ctx.phases[qubit] += theta
 
 
 @std.opaque('Measure',
