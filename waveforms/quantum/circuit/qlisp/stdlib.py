@@ -234,6 +234,18 @@ def rfUnitary(ctx, qubits, theta, phi):
     if phi > pi:
         phi -= 2 * pi
 
+    shape = ctx.params.get('shape', 'CosPulse')
+    buffer = ctx.params.get('buffer', 0)
+    delta = ctx.params.get('delta', 0)
+    phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
+
+    pulseLib = {
+        'CosPulse': cosPulse,
+        'Gaussian': gaussian,
+        'square': square,
+        'DC': square,
+    }
+
     while theta > 0:
         if theta > pi / 2:
             theta1 = pi / 2
@@ -241,31 +253,19 @@ def rfUnitary(ctx, qubits, theta, phi):
         else:
             theta1 = theta
             theta = 0
-        shape = ctx.params.get('shape', 'CosPulse')
-        buffer = ctx.params.get('buffer', 0)
-        delta = ctx.params.get('delta', 0)
+
         duration = np.interp(theta1 / np.pi, *ctx.params['duration'])
         amp = np.interp(theta1 / np.pi, *ctx.params['amp'])
-        phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
+        pulse = pulseLib[shape](duration) >> (
+            (duration + buffer) / 2 + ctx.time[qubit])
 
-        pulseLib = {
-            'CosPulse': cosPulse,
-            'Gaussian': gaussian,
-            'square': square,
-            'DC': square,
-        }
-
-        if duration > 0 and amp != 0:
-            pulse = pulseLib[shape](duration) >> (
-                (duration + buffer) / 2 + ctx.time[qubit])
-            pulse, _ = mixing(pulse,
-                              phase=phase,
-                              freq=ctx.params['frequency'] - delta,
-                              DRAGScaling=ctx.params['DRAGScaling'])
-            ctx.channel['RF', qubit] += amp * pulse
-        else:
-            ctx.channel['RF', qubit] += zero()
-        ctx.time[qubit] += duration + buffer
+        if duration > 0 and amp > 0:
+            wav, _ = mixing(amp * pulse,
+                            phase=phase + 2 * pi * delta * (duration + buffer),
+                            freq=ctx.params['frequency'] + delta,
+                            DRAGScaling=ctx.params['DRAGScaling'])
+            ctx.channel['RF', qubit] += wav
+            ctx.time[qubit] += duration + buffer
 
 
 @std.opaque('Measure',
