@@ -20,7 +20,7 @@ from waveforms.math.fit import count_to_diag, countState
 from waveforms.quantum.circuit.qlisp import get_arch
 from waveforms.quantum.circuit.qlisp.config import Config, ConfigProxy
 from waveforms.quantum.circuit.qlisp.library import Library
-from waveforms.storage.crud import tag
+from waveforms.storage.crud import tag_it
 from waveforms.storage.models import Record, Report
 
 from .base import READ, TRIG, WRITE
@@ -61,7 +61,7 @@ class TagSet(set):
 
 def update_tags(sender: TagSet, tag_text, obj: Any, tag_set_id, db) -> None:
     if id(sender) == tag_set_id:
-        obj.tags.append(tag(db, tag_text))
+        tag_it(db, tag_text, obj)
 
 
 class Task(BaseTask):
@@ -149,8 +149,11 @@ class Task(BaseTask):
         self.db.add(self.runtime.record)
         self.db.commit()
 
-    def create_record(self) -> Record:
+    def create_record(self, db=None) -> Record:
         """Create a record"""
+        if db is None:
+            db = self.db
+
         file, key = self.data_path.split(':/')
         file = self.kernel.data_path / (file + '.hdf5')
 
@@ -161,8 +164,7 @@ class Task(BaseTask):
             record.parent_id = self.kernel.get_task_by_id(
                 self.parent).runtime.record.id
         for tag_text in self.tags:
-            t = tag(self.db, tag_text)
-            record.tags.append(t)
+            tag_it(db, tag_text, record)
 
         receiver = functools.partial(update_tags,
                                      obj=record,
@@ -172,16 +174,18 @@ class Task(BaseTask):
         record._blinker_update_tag_receiver = receiver  # hold a reference
         return record
 
-    def create_report(self) -> Report:
+    def create_report(self, db=None) -> Report:
         """create a report"""
+        if db is None:
+            db = self.db
+
         file, key = self.data_path.split(':/')
         file = self.kernel.data_path / (file + '.hdf5')
 
         rp = Report(file=str(file), key=key)
         rp.task_hash = self.task_hash
         for tag_text in self.tags:
-            t = tag(self.db, tag_text)
-            rp.tags.append(t)
+            tag_it(db, tag_text, rp)
 
         receiver = functools.partial(update_tags,
                                      obj=rp,

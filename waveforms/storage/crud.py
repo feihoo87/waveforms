@@ -72,6 +72,18 @@ def tag(session: Session, tag_text: str) -> Tag:
         return tag
 
 
+def tag_it(session: Session, tag_text: str, obj: Union[Sample, Record,
+                                                      Report]) -> Tag:
+    """Tag an object."""
+    if obj.id is None:
+        session.add(obj)
+        obj.tags.append(tag(session, tag_text))
+    else:
+        session.query(type(obj)).filter(
+            type(obj).id == obj.id).one().tags.append(tag(session, tag_text))
+    session.commit()
+
+
 def get_object_with_tags(session: Session,
                          cls: Union[Type[Comment], Type[Sample], Type[Record],
                                     Type[Report]], *tags: str) -> Query:
