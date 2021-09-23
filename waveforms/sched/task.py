@@ -239,10 +239,14 @@ class Task(BaseTask):
                             skip_compile=skip_compile)
 
     def _collect_used_elements(self, circuit: QLisp) -> None:
+        all_qubits = self.cfg._getAllQubitLabels()
         for _, qubits in circuit:
             if not isinstance(qubits, tuple):
                 qubits = (qubits, )
             for qubit in qubits:
+                if qubit not in all_qubits:
+                    raise ValueError(f"{qubit} is not in the config, "
+                                     f"please add it to the config")
                 self.tags.add(qubit)
                 self.runtime.used_elements.add(qubit)
                 q = self.cfg.query(qubit)
