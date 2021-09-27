@@ -256,14 +256,15 @@ def rfUnitary(ctx, qubits, theta, phi):
 
         duration = np.interp(theta1 / np.pi, *ctx.params['duration'])
         amp = np.interp(theta1 / np.pi, *ctx.params['amp'])
-        pulse = pulseLib[shape](duration) >> (
-            (duration + buffer) / 2 + ctx.time[qubit])
+        pulse = pulseLib[shape](duration)
 
         if duration > 0 and amp > 0:
-            wav, _ = mixing(amp * pulse,
-                            phase=phase + 2 * pi * delta * (duration + buffer),
-                            freq=ctx.params['frequency'] + delta,
-                            DRAGScaling=ctx.params['DRAGScaling'])
+            I, Q = mixing(amp * pulse,
+                          phase=phase,
+                          freq=delta,
+                          DRAGScaling=ctx.params['DRAGScaling'])
+            t = (duration + buffer) / 2 + ctx.time[qubit]
+            wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
             ctx.channel['RF', qubit] += wav
             ctx.time[qubit] += duration + buffer
 
