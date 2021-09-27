@@ -1,5 +1,7 @@
 import random
 
+import numpy as np
+
 from .circuit.simulator import seq2mat
 from .clifford import cliffordOrder
 from .clifford.clifford import (generateTwoQubitCliffordSequence, inv,
@@ -22,7 +24,10 @@ def replace_qubit(circuit, qubits):
 def circuit_to_index(circuit: list) -> int:
     if not circuit:
         return 0
-    return mat2index(seq2mat(circuit))
+    mat = seq2mat(circuit)
+    if mat.shape[0] == 2:
+        mat = np.kron(np.eye(2), mat)
+    return mat2index(mat)
 
 
 def index_to_circuit(index: int, qubits=(0, ), base=None, rng=None) -> list:
