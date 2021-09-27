@@ -270,7 +270,7 @@ def _rfUnitary(ctx, qubits, theta, phi):
                 Parameter('buffer', float, 0, 's'),
             ])
 def rfUnitary(ctx, qubits, theta, phi):
-    rfUnitary(ctx, qubits, theta, phi)
+    _rfUnitary(ctx, qubits, theta, phi)
 
 
 @std.opaque('rfUnitary',
@@ -293,11 +293,11 @@ def rfUnitary_BB1(ctx, qubits, theta, phi):
     p2 = 3 * p1
     p1, p2 = p1 + phi, p2 + phi
 
-    rfUnitary(ctx, qubits, pi, p1)
-    rfUnitary(ctx, qubits, pi, p2)
-    rfUnitary(ctx, qubits, pi, p2)
-    rfUnitary(ctx, qubits, pi, p1)
-    rfUnitary(ctx, qubits, theta, phi)
+    _rfUnitary(ctx, qubits, pi, p1)
+    _rfUnitary(ctx, qubits, pi, p2)
+    _rfUnitary(ctx, qubits, pi, p2)
+    _rfUnitary(ctx, qubits, pi, p1)
+    _rfUnitary(ctx, qubits, theta, phi)
 
 
 @std.opaque('Measure',
