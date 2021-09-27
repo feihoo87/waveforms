@@ -1,3 +1,4 @@
+import random
 from typing import Callable, Iterable, Optional
 
 import numpy as np
@@ -44,3 +45,21 @@ def Fxeb(Pm_lst: Iterable[np.array],
 def specklePurity(Pm_lst: Iterable[np.array]) -> float:
     D = Pm_lst[0].size
     return np.asarray(Pm_lst).var() * D**2 * (D + 1) / (D - 1)
+
+
+def generateXEBCircuit(qubits, cycle, seed=None, base=['X/2', 'Y/2', 'W/2']):
+    """
+    Generate a quantum circuit for XEB.
+    """
+
+    MAX = len(base)
+
+    ret = []
+    rng = random.Random(seed)
+
+    for _ in range(cycle):
+        i = rng.randrange(MAX)
+        for qubit in qubits:
+            ret.append((rng.choice(base), qubit))
+
+    return ret
