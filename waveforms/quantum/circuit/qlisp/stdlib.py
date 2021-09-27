@@ -122,6 +122,11 @@ def Ry(q, theta):
     yield (('u3', theta, 0, 0), q)
 
 
+@std.gate(name='W/2')
+def W2(q, theta):
+    yield (('u3', theta, -pi / 4, pi / 4), q)
+
+
 @std.gate()
 def Rz(q, phi):
     yield (('u1', phi), q)
@@ -271,6 +276,22 @@ def _rfUnitary(ctx, qubits, theta, phi):
             ])
 def rfUnitary(ctx, qubits, theta, phi):
     _rfUnitary(ctx, qubits, theta, phi)
+
+
+@std.opaque('rfCrosstalk',
+            params=[
+                Parameter('shape', str, 'cosPulse'),
+                Parameter('amp', list, [[0, 1], [0, 0.653]]),
+                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
+                Parameter('phase', list, [[-1, 1], [-1, 1]]),
+                Parameter('frequency', float, 5e9, 'Hz'),
+                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('delta', float, 0, 'Hz'),
+                Parameter('buffer', float, 0, 's'),
+            ])
+def rfUnitary(ctx, qubits, theta, phi):
+    c, t = qubits
+    _rfUnitary(ctx, t, theta, phi)
 
 
 @std.opaque('rfUnitary',
