@@ -206,18 +206,7 @@ def setBias(ctx, qubits, channel, bias):
     ctx.biases[(channel, *qubits)] = bias
 
 
-@std.opaque('rfUnitary',
-            params=[
-                Parameter('shape', str, 'cosPulse'),
-                Parameter('amp', list, [[0, 1], [0, 0.653]]),
-                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
-                Parameter('phase', list, [[-1, 1], [-1, 1]]),
-                Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
-                Parameter('delta', float, 0, 'Hz'),
-                Parameter('buffer', float, 0, 's'),
-            ])
-def rfUnitary(ctx, qubits, theta, phi):
+def _rfUnitary(ctx, qubits, theta, phi):
     import numpy as np
 
     qubit, = qubits
@@ -267,6 +256,48 @@ def rfUnitary(ctx, qubits, theta, phi):
             wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
             ctx.channel['RF', qubit] += wav
             ctx.time[qubit] += duration + buffer
+
+
+@std.opaque('rfUnitary',
+            params=[
+                Parameter('shape', str, 'cosPulse'),
+                Parameter('amp', list, [[0, 1], [0, 0.653]]),
+                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
+                Parameter('phase', list, [[-1, 1], [-1, 1]]),
+                Parameter('frequency', float, 5e9, 'Hz'),
+                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('delta', float, 0, 'Hz'),
+                Parameter('buffer', float, 0, 's'),
+            ])
+def rfUnitary(ctx, qubits, theta, phi):
+    rfUnitary(ctx, qubits, theta, phi)
+
+
+@std.opaque('rfUnitary',
+            type='BB1',
+            params=[
+                Parameter('shape', str, 'cosPulse'),
+                Parameter('amp', list, [[0, 1], [0, 0.653]]),
+                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
+                Parameter('phase', list, [[-1, 1], [-1, 1]]),
+                Parameter('frequency', float, 5e9, 'Hz'),
+                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('delta', float, 0, 'Hz'),
+                Parameter('buffer', float, 0, 's'),
+            ])
+def rfUnitary_BB1(ctx, qubits, theta, phi):
+    import numpy as np
+    from .compiler import call_opaque
+
+    p1 = np.arccos(-theta / (4 * pi))
+    p2 = 3 * p1
+    p1, p2 = p1 + phi, p2 + phi
+
+    rfUnitary(ctx, qubits, pi, p1)
+    rfUnitary(ctx, qubits, pi, p2)
+    rfUnitary(ctx, qubits, pi, p2)
+    rfUnitary(ctx, qubits, pi, p1)
+    rfUnitary(ctx, qubits, theta, phi)
 
 
 @std.opaque('Measure',
