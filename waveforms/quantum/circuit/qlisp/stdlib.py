@@ -123,8 +123,8 @@ def Ry(q, theta):
 
 
 @std.gate(name='W/2')
-def W2(q, theta):
-    yield (('u3', theta, -pi / 4, pi / 4), q)
+def W2(q):
+    yield (('u3', pi/2, -pi / 4, pi / 4), q)
 
 
 @std.gate()

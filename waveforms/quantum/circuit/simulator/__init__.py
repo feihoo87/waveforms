@@ -148,8 +148,8 @@ regesterGateMatrix('T',
                    np.array([[1, 0], [0, 1 / np.sqrt(2) + 1j / np.sqrt(2)]]))
 regesterGateMatrix('-T',
                    np.array([[1, 0], [0, 1 / np.sqrt(2) - 1j / np.sqrt(2)]]))
-regesterGateMatrix('W', rfUnitary(np.pi / 2, np.pi / 4))
-regesterGateMatrix('-W', rfUnitary(-np.pi / 2, np.pi / 4))
+regesterGateMatrix('W/2', rfUnitary(np.pi / 2, np.pi / 4))
+regesterGateMatrix('-W/2', rfUnitary(-np.pi / 2, np.pi / 4))
 
 # two qubits
 regesterGateMatrix(
