@@ -61,5 +61,6 @@ def generateXEBCircuit(qubits, cycle, seed=None, base=['X/2', 'Y/2', 'W/2']):
         i = rng.randrange(MAX)
         for qubit in qubits:
             ret.append((rng.choice(base), qubit))
+        ret.append(('Barrier', qubits))
 
     return ret
