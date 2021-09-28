@@ -127,6 +127,21 @@ def W2(q):
     yield (('u3', pi / 2, -pi / 4, pi / 4), q)
 
 
+@std.gate(name='-W/2')
+def W2(q):
+    yield (('u3', -pi / 2, -pi / 4, pi / 4), q)
+
+
+@std.gate(name='V/2')
+def W2(q):
+    yield (('u3', pi / 2, -3 * pi / 4, 3 * pi / 4), q)
+
+
+@std.gate(name='-V/2')
+def W2(q):
+    yield (('u3', -pi / 2, -3 * pi / 4, 3 * pi / 4), q)
+
+
 @std.gate()
 def Rz(q, phi):
     yield (('u1', phi), q)

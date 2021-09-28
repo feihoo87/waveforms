@@ -104,12 +104,12 @@ def xebProbabilityAndEntropy(states, count, shots):
     return np.asarray(Pm), np.asarray(Pe), entropy, entropy_i
 
 
-def Fxeb2(qubits, cycle, seeds, counts, shots):
+def Fxeb2(qubits, cycle, seeds, counts, shots, base=['X/2', 'Y/2', 'W/2']):
     Si, Sm, Se = [], [], []
 
     for seed, count in zip(seeds, counts):
         Pm, Pe, e, ei = xebProbabilityAndEntropy(
-            xebCircuitStates(qubits, cycle, seed), count, shots)
+            xebCircuitStates(qubits, cycle, seed, base), count, shots)
         Sm.append(crossEntropy(Pm, Pe))
         Si.append(ei)
         Se.append(e)
