@@ -21,7 +21,10 @@ def crossEntropy(P: np.array,
                  func: Callable = np.log,
                  eps: float = 1e-9) -> float:
     mask = (P > 0) * (Q > eps)
-    return -np.sum(P[mask] * func(Q[mask]))
+    if isinstance(P, (int, float, complex)):
+        return -np.real(P) * np.sum(func(Q[mask]))
+    else:
+        return -np.sum(P[mask] * func(Q[mask]))
 
 
 def Fxeb(Pm_lst: Iterable[np.array],
@@ -34,9 +37,9 @@ def Fxeb(Pm_lst: Iterable[np.array],
     Pe_lst: list of expected distribution
     """
     Si, Sm, Se = [], [], []
-    if Pi is None:
-        Pi = np.full_like(Pm_lst[0], 1.0 / Pm_lst[0].size)
     for Pm, Pe in zip(Pm_lst, Pe_lst):
+        if Pi is None:
+            Pi = 1.0 / Pm.size
         Si.append(crossEntropy(Pi, Pe))
         Sm.append(crossEntropy(Pm, Pe))
         Se.append(crossEntropy(Pe, Pe))
@@ -84,8 +87,11 @@ def xebCircuitStates(qubits, cycles, seed, base=['X/2', 'Y/2', 'W/2']):
     return states
 
 
-def xebProbability(states, count, shots):
+def xebProbabilityAndEntropy(states, count, shots):
     _Pe = [(psi * psi.conj()).real for psi in states]
+
+    entropy = np.sum([crossEntropy(p, p) for p in _Pe])
+    entropy_i = np.sum([crossEntropy(1 / 2, p) for p in _Pe])
 
     Pe, Pm = [], []
     for k, v in count.items():
@@ -95,14 +101,16 @@ def xebProbability(states, count, shots):
         if p > 0:
             Pm.append(v / shots)
             Pe.append(p)
-    return np.asarray(Pm), np.asarray(Pe)
+    return np.asarray(Pm), np.asarray(Pe), entropy, entropy_i
 
 
 def Fxeb2(qubits, cycle, seeds, counts, shots):
-    Pe_lst, Pm_lst = [], []
+    Si, Sm, Se = [], [], []
+
     for seed, count in zip(seeds, counts):
-        Pm, Pe = xebProbability(xebCircuitStates(qubits, cycle, seed), count,
-                                shots)
-        Pm_lst.append(Pm)
-        Pe_lst.append(Pe)
-    return Fxeb(Pe_lst, Pm_lst)
+        Pm, Pe, e, ei = xebProbabilityAndEntropy(
+            xebCircuitStates(qubits, cycle, seed), count, shots)
+        Sm.append(crossEntropy(Pm, Pe))
+        Si.append(ei)
+        Se.append(e)
+    return (np.mean(Si) - np.mean(Sm)) / (np.mean(Si) - np.mean(Se))
