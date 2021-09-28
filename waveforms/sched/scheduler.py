@@ -164,7 +164,8 @@ def submit(task: Task, current_stack: list[Task]):
 
     current_stack.append(task)
     task.runtime.started_time = time.time()
-    task.runtime.threads['run'].start()
+    if not task.runtime.prog.with_feedback:
+        task.runtime.threads['run'].start()
 
 
 def _delete_weakref(ref, dct, key):

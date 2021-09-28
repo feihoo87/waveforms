@@ -377,6 +377,11 @@ class Task(BaseTask):
         try:
             start = time.time()
             while True:
+                if self.runtime.prog.with_feedback and self.runtime.status not in [
+                        'not submited', 'pending'
+                ]:
+                    self.runtime.threads['compile'].join()
+                    break
                 if self.runtime.status in ['cancelled', 'finished']:
                     break
                 if timeout is not None and time.time() - start > timeout:
