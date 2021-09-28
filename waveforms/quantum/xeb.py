@@ -4,6 +4,7 @@ from typing import Callable, Iterable, Optional
 import numpy as np
 from numpy import euler_gamma
 from scipy.special import polygamma
+from waveforms.quantum.circuit.simulator import applySeq
 
 
 def uncorrelatedEntropy(D: int) -> float:
@@ -64,3 +65,44 @@ def generateXEBCircuit(qubits, cycle, seed=None, base=['X/2', 'Y/2', 'W/2']):
         ret.append(('Barrier', qubits))
 
     return ret
+
+
+def xebCircuitStates(qubits, cycles, seed, base=['X/2', 'Y/2', 'W/2']):
+    """
+    XEB Fidelity
+
+    qubits: qubits to measure
+    cycles: number of cycles
+    """
+    circuit = generateXEBCircuit(qubits, cycles, seed, base)
+    states = [np.array([1, 0], dtype=complex) for _ in qubits]
+    index_map = {q: i for i, q in enumerate(qubits)}
+    for gate, qubit in circuit:
+        if qubit in index_map:
+            states[index_map[qubit]] = applySeq([(gate, 0)],
+                                                states[index_map[qubit]])
+    return states
+
+
+def xebProbability(states, count, shots):
+    _Pe = [(psi * psi.conj()).real for psi in states]
+
+    Pe, Pm = [], []
+    for k, v in count.items():
+        p = 1
+        for i, state in enumerate(k):
+            p *= _Pe[i][state]
+        if p > 0:
+            Pm.append(v / shots)
+            Pe.append(p)
+    return np.asarray(Pm), np.asarray(Pe)
+
+
+def Fxeb2(qubits, cycle, seeds, counts, shots):
+    Pe_lst, Pm_lst = [], []
+    for seed, count in zip(seeds, counts):
+        Pm, Pe = xebProbability(xebCircuitStates(qubits, cycle, seed), count,
+                                shots)
+        Pm_lst.append(Pm)
+        Pe_lst.append(Pe)
+    return Fxeb(Pe_lst, Pm_lst)
