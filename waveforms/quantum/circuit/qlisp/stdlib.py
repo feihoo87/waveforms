@@ -124,7 +124,7 @@ def Ry(q, theta):
 
 @std.gate(name='W/2')
 def W2(q):
-    yield (('u3', pi/2, -pi / 4, pi / 4), q)
+    yield (('u3', pi / 2, -pi / 4, pi / 4), q)
 
 
 @std.gate()
@@ -230,6 +230,8 @@ def _rfUnitary(ctx, qubits, theta, phi):
 
     shape = ctx.params.get('shape', 'CosPulse')
     buffer = ctx.params.get('buffer', 0)
+    alpha = ctx.params.get('alpha', 0)
+    beta = ctx.params.get('beta', 0)
     delta = ctx.params.get('delta', 0)
     phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
 
@@ -253,10 +255,10 @@ def _rfUnitary(ctx, qubits, theta, phi):
         pulse = pulseLib[shape](duration)
 
         if duration > 0 and amp > 0:
-            I, Q = mixing(amp * pulse,
+            I, Q = mixing(amp * alpha * pulse,
                           phase=phase,
                           freq=delta,
-                          DRAGScaling=ctx.params['DRAGScaling'])
+                          DRAGScaling=beta)
             t = (duration + buffer) / 2 + ctx.time[qubit]
             wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
             ctx.channel['RF', qubit] += wav
@@ -270,7 +272,8 @@ def _rfUnitary(ctx, qubits, theta, phi):
                 Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
                 Parameter('phase', list, [[-1, 1], [-1, 1]]),
                 Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('alpha', float, 1, 'Hz'),
+                Parameter('beta', float, 0, 'Hz'),
                 Parameter('delta', float, 0, 'Hz'),
                 Parameter('buffer', float, 0, 's'),
             ])
@@ -285,7 +288,8 @@ def rfUnitary(ctx, qubits, theta, phi):
                 Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
                 Parameter('phase', list, [[-1, 1], [-1, 1]]),
                 Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('alpha', float, 1, 'Hz'),
+                Parameter('beta', float, 0, 'Hz'),
                 Parameter('delta', float, 0, 'Hz'),
                 Parameter('buffer', float, 0, 's'),
             ])
@@ -302,7 +306,8 @@ def rfUnitary(ctx, qubits, theta, phi):
                 Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
                 Parameter('phase', list, [[-1, 1], [-1, 1]]),
                 Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('DRAGScaling', float, 1e-10, 'a.u.'),
+                Parameter('alpha', float, 1, 'Hz'),
+                Parameter('beta', float, 0, 'Hz'),
                 Parameter('delta', float, 0, 'Hz'),
                 Parameter('buffer', float, 0, 's'),
             ])
