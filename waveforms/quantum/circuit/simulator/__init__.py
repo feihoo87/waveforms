@@ -101,8 +101,8 @@ def applySeq(seq, psi0=None):
         return U @ psi
 
     for gate, qubits in seq:
-        if (isinstance(gate, tuple)
-                and gate[0] in ['Measure', 'Delay', 'Barrier']):
+        if (isinstance(gate, tuple) and gate[0] in ['Measure', 'Delay']) or (
+                isinstance(gate, str) and gate in ['Barrier']):
             continue
         if isinstance(qubits, tuple):
             M = max(qubits)
