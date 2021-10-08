@@ -96,10 +96,35 @@ def _atleast_type(a, dtype):
         return a
 
 
-def classify(data, thr, phi):
-    ret = (data * np.exp(-1j * phi)).real > thr
-    ret.dtype = np.int8
-    return ret
+__classify_methods = {}
+
+
+def install_classify_method(method: str, func: callable):
+    __classify_methods[method] = func
+
+
+def uninstall_classify_method(method: str):
+    if method in __classify_methods:
+        del __classify_methods[method]
+
+
+def classify(data, method, params):
+    if method in __classify_methods:
+        return __classify_methods[method](data, params)
+    else:
+        raise ValueError("method not found")
+
+
+def default_classify(data, params):
+    """
+    默认的分类方法
+    """
+    thr = params.get('threshold', 0)
+    phi = params.get('phi', 0)
+    return (data * np.exp(-1j * phi)).real > thr
+
+
+install_classify_method("state", default_classify)
 
 
 def classifyData(data, measure_gates, avg=False):
@@ -110,12 +135,11 @@ def classifyData(data, measure_gates, avg=False):
 
     for i, g in enumerate(measure_gates):
         signal = g['params'].get('signal', 'state')
-        thr = g['params'].get('threshold', 0)
-        phi = g['params'].get('phi', 0)
 
-        if signal == 'state':
-            ret[..., i] = (data[..., i] * np.exp(-1j * phi)).real > thr
+        if signal in __classify_methods:
+            ret[..., i] = classify(data[..., i], signal, g['params'])
         elif signal == 'amp':
+            phi = g['params'].get('phi', 0)
             ret = _atleast_type(ret, np.double)
             ret[..., i] = (data[..., i] * np.exp(-1j * phi)).real
         if signal == 'raw':
