@@ -433,6 +433,34 @@ class UserInput(App):
         return {'data': []}
 
 
+class CalibrateGate(App):
+    def __init__(self, gate_name, qubits, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gate_name = gate_name
+        self.qubits = qubits
+
+    @property
+    def name(self):
+        return 'CalibrateGate'
+
+    def check(self):
+        # never pass
+        return -1
+
+    def analyze(self, data) -> CalibrationResult:
+        # always pass
+        return CalibrationResult(suggested_calibration_level=100)
+
+    def scan_range(self) -> Union[Iterable, Generator]:
+        return {}
+
+    def main(self):
+        pass
+
+    def result(self):
+        return {'data': []}
+
+
 class RunCircuits(App):
     def __init__(self,
                  circuits,
@@ -442,17 +470,45 @@ class RunCircuits(App):
                  lib=None,
                  cfg=None,
                  settings=None,
-                 cmds=[]):
+                 cmds=[],
+                 calibration_mode=False):
         super().__init__(signal=signal, shots=shots, arch=arch)
         self.circuits = circuits
         self.custom_lib = lib
         self.custom_cfg = cfg
         self.cmds = cmds
         self.settings = settings
+        self.calibration_mode = calibration_mode
 
     @property
     def name(self):
         return 'RunCircuits'
+
+    def depends(self) -> list[tuple[str, tuple, dict]]:
+        from waveforms import compile
+        from waveforms.quantum.circuit.qlisp.qlisp import gateName
+
+        if self.calibration_mode:
+            return []
+
+        deps = set()
+
+        for circuit in self.circuits:
+            for st in compile(circuit,
+                              no_link=True,
+                              lib=self.custom_lib,
+                              cfg=self.custom_cfg):
+                deps.add((CalibrateGate, (gateName(st), st[1])))
+
+        return list(deps)
+
+    def check(self):
+        # never pass
+        return -1
+
+    def analyze(self, data) -> CalibrationResult:
+        # always pass
+        return CalibrationResult(suggested_calibration_level=100)
 
     def scan_range(self):
         ret = {'iters': {'circuit': self.circuits}}
@@ -475,7 +531,9 @@ class RunCircuits(App):
 
 def _getAppClass(name: str) -> Type[App]:
     *module, name = name.split('.')
-    if len(module) == 0:
+    if name in ['RunCircuits', 'CalibrateGate', 'UserInput']:
+        return globals()[name]
+    elif len(module) == 0:
         module = sys.modules['__main__']
     else:
         module = '.'.join(module)
