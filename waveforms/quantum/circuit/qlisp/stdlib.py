@@ -245,7 +245,7 @@ def _rfUnitary(ctx, qubits, theta, phi):
 
     shape = ctx.params.get('shape', 'CosPulse')
     buffer = ctx.params.get('buffer', 0)
-    alpha = ctx.params.get('alpha', 0)
+    alpha = ctx.params.get('alpha', 1)
     beta = ctx.params.get('beta', 0)
     delta = ctx.params.get('delta', 0)
     phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
@@ -273,7 +273,7 @@ def _rfUnitary(ctx, qubits, theta, phi):
             I, Q = mixing(amp * alpha * pulse,
                           phase=phase,
                           freq=delta,
-                          DRAGScaling=beta)
+                          DRAGScaling=beta / alpha)
             t = (duration + buffer) / 2 + ctx.time[qubit]
             wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
             ctx.channel['RF', qubit] += wav
@@ -296,23 +296,6 @@ def rfUnitary(ctx, qubits, theta, phi):
     _rfUnitary(ctx, qubits, theta, phi)
 
 
-@std.opaque('rfCrosstalk',
-            params=[
-                Parameter('shape', str, 'cosPulse'),
-                Parameter('amp', list, [[0, 1], [0, 0.653]]),
-                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
-                Parameter('phase', list, [[-1, 1], [-1, 1]]),
-                Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('alpha', float, 1, 'Hz'),
-                Parameter('beta', float, 0, 'Hz'),
-                Parameter('delta', float, 0, 'Hz'),
-                Parameter('buffer', float, 0, 's'),
-            ])
-def rfUnitary(ctx, qubits, theta, phi):
-    c, t = qubits
-    _rfUnitary(ctx, t, theta, phi)
-
-
 @std.opaque('rfUnitary',
             type='BB1',
             params=[
@@ -328,7 +311,6 @@ def rfUnitary(ctx, qubits, theta, phi):
             ])
 def rfUnitary_BB1(ctx, qubits, theta, phi):
     import numpy as np
-    from .compiler import call_opaque
 
     p1 = np.arccos(-theta / (4 * pi))
     p2 = 3 * p1
