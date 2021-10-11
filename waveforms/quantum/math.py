@@ -4,23 +4,55 @@ from itertools import chain, product
 from typing import Optional, Union
 
 import numpy as np
-from scipy.linalg import eigh, expm, sqrtm, logm
+import scipy.sparse as sp
+from scipy.linalg import eigh, expm, logm, sqrtm
 from waveforms.math import (fitCircle, fitCrossPoint, fitPole, getFTMatrix,
                             linFit)
 from waveforms.math.signal import decay, oscillation
 
+
+def issparse(qob):
+    """Checks if ``qob`` is explicitly sparse.
+    """
+    return isinstance(qob, sp.spmatrix)
+
+
+def make_immutable(mat):
+    """Make array read only, in-place.
+    Parameters
+    ----------
+    mat : sparse or dense array
+        Matrix to make immutable.
+    """
+    if issparse(mat):
+        mat.data.flags.writeable = False
+        if mat.format in {'csr', 'csc', 'bsr'}:
+            mat.indices.flags.writeable = False
+            mat.indptr.flags.writeable = False
+        elif mat.format == 'coo':
+            mat.row.flags.writeable = False
+            mat.col.flags.writeable = False
+    else:
+        mat.flags.writeable = False
+    return mat
+
+
 # Paulis
-sigmaI = lambda: np.eye(2, dtype=complex)
-sigmaX = lambda: np.array([[0, 1], [1, 0]], dtype=complex)
-sigmaY = lambda: np.array([[0, -1j], [1j, 0]], dtype=complex)
-sigmaZ = lambda: np.array([[1, 0], [0, -1]], dtype=complex)
+sigmaI = lambda: make_immutable(np.eye(2, dtype=complex))
+sigmaX = lambda: make_immutable(np.array([[0, 1], [1, 0]], dtype=complex))
+sigmaY = lambda: make_immutable(np.array([[0, -1j], [1j, 0]], dtype=complex))
+sigmaZ = lambda: make_immutable(np.array([[1, 0], [0, -1]], dtype=complex))
 s0, s1, s2, s3 = sigmaI(), sigmaX(), sigmaY(), sigmaZ()
 
 # Bell states
-BellPhiP = lambda: np.array([1, 0, 0, 1], dtype=complex) / np.sqrt(2)
-BellPhiM = lambda: np.array([1, 0, 0, -1], dtype=complex) / np.sqrt(2)
-BellPsiP = lambda: np.array([0, 1, 1, 0], dtype=complex) / np.sqrt(2)
-BellPsiM = lambda: np.array([0, 1, -1, 0], dtype=complex) / np.sqrt(2)
+BellPhiP = lambda: make_immutable(
+    np.array([1, 0, 0, 1], dtype=complex) / np.sqrt(2))
+BellPhiM = lambda: make_immutable(
+    np.array([1, 0, 0, -1], dtype=complex) / np.sqrt(2))
+BellPsiP = lambda: make_immutable(
+    np.array([0, 1, 1, 0], dtype=complex) / np.sqrt(2))
+BellPsiM = lambda: make_immutable(
+    np.array([0, 1, -1, 0], dtype=complex) / np.sqrt(2))
 phiplus, phiminus = BellPhiP(), BellPhiM()
 psiplus, psiminus = BellPsiP(), BellPsiM()
 
