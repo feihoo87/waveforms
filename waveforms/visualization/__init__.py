@@ -22,10 +22,10 @@ def plotEllipse(c0, a, b, phi, ax):
 
 
 def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
-    from waveforms.math.fit import getThresholdInfo
+    from waveforms.math.fit import get_threshold_info, mult_gaussian_pdf
 
     if info is None:
-        info = getThresholdInfo(s0, s1)
+        info = get_threshold_info(s0, s1)
     thr, phi = info['threshold'], info['phi']
     visibility, p0, p1 = info['visibility']
     # print(
@@ -73,8 +73,13 @@ def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
     for s in ax1.spines.values():
         s.set_visible(False)
 
-    c0, c1 = info['center']
-    a0, b0, a1, b1 = info['std']
+    # c0, c1 = info['center']
+    # a0, b0, a1, b1 = info['std']
+    params = info['params']
+    r0, i0, r1, i1 = params[0][0], params[1][0], params[0][1], params[1][1]
+    a0, b0, a1, b1 = params[0][2], params[1][2], params[0][3], params[1][3]
+    c0 = (r0 + 1j * i0) * np.exp(1j * phi)
+    c1 = (r1 + 1j * i1) * np.exp(1j * phi)
     plotEllipse(c0, 2 * a0, 2 * b0, phi, ax1)
     plotEllipse(c1, 2 * a1, 2 * b1, phi, ax1)
 
@@ -87,12 +92,21 @@ def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
     ax1.plot(np.real(c1), np.imag(c1), 'o', color='C4')
 
     re0, re1 = info['signal']
-    ax2.hist(re0, bins=50, alpha=0.5)
-    ax2.hist(re1, bins=50, alpha=0.5)
+    x, a, b, c = info['cdf']
+
+    n0, bins0, *_ = ax2.hist(re0, bins=50, alpha=0.5)
+    n1, bins1, *_ = ax2.hist(re1, bins=50, alpha=0.5)
+    ax2.plot(
+        x,
+        np.sum(n0) * (bins0[1] - bins0[0]) * mult_gaussian_pdf(
+            x, [r0, r1], [a0, a1], [params[0][4], 1 - params[0][4]]))
+    ax2.plot(
+        x,
+        np.sum(n1) * (bins1[1] - bins1[0]) * mult_gaussian_pdf(
+            x, [r0, r1], [a0, a1], [params[0][5], 1 - params[0][5]]))
     ax2.set_ylabel('Count')
     ax2.set_xlabel('Projection Axes')
 
-    x, a, b, c = info['cdf']
     ax3 = ax2.twinx()
     ax3.plot(x, a)
     ax3.plot(x, b)

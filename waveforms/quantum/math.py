@@ -1,4 +1,3 @@
-#%%
 from functools import reduce
 from itertools import chain, product
 from typing import Optional, Union
@@ -6,8 +5,8 @@ from typing import Optional, Union
 import numpy as np
 import scipy.sparse as sp
 from scipy.linalg import eigh, expm, logm, sqrtm
-from waveforms.math import (fitCircle, fitCrossPoint, fitPole, getFTMatrix,
-                            linFit)
+from waveforms.math import (fit_circle, fit_cross_point, fit_pole, getFTMatrix,
+                            lin_fit)
 from waveforms.math.signal import decay, oscillation
 
 
@@ -397,6 +396,3 @@ def cpmg(t, T1, Tphi, Delta, A, offset, phi=0):
 
 def relaxation(t, T1, A, offset):
     return A * decay(t, [T1]) + offset
-
-
-# %%

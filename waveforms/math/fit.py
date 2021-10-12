@@ -1,10 +1,14 @@
+import warnings
 from collections import defaultdict
 
+import matplotlib.pyplot as plt
 import numpy as np
+from scipy.optimize import minimize
+from scipy.special import erf
 from sklearn import svm
 
 
-def linFit(x, y):
+def lin_fit(x, y):
     """use less memory than np.polyfit"""
     x, y = np.asarray(x), np.asarray(y)
     xm, ym = x.mean(), y.mean()
@@ -14,7 +18,7 @@ def linFit(x, y):
     return np.array([a, b])
 
 
-def fitCircle(x, y):
+def fit_circle(x, y):
     u, v = x - x.mean(), y - y.mean()
     Suuu, Svvv = np.sum(u**3), np.sum(v**3)
     Suu, Svv = np.sum(u**2), np.sum(v**2)
@@ -29,18 +33,18 @@ def fitCircle(x, y):
     return xc, yc, R
 
 
-def fitCrossPoint(x1, y1, x2, y2):
-    a1, b1 = linFit(x1, y1)
-    a2, b2 = linFit(x2, y2)
+def fit_cross_point(x1, y1, x2, y2):
+    a1, b1 = lin_fit(x1, y1)
+    a2, b2 = lin_fit(x2, y2)
     return (b2 - b1) / (a1 - a2), (a1 * b2 - a2 * b1) / (a1 - a2)
 
 
-def fitPole(x, y):
+def fit_pole(x, y):
     a, b, c = np.polyfit(x, y, 2)
     return -0.5 * b / a, c - 0.25 * b**2 / a
 
 
-def goodnessOfFit(pnum, ydata, fvec, sigma=None):
+def goodness_of_fit(pnum, ydata, fvec, sigma=None):
     """
     拟合优度
 
@@ -68,7 +72,7 @@ def goodnessOfFit(pnum, ydata, fvec, sigma=None):
     return SSE, R_square, Adj_R_sq, RMSE
 
 
-def countState(state):
+def count_state(state):
     ret = defaultdict(lambda: 0)
     for s in state:
         ret[tuple(s)] += 1
@@ -127,7 +131,7 @@ def default_classify(data, params):
 install_classify_method("state", default_classify)
 
 
-def classifyData(data, measure_gates, avg=False):
+def classify_data(data, measure_gates, avg=False):
     assert data.shape[-1] == len(
         measure_gates), 'number of qubits must equal to the size of last axis'
 
@@ -165,10 +169,58 @@ def cdf(t, data):
     data.sort()
     x = data
     y = np.linspace(0, 1, len(data))
-    return np.interp(t, x, y, left=0, right=1)
+    if t is None:
+        return x, y
+    else:
+        return np.interp(t, x, y, left=0, right=1)
 
 
-def getThresholdInfo(s0, s1):
+def gaussian_pdf(x, mu, sigma):
+    return 1 / (sigma * np.sqrt(2 * np.pi)) * np.exp(-0.5 *
+                                                     ((x - mu) / sigma)**2)
+
+
+def gaussian_cdf(x, mu, sigma):
+    return 0.5 * (1 + erf((x - mu) / (sigma * np.sqrt(2))))
+
+
+def mult_gaussian_pdf(x, mu, sigma, amp):
+    amp /= np.sum(amp)
+    ret = np.zeros_like(x)
+    for i in range(len(mu)):
+        ret += amp[i] * gaussian_pdf(x, mu[i], sigma[i])
+    return ret
+
+
+def mult_gaussian_cdf(x, mu, sigma, amp):
+    amp /= np.sum(amp)
+    ret = np.zeros_like(x)
+    for i in range(len(mu)):
+        ret += amp[i] * gaussian_cdf(x, mu[i], sigma[i])
+    return ret
+
+
+def fit_readout_distribution(s0, s1):
+    def loss(params, s0, s1):
+        c0, c1, r0, r1, p0, p1 = params
+        x0, y0 = cdf(None, s0)
+        x1, y1 = cdf(None, s1)
+        Y0 = mult_gaussian_cdf(x0, [c0, c1], [r0, r1], [p0, 1 - p0])
+        Y1 = mult_gaussian_cdf(x1, [c0, c1], [r0, r1], [p1, 1 - p1])
+
+        return np.sum((Y0 - y0)**2 + (Y1 - y1)**2)
+
+    res = minimize(loss,
+                   [s0.mean(), s1.mean(),
+                    s0.std(), s1.std(), 1, 0],
+                   args=(s0, s1),
+                   bounds=[(None, None), (None, None), (0, None), (0, None),
+                           (0, 1), (0, 1)])
+
+    return res
+
+
+def get_threshold_info(s0, s1):
     s0, s1 = np.asarray(s0), np.asarray(s1)
 
     data = np.hstack([s0, s1])
@@ -187,6 +239,8 @@ def getThresholdInfo(s0, s1):
     im0 = (s0 * np.exp(-1j * phi)).imag
     im1 = (s1 * np.exp(-1j * phi)).imag
 
+    fit_readout_distribution(re0, re1)
+
     x = np.unique(np.hstack([re0, re1]))
     x.sort()
     a = cdf(x, re0)
@@ -199,6 +253,9 @@ def getThresholdInfo(s0, s1):
     c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
     c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
 
+    params_r = fit_readout_distribution(re0, re1).x
+    params_i = fit_readout_distribution(im0, im1).x
+
     return {
         'threshold': thr,
         'phi': phi,
@@ -206,6 +263,25 @@ def getThresholdInfo(s0, s1):
         'signal': (re0, re1),
         'idle': (im0, im1),
         'center': (c0, c1),
+        'params': (params_r, params_i),
         'std': (a0, b0, a1, b1),
         'cdf': (x, a, b, c)
     }
+
+
+def getThresholdInfo(s0, s1):
+    warnings.warn('getThresholdInfo is deprecated, use get_threshold_info',
+                  DeprecationWarning, 2)
+    return get_threshold_info(s0, s1)
+
+
+def classifyData(data, measure_gates, avg=False):
+    warnings.warn('classifyData is deprecated, use classify_data',
+                  DeprecationWarning, 2)
+    return classify_data(data, measure_gates, avg=avg)
+
+
+def countState(state):
+    warnings.warn('countState is deprecated, use count_state',
+                  DeprecationWarning, 2)
+    return count_state(state)
