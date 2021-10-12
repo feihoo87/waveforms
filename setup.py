@@ -72,7 +72,6 @@ setup(
         'Operating System :: MacOS :: MacOS X',
         'Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
     ],
     project_urls={  # Optional
