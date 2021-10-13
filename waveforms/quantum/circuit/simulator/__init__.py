@@ -177,7 +177,7 @@ if __name__ == '__main__':
         seq = []
         for i in range(depth):
             for j in range(N):
-                seq.append((np.random.choice(['X/2', 'Y/2', 'W']), j))
+                seq.append((np.random.choice(['X/2', 'Y/2', 'W/2']), j))
             for j in range(i % 2, N, 2):
                 seq.append(('SQiSWAP', (j, (j + 1) % N)))
         return seq
