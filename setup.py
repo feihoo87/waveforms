@@ -28,6 +28,7 @@ requirements = [
     'scikit-optimize>=0.8.1',
     'scipy>=1.0.0',
     'SQLAlchemy>=1.4.11',
+    'tensornetwork>=0.4.5',
     'xarray>=0.18.2'
 ]
 
