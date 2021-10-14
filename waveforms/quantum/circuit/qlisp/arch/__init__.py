@@ -1,5 +1,4 @@
 """Multiple architecture support"""
-from .baqis import baqisArchitecture
 from .base import (COMMAND, FREE, PUSH, READ, SYNC, TRIG, WRITE, Architecture,
                    general_architecture)
 
@@ -15,4 +14,3 @@ def register_arch(arch: Architecture):
 
 
 register_arch(general_architecture)
-register_arch(baqisArchitecture)
