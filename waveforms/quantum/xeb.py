@@ -3,11 +3,12 @@ from typing import Callable, Iterable, Optional
 
 import numpy as np
 from numpy import euler_gamma
-from scipy.special import polygamma
 from waveforms.quantum.circuit.simulator import applySeq
 
 
 def uncorrelatedEntropy(D: int) -> float:
+    from scipy.special import polygamma
+
     return euler_gamma + polygamma(0, D)
 
 
