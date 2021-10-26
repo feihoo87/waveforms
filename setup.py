@@ -16,20 +16,14 @@ __version__ = ""
 exec(open('waveforms/version.py').read())
 
 requirements = [
-    'blinker>=1.4',
     'click>=7.1.2',
     'cryptography>=3.4.7',
     'GitPython>=3.1.14',
-    'h5py>=2.7.0',
     'numpy>=1.13.3',
     'ply>=3.11',
     'portalocker>=1.4.0',
     'scikit-learn>=0.24.1',
-    'scikit-optimize>=0.8.1',
     'scipy>=1.0.0',
-    'SQLAlchemy>=1.4.11',
-    'tensornetwork>=0.4.5',
-    'xarray>=0.18.2'
 ]
 
 setup(
@@ -50,8 +44,15 @@ setup(
     entry_points ={'console_scripts': ['wave_server = waveforms.server.__main__:main']},
     install_requires=requirements,
     extras_require={
-        'storage': [
-            'netcdf4>=1.5.7'
+        'full': [
+            'blinker>=1.4',
+            'h5py>=2.7.0',
+            'matplotlib>=3.4.1',
+            'netcdf4>=1.5.7',
+            'SQLAlchemy>=1.4.11',
+            'scikit-optimize>=0.8.1',
+            'tensornetwork>=0.4.5',
+            'xarray>=0.18.2'
         ],
         'test': [
             'pytest>=4.4.0',

@@ -2,8 +2,12 @@ import itertools
 from functools import partial, reduce
 
 import numpy as np
-import tensornetwork as tn
 from waveforms.quantum.math import U, fSim, make_immutable, rfUnitary
+
+try:
+    import tensornetwork as tn
+except ImportError:
+    pass
 
 __matrix_of_gates = {}
 
@@ -165,6 +169,9 @@ def circuit_network(circ):
 
 
 def apply_circuit(circ, qubits=None, init_state=None):
+    if 'tn' not in globals():
+        raise ImportError('Please install tensornetwork first.')
+
     all_nodes, left_edges, right_edges, N = circuit_network(circ)
     if qubits is not None:
         assert len(qubits) == N
@@ -187,6 +194,9 @@ def apply_circuit(circ, qubits=None, init_state=None):
 
 
 def circuit2mat(circ):
+    if 'tn' not in globals():
+        raise ImportError('Please install tensornetwork first.')
+
     all_nodes, left_edges, right_edges, N = circuit_network(circ)
     result = tn.contractors.optimal(all_nodes,
                                     output_edge_order=left_edges + right_edges)
