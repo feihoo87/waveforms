@@ -225,7 +225,9 @@ def get_threshold_info(s0, s1):
     data = np.hstack([s0, s1])
     scale = 0.2 * np.abs(data).max()
     data /= scale
-    target = np.hstack([np.zeros_like(s0), np.ones_like(s1)])
+    target = np.hstack(
+        [np.zeros_like(s0, dtype=float),
+         np.ones_like(s1, dtype=float)])
     X = np.c_[np.real(data), np.imag(data)]
     clf = svm.LinearSVC()
     clf.fit(X, target)
