@@ -2,14 +2,13 @@ import random
 from typing import Callable, Iterable, Optional
 
 import numpy as np
-from numpy import euler_gamma
 from waveforms.quantum.circuit.simulator import applySeq
 
 
 def uncorrelatedEntropy(D: int) -> float:
     from scipy.special import polygamma
 
-    return euler_gamma + polygamma(0, D)
+    return np.euler_gamma + polygamma(0, D)
 
 
 def PTEntropy(N: int) -> float:
