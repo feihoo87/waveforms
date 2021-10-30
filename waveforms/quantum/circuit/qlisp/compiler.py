@@ -50,11 +50,11 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
     func(sub_ctx, gatecfg.qubits, *args)
 
-    for channel, bias in sub_ctx.biases.items():
+    for channel, (bias, edge, buffer) in sub_ctx.biases.items():
         if ctx.biases[channel] != bias:
             _, *qubits = channel
             t = max(ctx.time[q] for q in qubits)
-            wav = (bias - ctx.biases[channel]) * step(0) >> t
+            wav = (bias - ctx.biases[channel]) * step(edge) >> (t + buffer / 2)
             _addWaveforms(ctx, channel, wav)
             ctx.biases[channel] = bias
 
