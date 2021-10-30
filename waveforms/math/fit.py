@@ -1,3 +1,4 @@
+from math import radians
 import warnings
 from collections import defaultdict
 
@@ -127,7 +128,58 @@ def default_classify(data, params):
     return (data * np.exp(-1j * phi)).real > thr
 
 
+def classify_svm(data, params):
+    """
+    分类方法：SVM
+    """
+    raise NotImplementedError
+    clf = svm.SVC(kernel='rbf',
+                  gamma=params.get('gamma', 1),
+                  C=params.get('C', 1))
+    clf.fit(data, data)
+    return clf.predict(data)
+
+
+def classify_kmean(data, params):
+    """
+    分类方法：KMeans
+    """
+    raise NotImplementedError
+    k = params.get('k', 2)
+    kmeans = KMeans(n_clusters=k, random_state=0).fit(data)
+    return kmeans.labels_
+
+
+def classify_nearest(data, params):
+    """
+    分类方法：最近邻
+    """
+    centers = params.get('centers', None)
+    if centers is None:
+        raise ValueError("centers not found")
+    return np.argmin(np.abs(data - centers), axis=1)
+
+
+def classify_range(data, params):
+    """
+    分类方法：范围
+    """
+    centers = params.get('centers', None)
+    radians = params.get('radians', None)
+    if centers is None:
+        raise ValueError("centers not found")
+    if radians is None:
+        return np.argmin(np.abs(data - centers), axis=1)
+
+    ret = np.full_like(data, 0, dtype=int)
+    for i, (c, r) in enumerate(zip(centers, radians)):
+        ret[np.abs(data - c) <= r] += 2**i
+    return ret
+
+
 install_classify_method("state", default_classify)
+install_classify_method("nearest", classify_nearest)
+install_classify_method("range", classify_range)
 
 
 def classify_data(data, measure_gates, avg=False):
