@@ -50,7 +50,11 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
     func(sub_ctx, gatecfg.qubits, *args)
 
-    for channel, (bias, edge, buffer) in sub_ctx.biases.items():
+    for channel, bias in sub_ctx.biases.items():
+        if isinstance(bias, tuple):
+            bias, edge, buffer = bias
+        else:
+            edge, buffer = 0, 0
         if ctx.biases[channel] != bias:
             _, *qubits = channel
             t = max(ctx.time[q] for q in qubits)
