@@ -3,7 +3,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
-from scipy.signal import fftconvolve
+from scipy.signal import fftconvolve, lfilter
 
 
 def getFTMatrix(fList: Sequence[float],
@@ -144,13 +144,56 @@ def zDistortKernel(dt: float, params: Sequence[tuple]) -> np.ndarray:
     return ker
 
 
-def predistort(sig: np.ndarray, ker: np.ndarray) -> np.ndarray:
-    if len(sig) >= len(ker):
-        return np.convolve(sig, ker, mode='same')
+def exp_decay_filter(amp, tau, sample_rate):
+    alpha = 1 - np.exp(-1 / (sample_rate * tau * (1 + amp)))
+
+    if amp >= 0:
+        k = amp / (1 + amp - alpha)
+        a = [(1 - k + k * alpha), -(1 - k) * (1 - alpha)]
     else:
-        start = (len(ker) - len(sig)) // 2
-        stop = start + len(sig)
-        return fftconvolve(sig, ker, mode='same')[start:stop]
+        k = -amp / (1 + amp) / (1 - alpha)
+        a = [(1 + k - k * alpha), -(1 + k) * (1 - alpha)]
+
+    b = [1, -(1 - alpha)]
+
+    return b, a
+
+
+def reflection_filter(f, A, tau):
+    return (1 - A) / (1 - A * np.exp(-2j * np.pi * f * tau))
+
+
+def reflection(sig, A, tau, sample_rate):
+    freq = np.fft.fftfreq(len(sig), 1 / sample_rate)
+    return np.fft.ifft(np.fft.fft(sig) * reflection_filter(freq, A, tau)).real
+
+
+def correct_reflection(sig, A, tau, sample_rate, fft=True):
+    if fft:
+        freq = np.fft.fftfreq(len(sig), 1 / sample_rate)
+        return np.fft.ifft(np.fft.fft(sig) /
+                           reflection_filter(freq, A, tau)).real
+    else:
+        return 1 / (1 - A) * sig - A / (1 - A) * shift(sig, tau,
+                                                       1 / sample_rate)
+
+
+def predistort(sig: np.ndarray,
+               filters: list = None,
+               ker: np.ndarray = None) -> np.ndarray:
+    if filters is None:
+        filters = []
+    for b, a in filters:
+        sig = lfilter(b, a, sig)
+
+    if ker is None:
+        return sig
+
+    size = len(sig)
+    sig = np.hstack((np.zeros_like(sig), sig, np.zeros_like(sig)))
+    start = size + len(ker) // 2
+    stop = start + size
+    return fftconvolve(sig, ker, mode='full')[start:stop]
 
 
 def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
