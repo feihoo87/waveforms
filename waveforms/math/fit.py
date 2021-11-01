@@ -157,7 +157,7 @@ def classify_nearest(data, params):
     centers = params.get('centers', None)
     if centers is None:
         raise ValueError("centers not found")
-    return np.argmin(np.abs(data - centers), axis=1)
+    return np.argmin([np.abs(data - c) for c in centers], axis=1)
 
 
 def classify_range(data, params):
@@ -169,7 +169,7 @@ def classify_range(data, params):
     if centers is None:
         raise ValueError("centers not found")
     if radians is None:
-        return np.argmin(np.abs(data - centers), axis=1)
+        return np.argmin([np.abs(data - c) for c in centers], axis=1)
 
     ret = np.full_like(data, 0, dtype=int)
     for i, (c, r) in enumerate(zip(centers, radians)):
