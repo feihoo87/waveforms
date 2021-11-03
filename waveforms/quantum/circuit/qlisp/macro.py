@@ -46,20 +46,56 @@ def extend_macro(qlisp, lib):
                     yield from extend_macro([st], lib)
 
 
+_VZ_rules = {}
+
+
+def add_VZ_rule(gateName, rule):
+    _VZ_rules[gateName] = rule
+
+
+def remove_VZ_rule(gateName, rule):
+    del _VZ_rules[gateName]
+
+
+def _VZ_P(st, phaseList):
+    return [], [mod(phaseList[0] + st[0][1], 2 * pi)]
+
+
+def _VZ_rfUnitary(st, phaseList):
+    (_, theta, phi), qubit = st
+    return [(('rfUnitary', theta, phi - phaseList[0]), qubit)], phaseList
+
+
+def _VZ_clear(st, phaseList):
+    return [st], [0] * len(phaseList)
+
+
+def _VZ_exchangable(st, phaseList):
+    return [st], phaseList
+
+
+def _VZ_swap(st, phaseList):
+    return [st], phaseList[::-1]
+
+
+add_VZ_rule('P', _VZ_P)
+add_VZ_rule('rfUnitary', _VZ_rfUnitary)
+add_VZ_rule('Reset', _VZ_clear)
+add_VZ_rule('Measure', _VZ_clear)
+add_VZ_rule('CZ', _VZ_exchangable)
+add_VZ_rule('I', _VZ_exchangable)
+add_VZ_rule('Barrier', _VZ_exchangable)
+add_VZ_rule('Delay', _VZ_exchangable)
+add_VZ_rule('iSWAP', _VZ_swap)
+add_VZ_rule('SWAP', _VZ_swap)
+
+
 def exchangeRzWithGate(st, phaseList, lib):
-    if gateName(st) == 'P':
-        return [], [mod(phaseList[0] + st[0][1], 2 * pi)]
-    elif gateName(st) == 'rfUnitary':
-        (_, theta, phi), qubit = st
-        return [(('rfUnitary', theta, phi - phaseList[0]), qubit)], phaseList
-    elif gateName(st) in ['Reset', 'Measure']:
-        return [st], [0] * len(phaseList)
-    elif gateName(st) in ['CZ', 'I', 'Barrier', 'Delay']:
-        return [st], phaseList
-    elif gateName(st) in ['iSWAP', 'SWAP']:
-        return [st], phaseList[::-1]
+    gate = gateName(st)
+    if gate in _VZ_rules:
+        return _VZ_rules[gate](st, phaseList)
     else:
-        raise Exception
+        raise Exception('Unknow VZ exchange rule.')
 
 
 def reduceVirtualZ(qlisp, lib):
