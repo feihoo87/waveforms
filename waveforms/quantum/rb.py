@@ -56,6 +56,8 @@ def generateRBCircuit(qubits, cycle, seed=None, interleaves=[], base=None):
     Returns:
         list: The RB circuit.
     """
+    if isinstance(qubits, (str, int)):
+        qubits = (qubits, )
 
     MAX = cliffordOrder(len(qubits))
 
