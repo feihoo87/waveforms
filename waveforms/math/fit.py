@@ -1,11 +1,12 @@
-from math import radians
 import warnings
 from collections import defaultdict
+from math import radians
 
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import erf
 from sklearn import svm
+from sklearn.cluster import KMeans
 
 
 def lin_fit(x, y):
@@ -140,14 +141,26 @@ def classify_svm(data, params):
     return clf.predict(data)
 
 
-def classify_kmean(data, params):
+def classify_kmeans(data, params):
     """
     分类方法：KMeans
     """
-    raise NotImplementedError
-    k = params.get('k', 2)
-    kmeans = KMeans(n_clusters=k, random_state=0).fit(data)
-    return kmeans.labels_
+    centers = params.get('centers', None)
+    if isinstance(centers, list):
+        centers = np.asarray(centers)
+
+    k = params.get('k', None)
+    if k is None and centers is not None:
+        k = np.asarray(centers).shape[0]
+    cur_shape = data.shape
+
+    flatten_init = np.array([np.real(centers), np.imag(centers)]).T
+
+    flatten_data = data.flatten()
+    ret_ans = KMeans(n_clusters=k, init=flatten_init).fit_predict(
+        np.array([np.real(flatten_data),
+                  np.imag(flatten_data)]).T)
+    return 2**ret_ans.reshape(cur_shape)
 
 
 def classify_nearest(data, params):
@@ -180,6 +193,7 @@ def classify_range(data, params):
 install_classify_method("state", default_classify)
 install_classify_method("nearest", classify_nearest)
 install_classify_method("range", classify_range)
+install_classify_method("kmeans", classify_kmeans)
 
 
 def classify_data(data, measure_gates, avg=False):
