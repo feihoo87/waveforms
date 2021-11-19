@@ -1,8 +1,8 @@
 from typing import Literal, Optional, Sequence, Union
 
 from .arch import get_arch
-from .assembly_left import _assembly_align_left
-from .assembly_right import _assembly_align_right
+from .assembly_left import assembly_align_left
+from .assembly_right import assembly_align_right
 from .config import Config
 from .library import Library, libraries
 from .macro import extend_macro, reduceVirtualZ
@@ -24,9 +24,9 @@ def assembly(qlisp,
         ctx = create_context(cfg=cfg)
 
     if align == 'left':
-        return _assembly_align_left(qlisp, ctx, lib)
+        return assembly_align_left(qlisp, ctx, lib)
     elif align == 'right':
-        return _assembly_align_right(qlisp, ctx, lib)
+        return assembly_align_right(qlisp, ctx, lib)
     else:
         raise ValueError(f'align={align} is not supported.')
 

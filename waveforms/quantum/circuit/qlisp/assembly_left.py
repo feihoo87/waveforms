@@ -8,14 +8,40 @@ from .qlisp import (ADChannel, AWGChannel, Context, GateConfig,
 from .stdlib import std
 
 
-@std.opaque('__finally__')
-def _finally_opaque(ctx, qubits):
-    """_finally_opaque
+def _ctx_update_biases(sub_ctx: Context, ctx: Context):
+    for channel, bias in sub_ctx.biases.items():
+        if isinstance(bias, tuple):
+            bias, edge, buffer = bias
+        else:
+            edge, buffer = 0, 0
+        if ctx.biases[channel] != bias:
+            _, *qubits = channel
+            t = max(ctx.time[q] for q in qubits)
+            wav = (bias - ctx.biases[channel]) * step(edge) >> (t + buffer / 2)
+            _addWaveforms(ctx, channel, wav)
+            ctx.biases[channel] = bias
 
-    clean all biases.
-    """
-    for ch in ctx.biases:
-        ctx.biases[ch] = 0
+
+def _ctx_update_time(sub_ctx: Context, ctx: Context):
+    ctx.time.update(sub_ctx.time)
+
+
+def _ctx_update_phases(sub_ctx: Context, ctx: Context):
+    ctx.phases.update(sub_ctx.phases)
+
+
+def _ctx_update_waveforms(sub_ctx: Context, ctx: Context):
+    for channel, wav in sub_ctx.raw_waveforms.items():
+        _addWaveforms(ctx, channel, wav)
+
+
+def _ctx_update_measurement_tasks(sub_ctx: Context, ctx: Context):
+    for cbit, taskList in sub_ctx.measures.items():
+        for task in taskList:
+            hardware = ctx.cfg._getADChannel(task.qubit)
+            ctx.measures[cbit].append(
+                MeasurementTask(task.qubit, task.cbit, task.time, task.signal,
+                                task.params, hardware))
 
 
 def call_opaque(st: tuple, ctx: Context, lib: Library):
@@ -43,30 +69,11 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
 
     func(sub_ctx, gatecfg.qubits, *args)
-
-    for channel, bias in sub_ctx.biases.items():
-        if isinstance(bias, tuple):
-            bias, edge, buffer = bias
-        else:
-            edge, buffer = 0, 0
-        if ctx.biases[channel] != bias:
-            _, *qubits = channel
-            t = max(ctx.time[q] for q in qubits)
-            wav = (bias - ctx.biases[channel]) * step(edge) >> (t + buffer / 2)
-            _addWaveforms(ctx, channel, wav)
-            ctx.biases[channel] = bias
-
-    ctx.time.update(sub_ctx.time)
-    ctx.phases.update(sub_ctx.phases)
-
-    for channel, wav in sub_ctx.raw_waveforms.items():
-        _addWaveforms(ctx, channel, wav)
-    for cbit, taskList in sub_ctx.measures.items():
-        for task in taskList:
-            hardware = ctx.cfg._getADChannel(task.qubit)
-            ctx.measures[cbit].append(
-                MeasurementTask(task.qubit, task.cbit, task.time, task.signal,
-                                task.params, hardware))
+    _ctx_update_biases(sub_ctx, ctx)
+    _ctx_update_time(sub_ctx, ctx)
+    _ctx_update_phases(sub_ctx, ctx)
+    _ctx_update_waveforms(sub_ctx, ctx)
+    _ctx_update_measurement_tasks(sub_ctx, ctx)
 
 
 def _addWaveforms(ctx: Context, channel: tuple, wav: Waveform):
@@ -105,7 +112,7 @@ def _allocQubits(ctx, qlisp):
         ctx.addressTable[i] = q
 
 
-def _assembly_align_left(qlisp, ctx: Context, lib: Library):
+def assembly_align_left(qlisp, ctx: Context, lib: Library):
     _allocQubits(ctx, qlisp)
 
     allQubits = set()
@@ -123,7 +130,9 @@ def _assembly_align_left(qlisp, ctx: Context, lib: Library):
         except:
             raise QLispError(f'assembly statement {(gate, qubits)} error.')
     call_opaque(('Barrier', tuple(allQubits)), ctx, lib=lib)
-    call_opaque(('__finally__', tuple(allQubits)), ctx, lib=lib)
+    for ch in ctx.biases:
+        ctx.biases[ch] = 0
+    _ctx_update_biases(ctx, ctx)
     ctx.end = max(ctx.time.values())
 
     code = QLispCode(cfg=ctx.cfg,
