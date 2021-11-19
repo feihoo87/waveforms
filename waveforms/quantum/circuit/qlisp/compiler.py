@@ -1,7 +1,7 @@
 from typing import Literal, Optional, Sequence, Union
 
 from .arch import get_arch
-from .assembly_left import assembly_align_left
+from .assembly_left import assembly_align_left, call_opaque
 from .assembly_right import assembly_align_right
 from .config import Config
 from .library import Library, libraries

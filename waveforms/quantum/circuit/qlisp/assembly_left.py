@@ -5,7 +5,6 @@ from .library import Library
 from .qlisp import (ADChannel, AWGChannel, Context, GateConfig,
                     MeasurementTask, MultADChannel, MultAWGChannel, QLispCode,
                     QLispError, create_context, gateName)
-from .stdlib import std
 
 
 def _ctx_update_biases(sub_ctx: Context, ctx: Context):
