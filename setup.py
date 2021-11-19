@@ -22,7 +22,6 @@ requirements = [
     'numpy>=1.13.3',
     'ply>=3.11',
     'portalocker>=1.4.0',
-    'scikit-learn>=0.24.1',
     'scipy>=1.0.0',
 ]
 
@@ -50,6 +49,7 @@ setup(
             'matplotlib>=3.4.1',
             'netcdf4>=1.5.7',
             'SQLAlchemy>=1.4.11',
+            'scikit-learn>=0.24.1',
             'scikit-optimize>=0.8.1',
             'tensornetwork>=0.4.5',
             'xarray>=0.18.2'
@@ -75,6 +75,7 @@ setup(
         'Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
     ],
     project_urls={  # Optional
         'Bug Reports': 'https://github.com/feihoo87/waveforms/issues',

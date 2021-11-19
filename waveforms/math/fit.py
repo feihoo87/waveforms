@@ -1,12 +1,9 @@
 import warnings
 from collections import defaultdict
-from math import radians
 
 import numpy as np
 from scipy.optimize import minimize
 from scipy.special import erf
-from sklearn import svm
-from sklearn.cluster import KMeans
 
 
 def lin_fit(x, y):
@@ -134,6 +131,8 @@ def classify_svm(data, params):
     分类方法：SVM
     """
     raise NotImplementedError
+    from sklearn import svm
+
     clf = svm.SVC(kernel='rbf',
                   gamma=params.get('gamma', 1),
                   C=params.get('C', 1))
@@ -145,6 +144,8 @@ def classify_kmeans(data, params):
     """
     分类方法：KMeans
     """
+    from sklearn.cluster import KMeans
+
     centers = params.get('centers', None)
     if isinstance(centers, list):
         centers = np.asarray(centers)
@@ -286,6 +287,8 @@ def fit_readout_distribution(s0, s1):
 
 
 def get_threshold_info(s0, s1):
+    from sklearn import svm
+
     s0, s1 = np.asarray(s0), np.asarray(s1)
 
     data = np.hstack([s0, s1])
