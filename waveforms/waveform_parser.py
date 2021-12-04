@@ -25,9 +25,9 @@ class _WaveLexer:
 
     literals = r'=()[]<>,.+-/*^'
     functions = [
-        'D', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'gaussian', 'interp',
-        'mixing', 'one', 'poly', 'samplingPoints', 'sign', 'sin', 'sinc',
-        'square', 'step', 'zero'
+        'D', 'chirp', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'gaussian',
+        'interp', 'mixing', 'one', 'poly', 'samplingPoints', 'sign', 'sin',
+        'sinc', 'square', 'step', 'zero'
     ]
     tokens = [
         'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',

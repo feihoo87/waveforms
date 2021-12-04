@@ -495,6 +495,12 @@ SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
 EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
 INTERP = registerBaseFunc(lambda t, start, stop, points: np.interp(
     t, np.linspace(start, stop, len(points)), points))
+LINEARCHIRP = registerBaseFunc(lambda t, f0, f1, T, phi0: np.sin(
+    phi0 + 2 * np.pi * ((f1 - f0) / (2 * T) * t**2 + f0 * t)))
+EXPONENTIALCHIRP = registerBaseFunc(lambda t, f0, alpha, phi0: np.sin(
+    phi0 + 2 * pi * f0 * (np.exp(alpha * t) - 1) / alpha))
+HYPERBOLICCHIRP = registerBaseFunc(lambda t, f0, k, phi0: np.sin(
+    phi0 + 2 * np.pi * f0 / k * np.log(1 + k * t)))
 
 # register derivative
 registerDerivative(LINEAR, lambda shift, *args: _one)
@@ -526,6 +532,33 @@ registerDerivative(
     INTERP, lambda shift, start, stop, points:
     (((((INTERP, start, stop, tuple(np.gradient(np.asarray(points))), shift),
         ), (1, )), ), ((len(points) - 1) / (stop - start), )))
+
+
+def _d_LINEARCHIRP(shift, f0, f1, T, phi0):
+    tlist = (
+        (((LINEARCHIRP, f0, f1, T, phi0 + pi / 2, shift), ), (1, )),
+        (((LINEAR, shift), (LINEARCHIRP, f0, f1, T, phi0 + pi / 2, shift)),
+         (1, 1)),
+    )
+    alist = (2 * pi * f0, 2 * pi * (f1 - f0) / T)
+
+    if f0 == 0:
+        return tlist[1:], alist[1:]
+    else:
+        return tlist, alist
+
+
+registerDerivative(LINEARCHIRP, _d_LINEARCHIRP)
+registerDerivative(
+    EXPONENTIALCHIRP, lambda shift, f0, alpha, phi0:
+    (((((EXP, alpha, shift),
+        (EXPONENTIALCHIRP, f0, alpha, phi0 + pi / 2, shift)), (1, 1)), ),
+     (2 * pi * f0, )))
+registerDerivative(
+    HYPERBOLICCHIRP, lambda shift, f0, k, phi0:
+    (((((LINEAR, shift - 1 / k),
+        (HYPERBOLICCHIRP, f0, k, phi0 + pi / 2, shift)), (-1, 1)), ),
+     (2 * pi * f0, )))
 
 
 def _D_base(m):
@@ -668,6 +701,45 @@ def poly(a):
     return Waveform(seq=(_poly(*a), ))
 
 
+def chirp(f0, f1, T, phi0=0, type='linear'):
+    """
+    A chirp is a signal in which the frequency increases (up-chirp)
+    or decreases (down-chirp) with time. In some sources, the term
+    chirp is used interchangeably with sweep signal.
+
+    type: "linear", "exponential", "hyperbolic"
+    """
+    if f0 == f1:
+        return sin(f0, phi0)
+    if T <= 0:
+        raise ValueError('T must be positive')
+
+    if type == 'linear':
+        # f(t) = f1 * (t/T) + f0 * (1 - t/T)
+        return Waveform(bounds=(0, T, +inf),
+                        seq=(_zero, _basic_wave(LINEARCHIRP, f0, f1, T,
+                                                phi0), _zero))
+    elif type in ['exp', 'exponential', 'geometric']:
+        # f(t) = f0 * (f1/f0) ** (t/T)
+        if f0 == 0:
+            raise ValueError('f0 must be non-zero')
+        alpha = np.log(f1 / f0) / T
+        return Waveform(bounds=(0, T, +inf),
+                        seq=(_zero,
+                             _basic_wave(EXPONENTIALCHIRP, f0, alpha,
+                                         phi0), _zero))
+    elif type in ['hyperbolic', 'hyp']:
+        # f(t) = f0 * f1 / (f0 * (t/T) + f1 * (1-t/T))
+        if f0 * f1 == 0:
+            return const(np.sin(phi0))
+        k = (f0 - f1) / (f1 * T)
+        return Waveform(bounds=(0, T, +inf),
+                        seq=(_zero, _basic_wave(HYPERBOLICCHIRP, f0, k,
+                                                phi0), _zero))
+    else:
+        raise ValueError(f'unknown type {type}')
+
+
 def interp(x, y):
     seq, bounds = [_zero], [x[0]]
     for x1, x2, y1, y2 in zip(x[:-1], x[1:], y[:-1], y[1:]):
@@ -755,8 +827,8 @@ def mixing(I,
 
 
 __all__ = [
-    'D', 'Waveform', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'function',
-    'gaussian', 'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
-    'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'square',
-    'step', 'zero'
+    'D', 'Waveform', 'chirp', 'const', 'cos', 'cosPulse', 'cut', 'exp',
+    'function', 'gaussian', 'interp', 'mixing', 'one', 'poly',
+    'registerBaseFunc', 'registerDerivative', 'samplingPoints', 'sign', 'sin',
+    'sinc', 'square', 'step', 'zero'
 ]
