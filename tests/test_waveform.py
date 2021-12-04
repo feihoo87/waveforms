@@ -52,6 +52,31 @@ def test_shift():
     assert np.allclose(wav(t), np.exp(-((t - 3) / std_sq2)**2), atol=5e-03)
 
 
+def test_chirp():
+    t = np.linspace(0, 10, 1000, endpoint=False)
+
+    def _chirp(t, f0, f1, T, phi0=0, type='linear'):
+        if type == 'linear':
+            return np.sin(phi0 + 2 * np.pi * ((f1 - f0) /
+                                              (2 * T) * t**2 + f0 * t))
+        elif type == 'exponential':
+            return np.sin(phi0 + 2 * np.pi * f0 * T *
+                          ((f1 / f0)**(t / T) - 1) / np.log((f1 / f0)))
+        elif type == 'hyperbolic':
+            return np.sin(phi0 - 2 * np.pi * f0 * f1 * T /
+                          (f1 - f0) * np.log(1 - (f1 - f0) * t / (f1 * T)))
+        else:
+            raise ValueError(f'Unknow type {type}')
+
+    wav1 = chirp(1, 2, 10, 4, 'linear')
+    wav2 = chirp(1, 2, 10, 4, 'exponential')
+    wav3 = chirp(1, 2, 10, 4, 'hyperbolic')
+
+    assert np.allclose(wav1(t), _chirp(t, 1, 2, 10, 4, 'linear'))
+    assert np.allclose(wav2(t), _chirp(t, 1, 2, 10, 4, 'exponential'))
+    assert np.allclose(wav3(t), _chirp(t, 1, 2, 10, 4, 'hyperbolic'))
+
+
 def test_parser():
     w1 = (gaussian(10) <<
           100) + square(20, edge=5, type='linear') * cos(2 * pi * 23.1)
