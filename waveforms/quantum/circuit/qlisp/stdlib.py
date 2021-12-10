@@ -421,7 +421,7 @@ def CZ(ctx, qubits):
     duration = ctx.params['duration']
     amp = ctx.params['amp']
 
-    if amp > 0 and duration > 0:
+    if amp != 0 and duration > 0:
         pulse = amp * (cos(pi / duration) * square(duration)) >> duration / 2
         ctx.channel[('coupler.Z', *qubits)] += pulse >> t
 
