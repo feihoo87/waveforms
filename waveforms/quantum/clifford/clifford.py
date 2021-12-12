@@ -317,10 +317,18 @@ def _genSeq(i, gate=('CZ', 'CZ')):
                 chain(*[[a[j], gate[0]] for j in range(0, k - 3, 2)],
                       [a[-2], p[0]])),
             tuple(
-                chain(*[[a[j], gate[0]] for j in range(1, k - 2, 2)],
+                chain(*[[a[j], gate[1]] for j in range(1, k - 2, 2)],
                       [a[-1], p[1]])))
     else:
         raise IndexError(f'i={i} should be less than 94158400.')
+
+
+def _countTwoQubitGate(seq, gate):
+    count = 0
+    for a, b in zip(*seq):
+        if (a, b) == gate:
+            count += 1
+    return count
 
 
 def genSeqForGate(db, gate=('CZ', 'CZ')):
@@ -329,7 +337,7 @@ def genSeqForGate(db, gate=('CZ', 'CZ')):
         with open(db, 'rb') as f:
             start, index2seq = pickle.load(f)
     else:
-        start, index2seq = 0, [set() for i in range(NUMBEROFELEMENTS)]
+        start, index2seq = 0, [list() for i in range(NUMBEROFELEMENTS)]
     try:
         while True:
             try:
@@ -338,19 +346,24 @@ def genSeqForGate(db, gate=('CZ', 'CZ')):
                 break
             i = seq2index(seq)
             if len(index2seq[i]) == 0:
-                index2seq[i].add(seq)
+                index2seq[i].append(seq)
             else:
                 s = index2seq[i].pop()
                 if (len(s[0]) == len(seq[0])
-                        and s[0].count(gate[0]) == seq[0].count(gate[0])):
-                    index2seq[i].add(seq)
-                    index2seq[i].add(s)
+                        and _countTwoQubitGate(s, gate) == _countTwoQubitGate(
+                            seq, gate)):
+                    index2seq[i].append(seq)
+                    index2seq[i].append(s)
                 elif (len(s[0]) > len(seq[0])
-                      or s[0].count(gate[0]) > seq[0].count(gate[0])):
-                    index2seq[i] = {seq}
+                      or _countTwoQubitGate(s, gate) > _countTwoQubitGate(
+                          seq, gate)):
+                    index2seq[i] = [seq]
                 else:
-                    index2seq[i].add(s)
+                    index2seq[i].append(s)
             start += 1
+            if start % 10000 == 0:
+                with open(db, 'wb') as f:
+                    pickle.dump((start, index2seq), f)
     finally:
         with open(db, 'wb') as f:
             pickle.dump((start, index2seq), f)
