@@ -1,6 +1,7 @@
 import operator
 from functools import lru_cache, reduce
 from itertools import chain, combinations, product, repeat
+from typing import Optional
 
 import numpy as np
 from scipy import linalg, optimize
@@ -198,34 +199,21 @@ def _UUds(N, gates):
             for ops in qstOpList(N, gates=gates)]
 
 
-def qst_mle(diags, gates=qst_gates, F=None, rho0=None):
+def _qst_mle(diags, UUds: list[tuple[np.ndarray, np.ndarray]],
+             rho0: np.ndarray, F: np.ndarray):
     """State tomography with maximum-likelihood estimation.
     
-    diags - a 2D array of measured probabilites.  The first index indicates which
-            operation from the qst protocol was applied, while the second index
-            tells which measurement result this was (e.g. 000, 001, etc.).
-    gates - qst protocol
-            yield unitaries from product(gates, repeat=N).
-            gates should be choosed from {I, X, Y, Z, H, S, -S,
-            X/2, Y/2, -X/2, -Y/2}.
-    rho0 - an initial guess for the density matrix, e.g. from linear tomography.
+    diags - measured probabilities (diagonal elements) after acting
+            on the state with each of the unitaries from the qst
+            protocol.
+    UUds - list of unitary pairs (U, U^\dagger)
+    rho0 - initial density matrix
+    F - fidelity of the measurement
     """
     diags = np.asarray(diags)
-    N = len(diags[0])  # size of density matrix
-    n = int(np.log2(N))  # number of qubits
-
-    if F is None:
-        F = np.eye(N)
-
-    # make an initial guess using linear tomography
-    if rho0 is None:
-        rho0 = normalize(qst(diags, gates))
 
     # convert the initial guess into vector
     v_guess = rhoToV(rho0)
-
-    # precompute conjugate transposes of matrices
-    UUds = _UUds(n, gates)
 
     def log(x):
         """Safe version of log that returns -Inf when x < 0, rather than NaN.
@@ -247,6 +235,37 @@ def qst_mle(diags, gates=qst_gates, F=None, rho0=None):
     #tis = optimize.fmin_bfgs(unlikelihood, tis_guess)
     v = optimize.minimize(unlikelihood, v_guess, method='BFGS')['x']
     return vToRho(v)
+
+
+def qst_mle(diags, gates=qst_gates, F=None, rho0=None):
+    """State tomography with maximum-likelihood estimation.
+    
+    diags - a 2D array of measured probabilites.  The first index indicates which
+            operation from the qst protocol was applied, while the second index
+            tells which measurement result this was (e.g. 000, 001, etc.).
+    gates - qst protocol
+            yield unitaries from product(gates, repeat=N).
+            gates should be choosed from {I, X, Y, Z, H, S, -S,
+            X/2, Y/2, -X/2, -Y/2}.
+    rho0 - an initial guess for the density matrix, e.g. from linear tomography.
+    """
+    N = len(diags[0])  # size of density matrix
+    n = int(np.log2(N))  # number of qubits
+
+    # make an initial guess using linear tomography
+    if rho0 is None:
+        rho0 = normalize(qst(diags, gates))
+
+    # convert the initial guess into vector
+    v_guess = rhoToV(rho0)
+
+    # precompute conjugate transposes of matrices
+    UUds = _UUds(n, gates)
+
+    if F is None:
+        F = np.eye(N)
+
+    return _qst_mle(diags, UUds, F, v_guess)
 
 
 def chi0(rhosIn, rhosOut):
