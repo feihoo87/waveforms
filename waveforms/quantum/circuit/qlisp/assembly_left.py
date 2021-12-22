@@ -27,6 +27,8 @@ def _ctx_update_time(sub_ctx: Context, ctx: Context):
 
 def _ctx_update_phases(sub_ctx: Context, ctx: Context):
     ctx.phases.update(sub_ctx.phases)
+    for k, v in sub_ctx.phases_ext.items():
+        ctx.phases_ext[k].update(v)
 
 
 def _ctx_update_waveforms(sub_ctx: Context, ctx: Context):

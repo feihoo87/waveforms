@@ -137,6 +137,8 @@ class Context():
         default_factory=lambda: defaultdict(list))
     phases: dict[str,
                  float] = field(default_factory=lambda: defaultdict(lambda: 0))
+    phases_ext: dict[str, dict[Union[int, str], float]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(lambda: 0)))
     biases: dict[str,
                  float] = field(default_factory=lambda: defaultdict(lambda: 0))
     end: float = 0
@@ -187,5 +189,8 @@ def create_context(ctx: Optional[Context] = None, **kw) -> Context:
         sub_ctx.time.update(ctx.time)
         sub_ctx.phases.update(ctx.phases)
         sub_ctx.biases.update(ctx.biases)
+        sub_ctx.phases_ext = {}
+        for k, v in ctx.phases_ext.items():
+            sub_ctx.phases_ext[k] = v.copy()
 
         return sub_ctx
