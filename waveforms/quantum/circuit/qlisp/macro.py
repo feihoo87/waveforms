@@ -33,9 +33,7 @@ def extend_control_gate(st, scope):
 
 def extend_macro(qlisp, lib):
     for st in qlisp:
-        if gateName(st) == 'I':
-            continue
-        elif gateName(st) == 'C':
+        if gateName(st) == 'C':
             yield from extend_control_gate(st, lib)
         else:
             gate = lib.getGate(gateName(st))

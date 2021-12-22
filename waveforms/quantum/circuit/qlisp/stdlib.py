@@ -229,6 +229,14 @@ def setBias(ctx, qubits, channel, bias, edge=0, buffer=0):
         ctx.time[qubit] = time + buffer
 
 
+@std.opaque('I')
+def I(ctx, qubits):
+    qubit = qubits[0]
+    ctx.channel['RF', qubit] += zero()
+    ctx.channel['Z', qubit] += zero()
+    ctx.channel['readoutLine.RF', qubit] += zero()
+
+
 def _rfUnitary(ctx, qubits, theta, phi):
     import numpy as np
 
@@ -373,7 +381,7 @@ def measure(ctx, qubits, cbit=None):
 
     pulse = (ring_up_amp * (step(edge) >> t) - (ring_up_amp - amp) *
              (step(edge) >> (t + ring_up_time)) - amp * (step(edge) >>
-                                                      (t + duration)))
+                                                         (t + duration)))
     ctx.channel['readoutLine.RF', qubit] += pulse * cos(2 * pi * frequency)
 
     # pulse = square(2 * duration) >> duration
