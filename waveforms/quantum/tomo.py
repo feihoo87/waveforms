@@ -210,8 +210,6 @@ def _qst_mle(diags, UUds: list[tuple[np.ndarray, np.ndarray]],
     rho0 - initial density matrix
     F - fidelity of the measurement
     """
-    diags = np.asarray(diags)
-
     # convert the initial guess into vector
     v_guess = rhoToV(rho0)
 
@@ -249,6 +247,7 @@ def qst_mle(diags, gates=qst_gates, F=None, rho0=None):
             X/2, Y/2, -X/2, -Y/2}.
     rho0 - an initial guess for the density matrix, e.g. from linear tomography.
     """
+    diags = np.asarray(diags)
     N = len(diags[0])  # size of density matrix
     n = int(np.log2(N))  # number of qubits
 
@@ -256,16 +255,13 @@ def qst_mle(diags, gates=qst_gates, F=None, rho0=None):
     if rho0 is None:
         rho0 = normalize(qst(diags, gates))
 
-    # convert the initial guess into vector
-    v_guess = rhoToV(rho0)
-
     # precompute conjugate transposes of matrices
     UUds = _UUds(n, gates)
 
     if F is None:
         F = np.eye(N)
 
-    return _qst_mle(diags, UUds, F, v_guess)
+    return _qst_mle(diags, UUds, rho0, F)
 
 
 def chi0(rhosIn, rhosOut):
