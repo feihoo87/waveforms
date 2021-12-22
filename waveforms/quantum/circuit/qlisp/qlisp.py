@@ -135,7 +135,7 @@ class Context():
         default_factory=lambda: defaultdict(zero))
     measures: dict[int, list[MeasurementTask]] = field(
         default_factory=lambda: defaultdict(list))
-    phases: dict[str,
+    _phases: dict[str,
                  float] = field(default_factory=lambda: defaultdict(lambda: 0))
     phases_ext: dict[str, dict[Union[int, str], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(lambda: 0)))
@@ -146,6 +146,20 @@ class Context():
     @property
     def channel(self):
         return self.raw_waveforms
+
+    @property
+    def phases(self):
+        class D():
+            def __init__(self, ctx):
+                self.ctx = ctx
+
+            def __getitem__(self, qubit):
+                return self.ctx.phases_ext[qubit][1]
+
+            def __setitem__(self, qubit, phase):
+                self.ctx.phases_ext[qubit][1] = phase
+
+        return D(self)
 
     @property
     def params(self):
@@ -187,10 +201,9 @@ def create_context(ctx: Optional[Context] = None, **kw) -> Context:
             kw['cfg'] = ctx.cfg
         sub_ctx = Context(**kw)
         sub_ctx.time.update(ctx.time)
-        sub_ctx.phases.update(ctx.phases)
+        #sub_ctx.phases.update(ctx.phases)
         sub_ctx.biases.update(ctx.biases)
-        sub_ctx.phases_ext = {}
         for k, v in ctx.phases_ext.items():
-            sub_ctx.phases_ext[k] = v.copy()
+            sub_ctx.phases_ext[k].update(v)
 
         return sub_ctx
