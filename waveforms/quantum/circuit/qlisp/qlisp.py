@@ -150,6 +150,8 @@ class Context():
     @property
     def phases(self):
         class D():
+            __slots__ = ('ctx',)
+            
             def __init__(self, ctx):
                 self.ctx = ctx
 

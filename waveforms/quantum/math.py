@@ -355,7 +355,7 @@ def Unitary2Angles(U: np.ndarray) -> np.ndarray:
         phi = np.angle(U[1, 0])
         lambda_ = np.angle(-U[0, 1])
         delta += (phi + lambda_) / 2
-    return np.array([theta, phi, lambda_, delta])
+    return np.array([theta, phi, lambda_, delta]).real
 
 
 def rfUnitary(theta, phi):
