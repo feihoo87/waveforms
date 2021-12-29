@@ -145,6 +145,20 @@ def zDistortKernel(dt: float, params: Sequence[tuple]) -> np.ndarray:
 
 
 def exp_decay_filter(amp, tau, sample_rate):
+    """
+    exp decay filter
+
+                    A
+    H(w) = --------------------
+            1 - 1j / (w * tau)
+
+    Args:
+        amp (float): amplitude of the filter
+        tau (float): decay time
+        sample_rate (float): sampling rate
+    """
+
+
     alpha = 1 - np.exp(-1 / (sample_rate * tau * (1 + amp)))
 
     if amp >= 0:
