@@ -73,8 +73,9 @@ def lib():
 
         if amp > 0 and duration > 0:
             pulse = (cos(pi / duration) * square(duration)) >> duration / 2
-            ctx.channel['coupler.Z', control, target] += amp * pulse >> t
-        ctx.time[control] = ctx.time[target] = t + duration
+            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z', control, target)
+        yield ('!add', 'time', t + duration), control
+        yield ('!add', 'time', t + duration), target
 
     @lib.opaque('iSWAP',
                 params=[('duration', float, 50e-9, 's'),
@@ -95,8 +96,9 @@ def lib():
         if duration > 0:
             pulse = square(duration) >> duration / 2
             pulse = pulse * offset + amp * pulse * sin(2 * pi * frequency)
-            ctx.channel['coupler.Z', control, target] += pulse >> t
-        ctx.time[control] = ctx.time[target] = t + duration
+            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z', control, target)
+        yield ('!add', 'time', t + duration), control
+        yield ('!add', 'time', t + duration), target
 
     @lib.gate(2)
     def bellMeasure(qubits):

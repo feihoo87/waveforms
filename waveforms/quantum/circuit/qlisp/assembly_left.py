@@ -45,6 +45,34 @@ def _ctx_update_measurement_tasks(sub_ctx: Context, ctx: Context):
                                 task.params, hardware))
 
 
+def _execute(ctx, cmd):
+    (op, target, *values), key = cmd
+    if (op, target) == ('!set', 'time'):
+        ctx.time[key] = values[0]
+    elif (op, target) == ('!set', 'phase'):
+        ctx.phases[key] = values[0]
+    elif (op, target) == ('!set', 'phase_ext'):
+        ctx.phases_ext[key][values[0]] = values[1]
+    elif (op, target) == ('!set', 'bias'):
+        ctx.biases[key] = values[0]
+    elif (op, target) == ('!set', 'waveform'):
+        ctx.raw_waveforms[key] = values[0]
+    elif (op, target) == ('!set', 'cbit'):
+        ctx.measures[key] = values[0]
+    elif (op, target) == ('!add', 'time'):
+        ctx.time[key] += values[0]
+    elif (op, target) == ('!add', 'phase'):
+        ctx.phases[key] += values[0]
+    elif (op, target) == ('!add', 'phase_ext'):
+        ctx.phases_ext[key][values[0]] += values[1]
+    elif (op, target) == ('!add', 'bias'):
+        ctx.biases[key] += values[0]
+    elif (op, target) == ('!add', 'waveform'):
+        ctx.raw_waveforms[key] += values[0]
+    else:
+        raise QLispError(f'Unknown command: {cmd}')
+    
+
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
@@ -69,7 +97,8 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
     sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
 
-    func(sub_ctx, gatecfg.qubits, *args)
+    for cmd in func(sub_ctx, gatecfg.qubits, *args):
+        _execute(ctx, cmd)
     _ctx_update_biases(sub_ctx, ctx)
     _ctx_update_time(sub_ctx, ctx)
     _ctx_update_phases(sub_ctx, ctx)

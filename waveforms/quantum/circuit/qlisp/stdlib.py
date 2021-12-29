@@ -168,7 +168,7 @@ def crz(qubits, lambda_):
 @std.opaque('Delay')
 def delay(ctx, qubits, time):
     qubit, = qubits
-    ctx.time[qubit] += time
+    yield ('!add', 'time', time), qubit
 
 
 @std.opaque('P')
@@ -176,7 +176,7 @@ def P(ctx, qubits, phi):
     from .compiler import call_opaque
 
     phi += ctx.phases[qubits[0]]
-    ctx.phases[qubits[0]] = 0
+    yield ('!set', 'phase', 0), qubits[0]
 
     call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
     call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
@@ -187,7 +187,7 @@ def P(ctx, qubits, phi):
 def barrier(ctx, qubits):
     time = max(ctx.time[qubit] for qubit in qubits)
     for qubit in qubits:
-        ctx.time[qubit] = time
+        yield ('!set', 'time', time), qubit
 
 
 @std.opaque('rfPulse')
@@ -197,7 +197,7 @@ def rfPulse(ctx, qubits, waveform):
     if isinstance(waveform, str):
         waveform = wave_eval(waveform)
 
-    ctx.channel['RF', qubit] += waveform >> ctx.time[qubit]
+    yield ('!add', 'waveform', waveform >> ctx.time[qubit]), ('RF', qubit)
 
 
 @std.opaque('fluxPulse')
@@ -207,7 +207,7 @@ def fluxPulse(ctx, qubits, waveform):
     if isinstance(waveform, str):
         waveform = wave_eval(waveform)
 
-    ctx.channel['Z', qubit] += waveform >> ctx.time[qubit]
+    yield ('!add', 'waveform', waveform >> ctx.time[qubit]), ('Z', qubit)
 
 
 @std.opaque('Pulse')
@@ -218,23 +218,23 @@ def Pulse(ctx, qubits, channel, waveform):
 
     t = max(ctx.time[qubit] for qubit in qubits)
 
-    ctx.channel[(channel, *qubits)] += waveform >> t
+    yield ('!add', 'waveform', waveform >> t), (channel, *qubits)
 
 
 @std.opaque('setBias')
 def setBias(ctx, qubits, channel, bias, edge=0, buffer=0):
-    ctx.biases[(channel, *qubits)] = (bias, edge, buffer)
+    yield ('!set', 'bias', (bias, edge, buffer)), (channel, *qubits)
     time = max(ctx.time[qubit] for qubit in qubits)
     for qubit in qubits:
-        ctx.time[qubit] = time + buffer
+        yield ('!set', 'time', time + buffer), qubit
 
 
 @std.opaque('I')
 def I(ctx, qubits):
     qubit = qubits[0]
-    ctx.channel['RF', qubit] += zero()
-    ctx.channel['Z', qubit] += zero()
-    ctx.channel['readoutLine.RF', qubit] += zero()
+    yield ('!add', 'waveform', zero()), ('RF', qubit)
+    yield ('!add', 'waveform', zero()), ('Z', qubit)
+    yield ('!add', 'waveform', zero()), ('readoutLine.RF', qubit)
 
 
 def _rfUnitary(ctx, qubits, theta, phi):
@@ -287,8 +287,8 @@ def _rfUnitary(ctx, qubits, theta, phi):
                           DRAGScaling=beta / alpha)
             t = (duration + buffer) / 2 + ctx.time[qubit]
             wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
-            ctx.channel['RF', qubit] += wav
-            ctx.time[qubit] += duration + buffer
+            yield ('!add', 'waveform', wav), ('RF', qubit)
+            yield ('!add', 'time', duration + buffer), qubit
 
 
 @std.opaque('rfUnitary',
@@ -304,7 +304,7 @@ def _rfUnitary(ctx, qubits, theta, phi):
                 Parameter('buffer', float, 0, 's'),
             ])
 def rfUnitary(ctx, qubits, theta, phi):
-    _rfUnitary(ctx, qubits, theta, phi)
+    yield from _rfUnitary(ctx, qubits, theta, phi)
 
 
 @std.opaque('rfUnitary',
@@ -327,11 +327,11 @@ def rfUnitary_BB1(ctx, qubits, theta, phi):
     p2 = 3 * p1
     p1, p2 = p1 + phi, p2 + phi
 
-    _rfUnitary(ctx, qubits, pi, p1)
-    _rfUnitary(ctx, qubits, pi, p2)
-    _rfUnitary(ctx, qubits, pi, p2)
-    _rfUnitary(ctx, qubits, pi, p1)
-    _rfUnitary(ctx, qubits, theta, phi)
+    yield from _rfUnitary(ctx, qubits, pi, p1)
+    yield from _rfUnitary(ctx, qubits, pi, p2)
+    yield from _rfUnitary(ctx, qubits, pi, p2)
+    yield from _rfUnitary(ctx, qubits, pi, p1)
+    yield from _rfUnitary(ctx, qubits, theta, phi)
 
 
 @std.opaque('Measure',
@@ -382,7 +382,8 @@ def measure(ctx, qubits, cbit=None):
     pulse = (ring_up_amp * (step(edge) >> t) - (ring_up_amp - amp) *
              (step(edge) >> (t + ring_up_time)) - amp * (step(edge) >>
                                                          (t + duration)))
-    ctx.channel['readoutLine.RF', qubit] += pulse * cos(2 * pi * frequency)
+    yield ('!add', 'waveform',
+           pulse * cos(2 * pi * frequency)), ('readoutLine.RF', qubit)
 
     # pulse = square(2 * duration) >> duration
     # ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
@@ -390,10 +391,10 @@ def measure(ctx, qubits, cbit=None):
     params = {k: v for k, v in ctx.params.items()}
     params['w'] = w
     params['weight'] = weight
-    ctx.measures[cbit].append(
-        MeasurementTask(qubit, cbit, ctx.time[qubit], signal, params))
-    ctx.time[qubit] = t + duration
-    ctx.phases[qubit] = 0
+    yield ('!set', 'cbit',
+           MeasurementTask(qubit, cbit, ctx.time[qubit], signal, params)), cbit
+    yield ('!set', 'time', t + duration), qubit
+    yield ('!set', 'phase', 0), qubit
 
 
 def parametric(ctx, qubits):
@@ -407,13 +408,13 @@ def parametric(ctx, qubits):
     if duration > 0:
         pulse = square(duration) >> duration / 2
         pulse = offset * pulse + amp * pulse * sin(2 * pi * frequency)
-        ctx.channel[('coupler.Z', *qubits)] += pulse >> t
+        yield ('!add', 'waveform', pulse >> t), ('coupler.Z', *qubits)
 
     for qubit in qubits:
-        ctx.time[qubit] = t + duration
+        yield ('!set', 'time', t + duration), qubit
 
-    ctx.phases[qubits[0]] += ctx.params['phi1']
-    ctx.phases[qubits[1]] += ctx.params['phi2']
+    yield ('!add', 'phase', ctx.params['phi1']), qubits[0]
+    yield ('!add', 'phase', ctx.params['phi2']), qubits[1]
 
 
 @std.opaque('CZ',
@@ -431,13 +432,13 @@ def CZ(ctx, qubits):
 
     if amp != 0 and duration > 0:
         pulse = amp * (cos(pi / duration) * square(duration)) >> duration / 2
-        ctx.channel[('coupler.Z', *qubits)] += pulse >> t
+        yield ('!add', 'waveform', pulse >> t), ('coupler.Z', *qubits)
 
     for qubit in qubits:
-        ctx.time[qubit] = t + duration
+        yield ('!set', 'time', t + duration), qubit
 
-    ctx.phases[qubits[0]] += ctx.params['phi1']
-    ctx.phases[qubits[1]] += ctx.params['phi2']
+    yield ('!add', 'phase', ctx.params['phi1']), qubits[0]
+    yield ('!add', 'phase', ctx.params['phi2']), qubits[1]
 
 
 @std.opaque('CZ',
@@ -451,7 +452,7 @@ def CZ(ctx, qubits):
                 Parameter('phi2', float, 0)
             ])
 def CZ(ctx, qubits):
-    parametric(ctx, qubits)
+    yield from parametric(ctx, qubits)
 
 
 @std.opaque('iSWAP',
@@ -465,4 +466,4 @@ def CZ(ctx, qubits):
                 Parameter('phi2', float, 0)
             })
 def iSWAP(ctx, qubits):
-    parametric(ctx, qubits)
+    yield from parametric(ctx, qubits)
