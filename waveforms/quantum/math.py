@@ -347,7 +347,9 @@ def U(theta, phi, lambda_, delta=0):
 
 def Unitary2Angles(U: np.ndarray) -> np.ndarray:
     if U[0, 0] == 0:
-        theta, phi, lambda_, delta = np.pi, 0, np.angle(U[1, 0]), 0
+        delta = (np.angle(U[1, 0]) + np.angle(U[0, 1])) / 2
+        U /= np.exp(1j * delta)
+        theta, phi, lambda_ = np.pi, 0, np.angle(U[1, 0])
     else:
         delta = np.angle(U[0, 0])
         U = U / np.exp(1j * delta)
