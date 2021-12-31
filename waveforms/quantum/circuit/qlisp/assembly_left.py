@@ -37,12 +37,11 @@ def _ctx_update_waveforms(sub_ctx: Context, ctx: Context):
 
 
 def _ctx_update_measurement_tasks(sub_ctx: Context, ctx: Context):
-    for cbit, taskList in sub_ctx.measures.items():
-        for task in taskList:
-            hardware = ctx.cfg._getADChannel(task.qubit)
-            ctx.measures[cbit].append(
-                MeasurementTask(task.qubit, task.cbit, task.time, task.signal,
-                                task.params, hardware))
+    for cbit, task in sub_ctx.measures.items():
+        hardware = ctx.cfg._getADChannel(task.qubit)
+        ctx.measures[cbit] = MeasurementTask(task.qubit, task.cbit, task.time,
+                                             task.signal, task.params,
+                                             hardware)
 
 
 def _execute(ctx, cmd):
@@ -114,7 +113,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
 
     for cmd in func(sub_ctx, gatecfg.qubits, *args):
-        _execute(ctx, cmd)
+        _execute(sub_ctx, cmd)
     _ctx_update_biases(sub_ctx, ctx)
     _ctx_update_time(sub_ctx, ctx)
     _ctx_update_phases(sub_ctx, ctx)

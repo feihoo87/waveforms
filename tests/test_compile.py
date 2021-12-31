@@ -36,6 +36,14 @@ measure q -> c;
 qlisp = [
     ('createBellPair', (0, 1)),
     ('iSWAP', (0, 1)),
+    ('bellMeasure', (0, 1)),
+    ('Barrier', (0, 1)),
+    (('Measure', 0), 0),
+    (('Measure', 1), 1),
+]
+
+qlisp3 = [
+    ('createBellPair', (0, 1)),
     (('iSWAP', ('with', ('param:amp', 0.5))), (0, 1)),
     ('bellMeasure', (0, 1)),
     ('Barrier', (0, 1)),
@@ -74,7 +82,8 @@ def lib():
 
         if amp > 0 and duration > 0:
             pulse = (cos(pi / duration) * square(duration)) >> duration / 2
-            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z', control, target)
+            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z',
+                                                           control, target)
         yield ('!add', 'time', t + duration), control
         yield ('!add', 'time', t + duration), target
 
@@ -97,7 +106,8 @@ def lib():
         if duration > 0:
             pulse = square(duration) >> duration / 2
             pulse = pulse * offset + amp * pulse * sin(2 * pi * frequency)
-            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z', control, target)
+            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z',
+                                                           control, target)
         yield ('!add', 'time', t + duration), control
         yield ('!add', 'time', t + duration), target
 
@@ -128,6 +138,12 @@ def test_compile(lib, cfg):
     assert isinstance(ret, QLispCode)
     ret2 = compile(qlisp, cfg=cfg, lib=lib)
     assert isinstance(ret2, QLispCode)
+    ret3 = compile(qlisp3, cfg=cfg, lib=lib)
+    assert isinstance(ret3, QLispCode)
     for k, wav in ret.waveforms.items():
         assert k in ret2.waveforms
         assert wav == ret2.waveforms[k]
+        if k == 'AWG.Z':
+            assert wav != ret3.waveforms[k]
+        else:
+            assert wav == ret3.waveforms[k]

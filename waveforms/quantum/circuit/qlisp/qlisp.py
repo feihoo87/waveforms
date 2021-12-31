@@ -133,8 +133,7 @@ class Context():
         default_factory=lambda: defaultdict(zero))
     raw_waveforms: dict[tuple[str, ...], Waveform] = field(
         default_factory=lambda: defaultdict(zero))
-    measures: dict[int, list[MeasurementTask]] = field(
-        default_factory=lambda: defaultdict(list))
+    measures: dict[int, MeasurementTask] = field(default_factory=dict)
     _phases: dict[str,
                  float] = field(default_factory=lambda: defaultdict(lambda: 0))
     phases_ext: dict[str, dict[Union[int, str], float]] = field(
