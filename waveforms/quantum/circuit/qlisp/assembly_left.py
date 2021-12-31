@@ -83,11 +83,13 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
         for arg in gate[1:]:
             if isinstance(arg, tuple) and isinstance(arg[0],
                                                      str) and arg[0] == 'with':
-                for p in arg[1]:
-                    if p[0] == 'type':
-                        type = p[1]
-                    elif p[0].startswith('param:'):
-                        params[p[0][6:]] = p[1]
+                for p in arg[1:]:
+                    if isinstance(p, tuple) and len(p) == 2 and isinstance(
+                            p[0], str):
+                        if p[0] == 'type':
+                            type = p[1]
+                        elif p[0].startswith('param:'):
+                            params[p[0][6:]] = p[1]
     gatecfg = ctx.cfg._getGateConfig(name, *qubits, type=type)
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
