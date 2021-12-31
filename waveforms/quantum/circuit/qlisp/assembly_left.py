@@ -76,9 +76,21 @@ def _execute(ctx, cmd):
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
-    gatecfg = ctx.cfg._getGateConfig(name, *qubits)
+    type = None
+    params = {}
+
+    if isinstance(gate, tuple):
+        for p in gate[1:]:
+            if isinstance(p, tuple) and isinstance(p[0], str):
+                if p[0] == 'type':
+                    type = p[1]
+                elif p[0].startswith('param:'):
+                    params[p[0][6:]] = p[1]
+    gatecfg = ctx.cfg._getGateConfig(name, *qubits, type=type)
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
+
+    gatecfg.params.update(params)
 
     func, params_declaration = lib.getOpaque(name, gatecfg.type)
     if func is None:

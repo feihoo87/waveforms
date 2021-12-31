@@ -106,13 +106,20 @@ class CompileConfigMixin(ABCCompileConfigMixin):
             info['lo_power'] = lo.status.power
         return MultADChannel(**info)
 
-    def _getGateConfig(self, name, *qubits) -> GateConfig:
+    def _getGateConfig(self, name, *qubits, type=None) -> GateConfig:
         try:
             gate = self.getGate(name, *qubits)
         except:
             return GateConfig(name, qubits)
-        params = gate['params']
-        type = gate.get('type', 'default')
+        if type is None:
+            type = gate.get('default_type', 'default')
+        if type not in gate and 'params' in gate:
+            params = gate['params']
+        else:
+            try:
+                params = gate[type]
+            except KeyError:
+                raise KeyError(f'Gate {name} has no type {type}')
         return GateConfig(name, gate['qubits'], type, params)
 
     def _getAllQubitLabels(self) -> list[str]:
