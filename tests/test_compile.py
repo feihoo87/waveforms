@@ -36,6 +36,7 @@ measure q -> c;
 qlisp = [
     ('createBellPair', (0, 1)),
     ('iSWAP', (0, 1)),
+    (('iSWAP', ('with', ('param:amp', 0.5))), (0, 1)),
     ('bellMeasure', (0, 1)),
     ('Barrier', (0, 1)),
     (('Measure', 0), 0),

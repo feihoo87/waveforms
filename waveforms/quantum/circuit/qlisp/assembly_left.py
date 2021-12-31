@@ -78,6 +78,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     gate, qubits = st
     type = None
     params = {}
+    args = []
 
     if isinstance(gate, tuple):
         for arg in gate[1:]:
@@ -90,6 +91,8 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
                             type = p[1]
                         elif p[0].startswith('param:'):
                             params[p[0][6:]] = p[1]
+            else:
+                args.append(arg)
     gatecfg = ctx.cfg._getGateConfig(name, *qubits, type=type)
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
@@ -106,10 +109,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
             #     f'{name} (type={gatecfg.type}) opaque of {qubits} missing parameter {k}.'
             # )
 
-    if isinstance(gate, str):
-        args = ()
-    else:
-        args = gate[1:]
+    args = tuple(args)
 
     sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
 
