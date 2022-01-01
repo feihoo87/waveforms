@@ -46,6 +46,8 @@ def _ctx_update_measurement_tasks(sub_ctx: Context, ctx: Context):
 
 def _execute(ctx, cmd):
     (op, target, *values), key = cmd
+    if op == '!nop':
+        return
     if (op, target) == ('!set', 'time'):
         ctx.time[key] = values[0]
     elif (op, target) == ('!set', 'phase'):
