@@ -63,6 +63,10 @@ def compile(prog,
     code = assembly(prog, cfg, lib, align=align)
     if 'arch' in options:
         code.arch = options['arch']
+    if 'shots' in options:
+        code.shots = options['shots']
+    if 'signal' in options:
+        code.signal = options['signal']
     if code.arch == 'general' or 'no_assembly' in options:
         return code
     return get_arch(code.arch).assembly_code(code)
