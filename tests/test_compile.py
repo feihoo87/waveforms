@@ -51,6 +51,15 @@ qlisp3 = [
     (('Measure', 1), 1),
 ]
 
+qlisp4 = [
+    ('createBellPair', (0, 1)),
+    (('iSWAP', ('with', ('param:amp', lambda amp: amp-0.3))), (0, 1)),
+    ('bellMeasure', (0, 1)),
+    ('Barrier', (0, 1)),
+    (('Measure', 0), 0),
+    (('Measure', 1), 1),
+]
+
 
 @pytest.fixture
 def cfg():
@@ -140,10 +149,15 @@ def test_compile(lib, cfg):
     assert isinstance(ret2, QLispCode)
     ret3 = compile(qlisp3, cfg=cfg, lib=lib)
     assert isinstance(ret3, QLispCode)
+    ret4 = compile(qlisp4, cfg=cfg, lib=lib)
+    assert isinstance(ret4, QLispCode)
     for k, wav in ret.waveforms.items():
         assert k in ret2.waveforms
         assert wav == ret2.waveforms[k]
         if k == 'AWG.Z':
             assert wav != ret3.waveforms[k]
+            assert wav != ret4.waveforms[k]
+            assert ret3.waveforms[k] != ret4.waveforms[k]
         else:
             assert wav == ret3.waveforms[k]
+            assert wav == ret4.waveforms[k]

@@ -1,3 +1,5 @@
+import inspect
+
 from numpy import pi
 from waveforms.waveform import Waveform, cos, sin, step
 
@@ -74,6 +76,21 @@ def _execute(ctx, cmd):
         raise QLispError(f'Unknown command: {cmd}')
 
 
+def _call_func_with_kwds(func, kwds):
+    sig = inspect.signature(func)
+    for p in sig.parameters.values():
+        if p.kind == p.VAR_KEYWORD:
+            return func(**kwds)
+    kw = {k: v for k, v in kwds.items() if k in sig.parameters}
+    return func(**kw)
+
+
+def _try_to_call(x, kwds):
+    if callable(x):
+        return _call_func_with_kwds(x, kwds)
+    return x
+
+
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
@@ -98,6 +115,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
 
+    params = {k: _try_to_call(v, gatecfg.params) for k, v in params.items()}
     gatecfg.params.update(params)
 
     func, params_declaration = lib.getOpaque(name, gatecfg.type)
