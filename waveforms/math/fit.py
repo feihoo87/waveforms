@@ -5,6 +5,8 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.special import erf
 
+from .geo import EPS, point_in_polygon
+
 
 def lin_fit(x, y):
     """use less memory than np.polyfit"""
@@ -191,10 +193,26 @@ def classify_range(data, params):
     return ret
 
 
+def classify_polygon(data, params):
+    """
+    分类方法: 多边形内
+    """
+    polygons = params.get('polygons', None)
+    eps = params.get('eps', EPS)
+    if polygons is None:
+        raise ValueError("polygons not found")
+
+    ret = np.full_like(data, 0, dtype=int)
+    for i, polygon in enumerate(polygons):
+        ret[point_in_polygon(data, polygon, eps)] += 2**i
+    return ret
+
+
 install_classify_method("state", default_classify)
 install_classify_method("nearest", classify_nearest)
 install_classify_method("range", classify_range)
 install_classify_method("kmeans", classify_kmeans)
+install_classify_method("polygon", classify_polygon)
 
 
 def classify_data(data, measure_gates, avg=False):
