@@ -685,6 +685,15 @@ def cosPulse(width):
                     seq=(_zero, pulse, _zero))
 
 
+def slepian(duration, *arg):
+    wav = zero()
+    arg = np.asarray(arg)
+    arg /= arg[::2].sum()
+    for i, a in enumerate(arg, start=1):
+        wav += a / 2 * (1 - (-1)**i * cos(i * 2 * pi / duration))
+    return wav * square(duration)
+
+
 def _poly(*a):
     """
     a[0] + a[1] * t + a[2] * t**2 + ...
@@ -830,5 +839,5 @@ __all__ = [
     'D', 'Waveform', 'chirp', 'const', 'cos', 'cosPulse', 'cut', 'exp',
     'function', 'gaussian', 'interp', 'mixing', 'one', 'poly',
     'registerBaseFunc', 'registerDerivative', 'samplingPoints', 'sign', 'sin',
-    'sinc', 'square', 'step', 'zero'
+    'sinc', 'slepian', 'square', 'step', 'zero'
 ]
