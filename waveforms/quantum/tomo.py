@@ -353,6 +353,11 @@ def applyChi(chi, rho, basis=pauli_basis):
     return rhoF.reshape((dim, dim))
 
 
+def chain_process(chi1, chi2, basis=pauli_basis):
+    chi0 = chi_to_chi0(chi2, basis) @ chi_to_chi0(chi1, basis)
+    return chi0_to_chi(chi0, basis)
+
+
 def U_to_chi(U, basis=pauli_basis):
     riList = []
     rfList = []
