@@ -1,10 +1,9 @@
 import itertools
 import random
-from typing import Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional, Union
 
 import numpy as np
 from numpy import pi
-from waveforms.quantum.circuit.simulator import applySeq
 from waveforms.quantum.rb import replace_qubit
 
 
@@ -54,18 +53,20 @@ def specklePurity(Pm_lst: Iterable[np.array]) -> float:
     return np.asarray(Pm_lst).var() * D**2 * (D + 1) / (D - 1)
 
 
-def generateXEBCircuit(qubits,
-                       cycle,
-                       seed=None,
-                       interleaves=[],
-                       base=[('rfUnitary', pi / 2, 0),
-                             ('rfUnitary', pi / 2, pi / 4),
-                             ('rfUnitary', pi / 2, pi / 2),
-                             ('rfUnitary', pi / 2, pi * 3 / 4),
-                             ('rfUnitary', pi / 2, pi),
-                             ('rfUnitary', pi / 2, pi * 5 / 4),
-                             ('rfUnitary', pi / 2, pi * 3 / 2),
-                             ('rfUnitary', pi / 2, pi * 7 / 2)]):
+def generateXEBCircuit(qubits: Union[int, str, tuple],
+                       cycle: int,
+                       seed: Optional[int] = None,
+                       interleaves: list[list[tuple]] = [],
+                       base: list[Union[str, tuple]] = [
+                           ('rfUnitary', pi / 2, 0),
+                           ('rfUnitary', pi / 2, pi / 4),
+                           ('rfUnitary', pi / 2, pi / 2),
+                           ('rfUnitary', pi / 2, pi * 3 / 4),
+                           ('rfUnitary', pi / 2, pi),
+                           ('rfUnitary', pi / 2, pi * 5 / 4),
+                           ('rfUnitary', pi / 2, pi * 3 / 2),
+                           ('rfUnitary', pi / 2, pi * 7 / 2)
+                       ]):
     """Generate a random XEB circuit.
 
     Args:
