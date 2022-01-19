@@ -1,8 +1,11 @@
+import itertools
 import random
 from typing import Callable, Iterable, Optional
 
 import numpy as np
+from numpy import pi
 from waveforms.quantum.circuit.simulator import applySeq
+from waveforms.quantum.rb import replace_qubit
 
 
 def uncorrelatedEntropy(D: int) -> float:
@@ -51,66 +54,44 @@ def specklePurity(Pm_lst: Iterable[np.array]) -> float:
     return np.asarray(Pm_lst).var() * D**2 * (D + 1) / (D - 1)
 
 
-def generateXEBCircuit(qubits, cycle, seed=None, base=['X/2', 'Y/2', 'W/2']):
-    """
-    Generate a quantum circuit for XEB.
-    """
+def generateXEBCircuit(qubits,
+                       cycle,
+                       seed=None,
+                       interleaves=[],
+                       base=[('rfUnitary', pi / 2, 0),
+                             ('rfUnitary', pi / 2, pi / 4),
+                             ('rfUnitary', pi / 2, pi / 2),
+                             ('rfUnitary', pi / 2, pi * 3 / 4),
+                             ('rfUnitary', pi / 2, pi),
+                             ('rfUnitary', pi / 2, pi * 5 / 4),
+                             ('rfUnitary', pi / 2, pi * 3 / 2),
+                             ('rfUnitary', pi / 2, pi * 7 / 2)]):
+    """Generate a random XEB circuit.
 
-    MAX = len(base)
+    Args:
+        qubits (list): The qubits to use.
+        cycle (int): The cycles of sequence.
+        seed (int): The seed for the random number generator.
+        interleaves (list): The interleaves to use.
+
+    Returns:
+        list: The XEB circuit.
+    """
+    if isinstance(qubits, (str, int)):
+        qubits = (qubits, )
+
+    interleaves = itertools.cycle(interleaves)
 
     ret = []
     rng = random.Random(seed)
 
     for _ in range(cycle):
-        i = rng.randrange(MAX)
-        for qubit in qubits:
-            ret.append((rng.choice(base), qubit))
-        ret.append(('Barrier', qubits))
+        try:
+            int_seq = next(interleaves)
+        except StopIteration:
+            int_seq = []
+        ret.extend(replace_qubit(int_seq, qubits))
+        for q in qubits:
+            ret.append((rng.choice(base), q))
 
     return ret
-
-
-def xebCircuitStates(qubits, cycles, seed, base=['X/2', 'Y/2', 'W/2']):
-    """
-    XEB Fidelity
-
-    qubits: qubits to measure
-    cycles: number of cycles
-    """
-    circuit = generateXEBCircuit(qubits, cycles, seed, base)
-    states = [np.array([1, 0], dtype=complex) for _ in qubits]
-    index_map = {q: i for i, q in enumerate(qubits)}
-    for gate, qubit in circuit:
-        if qubit in index_map:
-            states[index_map[qubit]] = applySeq([(gate, 0)],
-                                                states[index_map[qubit]])
-    return states
-
-
-def xebProbabilityAndEntropy(states, count, shots):
-    _Pe = [(psi * psi.conj()).real for psi in states]
-
-    entropy = np.sum([crossEntropy(p, p) for p in _Pe])
-    entropy_i = np.sum([crossEntropy(1 / 2, p) for p in _Pe])
-
-    Pe, Pm = [], []
-    for k, v in count.items():
-        p = 1
-        for i, state in enumerate(k):
-            p *= _Pe[i][state]
-        if p > 0:
-            Pm.append(v / shots)
-            Pe.append(p)
-    return np.asarray(Pm), np.asarray(Pe), entropy, entropy_i
-
-
-def Fxeb2(qubits, cycle, seeds, counts, shots, base=['X/2', 'Y/2', 'W/2']):
-    Si, Sm, Se = [], [], []
-
-    for seed, count in zip(seeds, counts):
-        Pm, Pe, e, ei = xebProbabilityAndEntropy(
-            xebCircuitStates(qubits, cycle, seed, base), count, shots)
-        Sm.append(crossEntropy(Pm, Pe))
-        Si.append(ei)
-        Se.append(e)
-    return (np.mean(Si) - np.mean(Sm)) / (np.mean(Si) - np.mean(Se))
