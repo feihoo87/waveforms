@@ -127,8 +127,9 @@ def _args_generator(iters: list[tuple[str, Iterable]],
     keys, current_iters = iters[level]
 
     if not _is_multi_step(keys, current_iters):
-        keys = (keys, )
         current_iters = (current_iters, )
+    if not isinstance(keys, tuple):
+        keys = (keys, )
     current_iters = tuple(_try_to_call(it, kwds) for it in current_iters)
 
     if _is_optimize_step(keys, current_iters):
