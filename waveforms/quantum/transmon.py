@@ -17,7 +17,7 @@ class Transmon():
 
     def _set_params(self, **kw):
         if {"EJ", "Ec", "d"} <= set(kw):
-            return self._set_params_EJ_Ec_d(kw['EJ'], kw['Ec'], kw['d'])
+            return self._set_params_EJS_Ec_d(kw['EJ'], kw['Ec'], kw['d'])
         elif {"EJ", "Ec"} <= set(kw):
             return self._set_params_EJ_Ec(kw['EJ'], kw['Ec'])
         elif {"f01", "alpha"} <= set(kw):
