@@ -1,9 +1,9 @@
 import inspect
 from abc import ABC, abstractclassmethod
 from collections import deque
-from itertools import chain, count
-from typing import (Any, Callable, Iterable, NamedTuple, Optional, Sequence,
-                    Type, Union)
+from dataclasses import dataclass, field
+from itertools import count
+from typing import (Any, Callable, Iterable, Optional, Sequence, Type, Union)
 
 
 class BaseOptimizer(ABC):
@@ -20,22 +20,23 @@ class BaseOptimizer(ABC):
         pass
 
 
-class OptimizerConfig(NamedTuple):
+@dataclass
+class OptimizerConfig():
     cls: Type[BaseOptimizer]
-    dimensions: list = []
+    dimensions: list = field(default_factory=list)
     args: tuple = ()
-    kwds: dict = {}
+    kwds: dict = field(default_factory=dict)
     max_iters: int = 100
 
 
 class FeedbackPipe():
     __slots__ = (
-        'opt_keys',
+        'keys',
         '_queue',
     )
 
-    def __init__(self, opt_keys):
-        self.opt_keys = opt_keys
+    def __init__(self, keys):
+        self.keys = keys
         self._queue = deque()
 
     def __iter__(self):
@@ -52,45 +53,40 @@ class FeedbackPipe():
         self._queue.append(obj)
 
     def __repr__(self):
-        return f'FeedbackProxy{self.opt_keys}'
+        if not isinstance(self.keys, tuple):
+            return f'FeedbackProxy({repr(self.keys)})'
+        else:
+            return f'FeedbackProxy{self.keys}'
 
 
-class OptimizerStatus(NamedTuple):
-    suggested_keys: tuple[tuple[str]] = ()
-    suggested: tuple = ()
-    optimized: bool = False
-    iteration: int = 0
-    pipe: FeedbackPipe = None
+class Tracker():
+    def update(self, kwds):
+        return kwds
+
+    def feed(self, step, obj):
+        pass
 
 
-class StepStatus(NamedTuple):
-    pos: tuple = ()
-    kwds: dict = {}
+@dataclass
+class StepStatus():
     iteration: int = 0
     level: int = 0
+    pos: tuple = ()
     index: tuple = ()
-    optimizer_status: tuple = ()
+    kwds: dict = field(default_factory=dict)
 
-    def feedback(self,
-                 keywords: tuple[str],
-                 obj: Any,
-                 suggested: Optional[Sequence] = None):
-        for opt_st in self.optimizer_status:
-            for i, k in enumerate(opt_st.suggested_keys):
-                if k == keywords:
-                    if suggested is None:
-                        suggested = [self.kwds[name] for name in keywords]
-                    opt_st.pipe.send((i, (suggested, obj)))
-                    return
+    _pipes: dict = field(default_factory=dict, repr=False)
+    _trackers: list = field(default_factory=list, repr=False)
 
+    def feedback(self, keywords, obj, suggested=None):
+        if keywords in self._pipes:
+            if suggested is None:
+                suggested = [self.kwds[k] for k in keywords]
+            self._pipes[keywords].send((suggested, obj))
 
-def _is_multi_step(keys, iters):
-    return isinstance(keys, tuple) and not isinstance(iters, OptimizerConfig)
-
-
-def _is_optimize_step(keys, iters):
-    return isinstance(iters, OptimizerConfig) or isinstance(
-        iters, tuple) and isinstance(iters[0], OptimizerConfig)
+    def feed(self, obj):
+        for tracker in self._trackers:
+            tracker.feed(self, obj)
 
 
 def _call_func_with_kwds(func, kwds):
@@ -108,93 +104,105 @@ def _try_to_call(x, kwds):
     return x
 
 
-def _args_generator(iters: list[tuple[str, Iterable]],
-                    filter: Optional[Callable[..., bool]] = None,
-                    additional_kwds: dict = {},
-                    kwds: dict = {},
-                    pos=(),
-                    optimizer_status=(),
-                    level=0):
+def _get_current_iters(loops, level, kwds, pipes):
+    keys, current = loops[level]
+    limit = -1
 
-    if len(iters) == level:
+    if isinstance(keys, str):
+        keys = (keys, )
+        current = (current, )
+    elif isinstance(keys, tuple) and isinstance(
+            current, tuple) and len(keys) == len(current):
+        keys = tuple(k if isinstance(k, tuple) else (k, ) for k in keys)
+    elif isinstance(keys, tuple) and not isinstance(current, tuple):
+        current = (current, )
+        if isinstance(keys[0], str):
+            keys = (keys, )
+    else:
+        raise TypeError(f'Illegal keys {keys} on level {level}.')
+
+    if not isinstance(keys, tuple):
+        keys = (keys, )
+    if not isinstance(current, tuple):
+        current = (current, )
+
+    iters = []
+    for k, it in zip(keys, current):
+        pipe = FeedbackPipe(k)
+        if isinstance(it, OptimizerConfig):
+            if limit < 0 or limit > it.max_iters:
+                limit = it.max_iters
+            it = it.cls(it.dimensions, *it.args, **it.kwds)
+        else:
+            it = iter(_try_to_call(it, kwds))
+
+        iters.append((it, pipe))
+        pipes[k] = pipe
+
+    return keys, iters, pipes, limit
+
+
+def _generate_kwds(keys, iters, kwds, iteration, limit):
+    ret = {}
+    for ks, it in zip(keys, iters):
+        if isinstance(ks, str):
+            ks = (ks, )
+        if hasattr(it[0], 'ask') and hasattr(it[0], 'tell') and hasattr(
+                it[0], 'get_result'):
+            if limit > 0 and iteration == limit - 1:
+                value = it[0].get_result().x
+            else:
+                value = it[0].ask()
+        else:
+            value = next(it[0])
+            if len(ks) == 1:
+                value = (value, )
+        ret.update(zip(ks, value))
+    return ret
+
+
+def _send_feedback(generator, feedback):
+    if hasattr(generator, 'ask') and hasattr(generator, 'tell') and hasattr(
+            generator, 'get_result'):
+        generator.tell(*feedback)
+
+
+def _feedback(iters):
+    for generator, pipe in iters:
+        for feedback in pipe():
+            _send_feedback(generator, feedback)
+
+
+def _args_generator(iters, kwds: dict, level: int, pos: tuple,
+                    filter: Optional[callable], additional_kwds: dict,
+                    trackers: list[Tracker], pipes: dict):
+    if len(iters) == level and level > 0:
         kwds.update(
             {k: _try_to_call(v, kwds)
              for k, v in additional_kwds.items()})
+        for tracker in trackers:
+            kwds = tracker.update(kwds)
         if filter is None or _call_func_with_kwds(filter, kwds):
-            yield StepStatus(pos, kwds, 0, level - 1, (), optimizer_status)
+            yield StepStatus(level=level,
+                             pos=pos,
+                             kwds=kwds,
+                             _pipes=pipes,
+                             _trackers=trackers)
         return
 
-    keys, current_iters = iters[level]
-
-    if not _is_multi_step(keys, current_iters):
-        current_iters = (current_iters, )
-    if not isinstance(keys, tuple):
-        keys = (keys, )
-    current_iters = tuple(_try_to_call(it, kwds) for it in current_iters)
-
-    if _is_optimize_step(keys, current_iters):
-        opts = current_iters
-        yield from _opt_generator(iters, filter, additional_kwds, kwds, pos,
-                                  optimizer_status, keys, opts, level)
-        return
-
-    for i, values in enumerate(zip(*current_iters)):
-        yield from _args_generator(iters, filter, additional_kwds,
-                                   kwds | dict(zip(keys, values)), pos + (i, ),
-                                   optimizer_status, level + 1)
-
-
-def _opt_generator(iters: list[tuple[str, Iterable]],
-                   filter: Optional[Callable[..., bool]],
-                   additional_kwds: dict,
-                   kwds: dict,
-                   pos: tuple[int],
-                   optimizer_status: tuple,
-                   opt_keys: tuple[str, ...],
-                   opt_configs: Union[OptimizerConfig, tuple[OptimizerConfig,
-                                                             ...]],
-                   level=0):
-
-    opt_configs = (opt_configs, ) if isinstance(
-        opt_configs, OptimizerConfig) else opt_configs
-    max_opt_iter = max(o.max_iters for o in opt_configs)
-    opt_key_groups, opts = [], []
-    for o in opt_configs:
-        opts.append(o.cls(o.dimensions, *o.args, **o.kwds))
-        opt_key_groups.append(opt_keys[:len(o.dimensions)])
-        opt_keys = opt_keys[len(o.dimensions):]
-    opt_key_groups = tuple(opt_key_groups)
-    pipe = FeedbackPipe(opt_key_groups)
-
-    optimized = False
+    keys, current_iters, pipes, limit = _get_current_iters(
+        iters, level, kwds, pipes)
 
     for i in count():
-        suggested = tuple(tuple(opt.ask()) for opt in opts)
-        kw = {}
-        for keys, values in zip(opt_key_groups, suggested):
-            kw.update(dict(zip(keys, values)))
-        if i >= max_opt_iter:
-            optimized = True
-            try:
-                result = tuple(opt.get_result().x for opt in opts)
-                kw = {}
-                for keys, values in zip(opt_key_groups, result):
-                    kw.update(dict(zip(keys, values)))
-            except:
-                pass
-        o = OptimizerStatus(opt_key_groups, suggested, optimized, i, pipe)
-        yield from _args_generator(iters,
-                                   filter,
-                                   additional_kwds,
-                                   kwds | kw,
-                                   pos + (i, ),
-                                   optimizer_status + (o, ),
-                                   level=level + 1)
-        if optimized:
+        if limit > 0 and i >= limit:
             break
-        for i, feedback in pipe():
-            suggested, fun = feedback
-            opts[i].tell(suggested, fun)
+        try:
+            kw = _generate_kwds(keys, current_iters, kwds, i, limit)
+        except StopIteration:
+            break
+        yield from _args_generator(iters, kwds | kw, level + 1, pos + (i, ),
+                                   filter, additional_kwds, trackers, pipes)
+        _feedback(current_iters)
 
 
 def _find_diff_pos(a: tuple, b: tuple):
@@ -207,7 +215,8 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
                            Union[Iterable, Callable, tuple[Iterable,
                                                            ...]]] = {},
                filter: Optional[Callable[..., bool]] = None,
-               additional_kwds: dict = {}) -> Iterable[StepStatus]:
+               additional_kwds: dict = {},
+               trackers: list = []) -> Iterable[StepStatus]:
     """
     Scan the given iterable of iterables.
 
@@ -266,14 +275,21 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     index = ()
     for iteration, step in enumerate(
             _args_generator(list(iters.items()),
+                            kwds={},
+                            level=0,
+                            pos=(),
                             filter=filter,
-                            additional_kwds=additional_kwds)):
+                            additional_kwds=additional_kwds,
+                            trackers=trackers,
+                            pipes={})):
         if last_pos is None:
-            i = step.level
+            i = step.level - 1
             index = (0, ) * len(step.pos)
         else:
             i = _find_diff_pos(last_pos, step.pos)
             index = tuple((j <= i) * n + (j == i) for j, n in enumerate(index))
-        yield StepStatus(step.pos, step.kwds, iteration, i, index,
-                         step.optimizer_status)
+        step.iteration = iteration
+        step.level = i
+        step.index = index
+        yield step
         last_pos = step.pos
