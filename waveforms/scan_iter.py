@@ -238,34 +238,25 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     Examples
     --------
     >>> iters = {
-    >>>     'a': range(2),
-    >>>     'b': range(3),
-    >>> }
+    ...     'a': range(2),
+    ...     'b': range(3),
+    ... }
     >>> list(scan_iters(iters))
-    [StepStatus(pos=(0, 0), kwds={'a': 0, 'b': 0}, iteration=0, level=1,
-                index=(0, 0), optimizer_status=()),
-     StepStatus(pos=(0, 1), kwds={'a': 0, 'b': 1}, iteration=1, level=1,
-                index=(0, 1), optimizer_status=()),
-     StepStatus(pos=(0, 2), kwds={'a': 0, 'b': 2}, iteration=2, level=1,
-                index=(0, 2), optimizer_status=()),
-     StepStatus(pos=(1, 0), kwds={'a': 1, 'b': 0}, iteration=3, level=0,
-                index=(1, 0), optimizer_status=()),
-     StepStatus(pos=(1, 1), kwds={'a': 1, 'b': 1}, iteration=4, level=1,
-                index=(1, 1), optimizer_status=()),
-     StepStatus(pos=(1, 2), kwds={'a': 1, 'b': 2}, iteration=5, level=1,
-                index=(1, 2), optimizer_status=())]
+    [StepStatus(iteration=0, level=1, pos=(0, 0), index=(0, 0), kwds={'a': 0, 'b': 0}),
+     StepStatus(iteration=1, level=1, pos=(0, 1), index=(0, 1), kwds={'a': 0, 'b': 1}),
+     StepStatus(iteration=2, level=1, pos=(0, 2), index=(0, 2), kwds={'a': 0, 'b': 2}),
+     StepStatus(iteration=3, level=0, pos=(1, 0), index=(1, 0), kwds={'a': 1, 'b': 0}),
+     StepStatus(iteration=4, level=1, pos=(1, 1), index=(1, 1), kwds={'a': 1, 'b': 1}),
+     StepStatus(iteration=5, level=1, pos=(1, 2), index=(1, 2), kwds={'a': 1, 'b': 2})]
 
     >>> iters = {
-    >>>     'a': range(2),
-    >>>     'b': range(3),
-    >>> }
-    >>> list(scan_iters(iters, lambda a, b: a < b))
-    [StepStatus(pos=(0, 1), kwds={'a': 0, 'b': 1}, iteration=0, level=1,
-                index=(0, 0), optimizer_status=()),
-     StepStatus(pos=(0, 2), kwds={'a': 0, 'b': 2}, iteration=1, level=1,
-                index=(0, 1), optimizer_status=()),
-     StepStatus(pos=(1, 2), kwds={'a': 1, 'b': 2}, iteration=2, level=0,
-                index=(1, 0), optimizer_status=())]
+    ...     'a': range(2),
+    ...     'b': range(3),
+    ... }
+    ... list(scan_iters(iters, lambda a, b: a < b))
+    [StepStatus(iteration=0, level=1, pos=(0, 1), index=(0, 0), kwds={'a': 0, 'b': 1}),
+     StepStatus(iteration=1, level=1, pos=(0, 2), index=(0, 1), kwds={'a': 0, 'b': 2}),
+     StepStatus(iteration=2, level=0, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
     """
 
     if len(iters) == 0:
