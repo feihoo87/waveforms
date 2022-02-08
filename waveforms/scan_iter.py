@@ -149,7 +149,7 @@ def _generate_kwds(keys, iters, kwds, iteration, limit):
             ks = (ks, )
         if hasattr(it[0], 'ask') and hasattr(it[0], 'tell') and hasattr(
                 it[0], 'get_result'):
-            if limit > 0 and iteration == limit - 1:
+            if limit > 0 and iteration >= limit - 1:
                 value = it[0].get_result().x
             else:
                 value = it[0].ask()
