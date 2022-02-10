@@ -10,6 +10,11 @@ def test_waveform():
     wav = cos(1)
     assert np.allclose(wav(t), np.cos(t), atol=1e-04)
 
+    wav.start = -10
+    wav.stop = 10.02
+    wav.sample_rate = 50
+    assert np.allclose(wav.sample(), np.cos(t), atol=1e-04)
+
     wav = sin(1)
     assert np.allclose(wav(t), np.sin(t), atol=1e-04)
 
@@ -20,6 +25,20 @@ def test_waveform():
 
     wav = poly([1, -1 / 2, 1 / 6, -1 / 12])
     assert np.allclose(wav(t), np.poly1d([-1 / 12, 1 / 6, -1 / 2, 1])(t))
+
+
+def test_tolist():
+    pulse = gaussian(10) >> 5
+    pulse += gaussian(10) >> 50
+    pulse = pulse * cos(200)
+
+    l = pulse.tolist()
+    assert l == [
+        np.inf, -np.inf, None, None, None, 5, -2.5, 12.5, 42.5, 57.5, np.inf,
+        0, 1, 1, 2, 1, 1, 3, 2, 3.0028060219661246, 5, 3, 4, 200, 0.0, 0, 1, 1,
+        2, 1, 1, 3, 2, 3.0028060219661246, 50, 3, 4, 200, 0.0, 0
+    ]
+    assert Waveform.fromlist(l) == pulse
 
 
 def test_op():

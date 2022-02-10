@@ -236,13 +236,67 @@ def _calc(wav, x):
 
 
 class Waveform:
-    __slots__ = ('bounds', 'seq', 'max', 'min')
+    __slots__ = ('bounds', 'seq', 'max', 'min', 'start', 'stop', 'sample_rate')
 
     def __init__(self, bounds=(+inf, ), seq=(_zero, ), min=-inf, max=inf):
         self.bounds = bounds
         self.seq = seq
         self.max = max
         self.min = min
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+
+    def sample(self):
+        if self.start is None or self.stop is None or self.sample_rate is None:
+            raise ValueError('Waveform is not initialized')
+        x = np.arange(self.start, self.stop, 1 / self.sample_rate)
+        return self.__call__(x)
+
+    def tolist(self):
+        ret = [self.max, self.min, self.start, self.stop, self.sample_rate]
+        ret.append(len(self.bounds))
+        ret.extend(self.bounds)
+        for t, amp in self.seq:
+            ret.append(len(t))
+            ret.extend(amp)
+            for mt, n in t:
+                ret.append(len(n))
+                ret.extend(n)
+                for fun in mt:
+                    ret.append(len(fun))
+                    ret.extend(fun)
+        return ret
+
+    @staticmethod
+    def fromlist(l):
+
+        def _read(l, pos, size):
+            return tuple(l[pos:pos + size]), pos + size
+
+        w = Waveform()
+
+        (w.max, w.min, w.start, w.stop, w.sample_rate), pos = _read(l, 0, 5)
+        (nseg, ), pos = _read(l, pos, 1)
+        w.bounds, pos = _read(l, pos, nseg)
+
+        seq = []
+        for i in range(nseg):
+            (nsum, ), pos = _read(l, pos, 1)
+            amp, pos = _read(l, pos, nsum)
+            t = []
+            for j in range(nsum):
+                (nmul, ), pos = _read(l, pos, 1)
+                n, pos = _read(l, pos, nmul)
+                mt = []
+                for k in range(nmul):
+                    (nfun, ), pos = _read(l, pos, 1)
+                    fun, pos = _read(l, pos, nfun)
+                    mt.append(fun)
+                t.append((tuple(mt), n))
+            seq.append((tuple(t), amp))
+        w.seq = tuple(seq)
+        return w
 
     def simplify(self):
         seq = [_simplify(self.seq[0])]
@@ -438,7 +492,10 @@ class Waveform:
         elif isinstance(o, Waveform):
             a = self.simplify()
             b = o.simplify()
-            return a.seq == b.seq and a.bounds == b.bounds
+            return a.seq == b.seq and a.bounds == b.bounds and (
+                a.max, a.min, a.start, a.stop,
+                a.sample_rate) == (b.max, b.min, b.start, b.stop,
+                                   b.sample_rate)
         else:
             return False
 
