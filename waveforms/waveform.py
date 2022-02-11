@@ -272,7 +272,10 @@ class Waveform:
     def fromlist(l):
 
         def _read(l, pos, size):
-            return tuple(l[pos:pos + size]), pos + size
+            try:
+                return tuple(l[pos:pos + size]), pos + size
+            except:
+                raise ValueError('Invalid waveform format')
 
         w = Waveform()
 
