@@ -247,10 +247,12 @@ class Waveform:
         self.stop = None
         self.sample_rate = None
 
-    def sample(self):
-        if self.start is None or self.stop is None or self.sample_rate is None:
+    def sample(self, sample_rate=None):
+        if sample_rate is None:
+            sample_rate = self.sample_rate
+        if self.start is None or self.stop is None or sample_rate is None:
             raise ValueError('Waveform is not initialized')
-        x = np.arange(self.start, self.stop, 1 / self.sample_rate)
+        x = np.arange(self.start, self.stop, 1 / sample_rate)
         return self.__call__(x)
 
     def tolist(self):
