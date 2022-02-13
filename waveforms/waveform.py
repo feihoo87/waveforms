@@ -516,7 +516,7 @@ def one():
 
 
 def const(c):
-    return Waveform(seq=(_const(c), ))
+    return Waveform(seq=(_const(1.0 * c), ))
 
 
 __TypeIndex = 1
