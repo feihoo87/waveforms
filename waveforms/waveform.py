@@ -17,9 +17,9 @@ def _const(c):
     return (((), ()), ), (c, )
 
 
-_one = _const(1)
+_one = _const(1.0)
 _half = _const(1 / 2)
-_two = _const(2)
+_two = _const(2.0)
 _pi = _const(pi)
 _two_pi = _const(2 * pi)
 _half_pi = _const(pi / 2)
@@ -30,7 +30,7 @@ def _is_const(x):
 
 
 def _basic_wave(Type, *args, shift=0):
-    return ((((Type, *args, shift), ), (1, )), ), (1, )
+    return ((((Type, *args, shift), ), (1, )), ), (1.0, )
 
 
 def _insert_type_value_pair(t_list, v_list, t, v, lo, hi):
@@ -329,13 +329,11 @@ class Waveform:
         while i1 < h1 or i2 < h2:
             s = oper(self.seq[i1], other.seq[i2])
             b = min(self.bounds[i1], other.bounds[i2])
-            # if s == seq[-1]:
-            #     bounds[-1] = b
-            # else:
-            #     bounds.append(b)
-            #     seq.append(s)
-            bounds.append(b)
-            seq.append(s)
+            if len(seq) > 0 and s == seq[-1]:
+                bounds[-1] = b
+            else:
+                bounds.append(b)
+                seq.append(s)
             if b == self.bounds[i1]:
                 i1 += 1
             if b == other.bounds[i2]:
@@ -667,6 +665,8 @@ def step(edge, type='erf'):
     """
     type: "erf", "cos", "linear"
     """
+    if edge == 0:
+        return Waveform(bounds=(0, +inf), seq=(_zero, _one))
     if type == 'cos':
         rise = _add(_half,
                     _mul(_half, _basic_wave(COS, pi / edge, shift=0.5 * edge)))
