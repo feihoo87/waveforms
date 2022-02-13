@@ -72,7 +72,7 @@ class _WaveLexer:
     def t_eof(self, _):
         return None
 
-    t_ignore = ' \t\r'
+    t_ignore = ' \t\r\n'
 
     def t_error(self, t):
         raise SyntaxError("Unable to match any token rule, got -->%s<-- " %
