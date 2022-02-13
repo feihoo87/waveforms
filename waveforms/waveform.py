@@ -467,6 +467,8 @@ class Waveform:
         return self >> (-time)
 
     def __call__(self, x, frag=False):
+        if isinstance(x, (int, float, complex)):
+            return self.__call__(np.array([x]))[0]
         range_list = np.searchsorted(x, self.bounds)
         #ret = np.zeros_like(x)
         ret = []
