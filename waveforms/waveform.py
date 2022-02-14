@@ -247,13 +247,13 @@ class Waveform:
         self.stop = None
         self.sample_rate = None
 
-    def sample(self, sample_rate=None):
+    def sample(self, sample_rate=None, out=None):
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
             raise ValueError('Waveform is not initialized')
         x = np.arange(self.start, self.stop, 1 / sample_rate)
-        return self.__call__(x)
+        return self.__call__(x, out=out)
 
     def tolist(self):
         ret = [self.max, self.min, self.start, self.stop, self.sample_rate]
@@ -466,7 +466,7 @@ class Waveform:
     def __lshift__(self, time):
         return self >> (-time)
 
-    def __call__(self, x, frag=False):
+    def __call__(self, x, frag=False, out=None):
         if isinstance(x, (int, float, complex)):
             return self.__call__(np.array([x]))[0]
         range_list = np.searchsorted(x, self.bounds)
@@ -481,10 +481,13 @@ class Waveform:
                                     self.min, self.max)))
             start = stop
         if not frag:
-            y = np.zeros_like(x)
+            if out is None:
+                out = np.zeros_like(x)
+            else:
+                out *= 0
             for start, stop, part in ret:
-                y[start:stop] = part
-            return y
+                out[start:stop] = part
+            return out
         else:
             return ret
 
