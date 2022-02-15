@@ -34,8 +34,8 @@ def test_lisp_eval():
         (let
         ((x 1)
         (y 2))
-        (while (< x 10)
-            (begin
+        (while (< x 10)       ; while loop
+            (begin            ; test comment
             (setq x (+ x 1))
             (setq y (+ x y))
             (display! x y (f x y))
