@@ -1,19 +1,14 @@
-################ Lispy: Scheme Interpreter in Python
-
-## (c) Peter Norvig, 2010-16; See http://norvig.com/lispy.html
-
 from __future__ import annotations
 
+import functools
 import inspect
 import math
 import operator as op
 import re
 import warnings
-from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, NamedTuple, Optional, Union
+from typing import Any, NamedTuple, Union
 
 import numpy as np
 from waveforms.waveform import Waveform, zero
@@ -167,8 +162,8 @@ class LispError(Exception):
 class Env(dict):
     "An environment: a dict of {'var':val} pairs, with an outer Env."
 
-    def __init__(self, parms=(), args=(), outer=None):
-        self.update(zip(parms, args))
+    def __init__(self, params=(), args=(), outer=None):
+        self.update(zip(params, args))
         self.outer = outer
 
     def find(self, var):
@@ -176,15 +171,18 @@ class Env(dict):
         return self if (var in self) else self.outer.find(var)
 
     def lookup(self, name):
+        "Find the value of a variable, starting in this Env."
         try:
             return self.find(name)[name]
         except:
             raise KeyError(f'can not find {name}')
 
     def set(self, name, value):
+        "Set a variable to a value."
         self.find(name)[name] = value
 
     def assign(self, name, value):
+        "Set a variable to a value."
         self[name] = value
 
 
@@ -194,8 +192,17 @@ class Env(dict):
 class Procedure():
     "A user-defined Scheme procedure."
 
-    def __init__(self, parms, body, env):
-        self.parms, self.body, self.env = parms, body, env
+    def __init__(self, params, body, env):
+        self.params, self.body, self.env = params, body, env
+
+
+class Gate(Procedure):
+    "A quantum operation."
+
+    def __init__(self, name, params, qubits, body, env):
+        super().__init__(qubits, body, env)
+        self.name = name
+        self.params = params
 
 
 ################ eval
@@ -222,9 +229,13 @@ def standard_env():
     env = Env()
     env.update(vars(math))  # sin, cos, sqrt, pi, ...
     env.update({
-        '+':op.add, '-':op.sub, '*':op.mul, '/':op.truediv, '%':op.mod,
-        '>':op.gt, '<':op.lt, '>=':op.ge, '<=':op.le, '==':op.eq, '**':op.pow,
-        '>>':op.rshift, '<<':op.lshift, '&':op.and_, '^':op.xor, '|':op.or_,
+        '+': lambda *x: functools.reduce(op.add, x),
+        '*': lambda *x: functools.reduce(op.mul, x),
+        '&': lambda *x: functools.reduce(op.and_, x),
+        '|': lambda *x: functools.reduce(op.or_, x),
+        '-': op.sub, '/': op.truediv, '%': op.mod, '**': op.pow,
+        '>': op.gt, '<': op.lt, '>=': op.ge, '<=': op.le, '==': op.eq,
+        '>>': op.rshift, '<<': op.lshift, '^': op.xor,
         'pow':     op.pow,
         'abs':     abs,
         'append':  op.add,
@@ -237,9 +248,12 @@ def standard_env():
         'length':  len,
         'list':    lambda *x: x,
         'list?':   lambda x: isinstance(x, tuple),
-        'map':     map,
         'max':     max,
         'min':     min,
+        'and':     all,
+        'or':      any,
+        'all':     all,
+        'any':     any,
         'not':     op.not_,
         'null?':   lambda x: x == (),
         'number?': lambda x: isinstance(x, Number),
@@ -248,7 +262,7 @@ def standard_env():
         'symbol?': lambda x: isinstance(x, Symbol),
         'string?': lambda x: isinstance(x, str),
         'display!':print,
-        'error':   error,
+        'error!':  error,
         'waveform':make_waveform,
         'pi':      np.pi,
         'e':       np.e,
@@ -414,11 +428,22 @@ def eval_setq(exp, env, stack):
 
 
 def eval_lambda(exp, env, stack):
-    (_, parms, body) = exp
-    for i, p in enumerate(parms, start=1):
+    (_, params, body) = exp
+    for i, p in enumerate(params, start=1):
         if not isinstance(p, Symbol):
             raise TypeError(f'the {i} param must be a symbol')
-    stack.push(Procedure([p.name for p in parms], body, env))
+    stack.push(Procedure([p.name for p in params], body, env))
+
+
+def eval_defun(exp, env, stack):
+    (_, var, params, *body) = exp
+    if not isinstance(var, Symbol):
+        raise TypeError(f'var must be a symbol')
+    env.assign(
+        var.name,
+        Procedure([p.name for p in params],
+                  Expression([Symbol('begin'), *body]), env))
+    stack.push(None)
 
 
 def eval_begin(exp, env, stack):
@@ -430,7 +455,7 @@ def eval_begin(exp, env, stack):
 
 def eval_let(exp, env, stack):
     (_, bindings, body) = exp
-    let_env = Env(parms=[], args=[], outer=env)
+    let_env = Env(params=[], args=[], outer=env)
     for (var, val) in bindings:
         eval(val, env, stack)
         if not isinstance(var, Symbol):
@@ -441,7 +466,7 @@ def eval_let(exp, env, stack):
 
 def eval_letstar(exp, env, stack):
     (_, bindings, body) = exp
-    letstar_env = Env(parms=[], args=[], outer=env)
+    letstar_env = Env(params=[], args=[], outer=env)
     for (var, val) in bindings:
         eval(val, letstar_env, stack)
         if not isinstance(var, Symbol):
@@ -471,7 +496,7 @@ def get_ret(gen, env, stack):
 
 def apply(proc, args, env, stack):
     if isinstance(proc, Procedure):
-        eval(proc.body, Env(proc.parms, args, proc.env), stack)
+        eval(proc.body, Env(proc.params, args, proc.env), stack)
     elif callable(proc):
         x = proc(*args)
         if inspect.isgenerator(x):
@@ -511,6 +536,7 @@ __eval_table = {
     'cond': eval_cond,
     'while': eval_while,
     'define': eval_define,
+    'defun': eval_defun,
     'set!': eval_set,
     'setq': eval_setq,
     'lambda': eval_lambda,

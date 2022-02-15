@@ -14,8 +14,9 @@ def test_lisp_eval():
 
     eval(
         parse("""
-        (define f (lambda (x y)
-            (* x y)))
+        (defun f (x y)
+            (setq x (+ x y))
+            (* x y))
     """), env, stack)
     assert stack.pop() is None
 
@@ -27,7 +28,7 @@ def test_lisp_eval():
     eval(parse("""
         (f 2 6)
     """), env, stack)
-    assert stack.pop() == 12
+    assert stack.pop() == 48
 
     eval(
         parse("""
