@@ -34,6 +34,9 @@ class Symbol():
     def __init__(self, name):
         self.name = name
 
+    def __hash__(self):
+        return hash(self.name)
+
     def __repr__(self):
         if isinstance(self.name, str):
             return self.name
@@ -67,7 +70,7 @@ def tokenize(code):
     keywords = {}
     token_specification = [
         ('BRACKET', r'[\(\)]'),
-        ('STRING', r'\"(.*)\"'),
+        ('STRING', r'\"([^\\\"]|\\.)*\"'),
         ('NEWLINE', r'\n'),  # Line endings
         ('SKIP', r'[ \t]+'),  # Skip over spaces and tabs
         ('ATOM', r'[A-Za-z0-9\.!@#$%^&\*/_\-\+:\?\|\<\>=]+'),  # Atom
