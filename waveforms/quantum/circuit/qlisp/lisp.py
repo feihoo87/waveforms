@@ -252,6 +252,7 @@ def standard_env():
         'inf':     np.inf,
         '-inf':    -np.inf,
         'nil':     None,
+        'null':    None,
         'None':    None,
         'true':    True,
         'false':   False,
@@ -335,6 +336,14 @@ class Stack():
 
     def pick(self):
         return self._ret[-1]
+
+    def execute(self, cmd, target, *args):
+        if cmd == '!set_waveform':
+            self.raw_waveforms[target] = args[0]
+        elif cmd == '!set_phase':
+            self.phases[target] = args[0]
+        else:
+            pass
 
 
 def eval_quote(exp, env, stack):
@@ -438,9 +447,23 @@ def eval_letstar(exp, env, stack):
     eval(body, letstar_env, stack)
 
 
+def python_to_qlisp(exp):
+    if isinstance(exp, Expression):
+        return exp
+    elif isinstance(exp, tuple):
+        return Expression([python_to_qlisp(x) for x in exp])
+    elif isinstance(exp, str):
+        if len(exp) >= 2 and exp.startswith('"') and exp.endswith('"'):
+            return exp[1:-1]
+        else:
+            return Symbol(exp)
+    else:
+        return exp
+
+
 def get_ret(gen, env, stack):
     ret = yield from gen
-    eval(ret, env, stack)
+    eval(python_to_qlisp(ret), env, stack)
 
 
 def apply(proc, args, env, stack):
@@ -449,11 +472,19 @@ def apply(proc, args, env, stack):
     elif callable(proc):
         x = proc(*args)
         if inspect.isgenerator(x):
-            for cmd in get_ret(x, env, stack):
-                if cmd[0].startswith('!'):
-                    pass
+            for instruction in get_ret(x, env, stack):
+                instruction = python_to_qlisp(instruction)
+                if instruction[0].name.startswith('!'):
+                    try:
+                        cmd, target, *args = instruction
+                        for a in reversed(args):
+                            eval(a, env, stack)
+                        args = [stack.pop() for _ in args]
+                        stack.execute(cmd.name, target.name, *args)
+                    except:
+                        raise Exception(f'bad instruction {instruction}')
                 else:
-                    eval(cmd, env, stack)
+                    eval(instruction, env, stack)
                     stack.pop()
         else:
             stack.push(x)
@@ -498,8 +529,6 @@ def eval(x, env, stack):
             __eval_table[x[0].name](x, env, stack)
         else:
             eval(Expression([Symbol('apply'), x[0], x[1:]]), env, stack)
-    elif isinstance(x, list):
-        eval(Expression([Symbol('begin'), *x]), env, stack)
     else:  # constant literal
         stack.push(x)
 

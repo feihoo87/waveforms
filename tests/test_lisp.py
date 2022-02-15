@@ -12,7 +12,8 @@ def test_lisp_eval():
     """), env, stack)
     assert stack.pop() is None
 
-    eval(parse("""
+    eval(
+        parse("""
         (define f (lambda (x y)
             (* x y)))
     """), env, stack)
@@ -53,12 +54,14 @@ def test_lisp_eval():
     assert stack.pop() == 121
 
     def f(x):
-        yield ('display!', '"hello, world"')
-        yield ('display!', ('+', x, x))
-        return x
+        yield ('!set_waveform', 'test', sin(12e6))
+        yield ('!set_phase', 'test', ('+', x, x))
+        return ('double', x)
 
     eval(Expression((f, 8)), env, stack)
-    assert stack.pop() == 8
+    assert stack.pop() == 16
+    assert stack.raw_waveforms['test'] == sin(12e6)
+    assert stack.phases_ext['test'][1] == 16
 
     eval(
         parse("""
