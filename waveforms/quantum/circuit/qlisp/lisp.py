@@ -494,19 +494,10 @@ def eval(x, env, stack):
     elif isinstance(x, Expression):
         if len(x) == 0:
             stack.push(None)
-        elif not isinstance(x[0], (Symbol, Expression)):
-            raise LispError()
+        elif isinstance(x[0], Symbol) and x[0].name in __eval_table:
+            __eval_table[x[0].name](x, env, stack)
         else:
-            if isinstance(x[0], Expression):
-                eval(x[0], env, stack)
-                proc = stack.pop()
-            else:
-                proc = x[0]
-
-            if isinstance(proc, Symbol) and proc.name in __eval_table:
-                __eval_table[proc.name](x, env, stack)
-            else:
-                eval(Expression([Symbol('apply'), proc, x[1:]]), env, stack)
+            eval(Expression([Symbol('apply'), x[0], x[1:]]), env, stack)
     elif isinstance(x, list):
         eval(Expression([Symbol('begin'), *x]), env, stack)
     else:  # constant literal
