@@ -25,9 +25,10 @@ class MeasurementTask(NamedTuple):
     qubit: str
     cbit: int
     time: float
-    signal: str
+    signal: Union[str, tuple[str]]
     params: dict
     hardware: Union[ADChannel, MultADChannel] = None
+    shift: float = 0
 
 
 class AWGChannel(NamedTuple):
@@ -75,13 +76,20 @@ class ABCCompileConfigMixin(ABC):
     """
     Mixin for configs that can be used by compiler.
     """
+
     @abstractmethod
     def _getAWGChannel(self, name,
                        *qubits) -> Union[AWGChannel, MultAWGChannel]:
+        """
+        Get AWG channel by name and qubits.
+        """
         pass
 
     @abstractmethod
     def _getADChannel(self, qubit) -> Union[ADChannel, MultADChannel]:
+        """
+        Get AD channel by qubit.
+        """
         pass
 
     @abstractmethod
@@ -101,6 +109,9 @@ class ABCCompileConfigMixin(ABC):
 
     @abstractmethod
     def _getAllQubitLabels(self) -> list[str]:
+        """
+        Return all qubit labels.
+        """
         pass
 
 
@@ -134,8 +145,6 @@ class Context():
     raw_waveforms: dict[tuple[str, ...], Waveform] = field(
         default_factory=lambda: defaultdict(zero))
     measures: dict[int, MeasurementTask] = field(default_factory=dict)
-    _phases: dict[str,
-                 float] = field(default_factory=lambda: defaultdict(lambda: 0))
     phases_ext: dict[str, dict[Union[int, str], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(lambda: 0)))
     biases: dict[str,
@@ -148,9 +157,10 @@ class Context():
 
     @property
     def phases(self):
+
         class D():
-            __slots__ = ('ctx',)
-            
+            __slots__ = ('ctx', )
+
             def __init__(self, ctx):
                 self.ctx = ctx
 
@@ -188,6 +198,8 @@ class QLispCode():
     signal: str = 'state'
     shots: int = 1024
     arch: str = 'general'
+    cbit_alias: dict[int, tuple[int, int]] = field(default_factory=dict)
+    sub_code_count: int = 0
 
 
 def set_context_factory(factory):
