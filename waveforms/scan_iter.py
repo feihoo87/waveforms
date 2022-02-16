@@ -3,7 +3,7 @@ from abc import ABC, abstractclassmethod
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from itertools import count
+from itertools import chain, count
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
 
 
@@ -305,11 +305,16 @@ class Storage(Tracker):
         The modification time of the tracker.
     """
 
-    def __init__(self):
+    def __init__(self,
+                 storage: dict = None,
+                 shape: tuple = (),
+                 save_kwds: bool = True):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
-        self.storage = {}
-        self.shape = ()
+        self.storage = storage if storage is not None else {}
+        self._init_keys = list(self.storage.keys())
+        self.shape = shape
+        self.save_kwds = save_kwds
 
     def feed(self, step: StepStatus, dataframe: dict):
         """
@@ -328,7 +333,11 @@ class Storage(Tracker):
         else:
             self.shape = tuple(
                 [max(i + 1, j) for i, j in zip(step.pos, self.shape)])
-        for k, v in dataframe.items():
+        if self.save_kwds:
+            iter = chain(step.kwds.items(), dataframe.items())
+        else:
+            iter = dataframe.items()
+        for k, v in iter:
             if k not in self.storage:
                 self._create_data(k, v, step.pos)
             else:
@@ -345,7 +354,10 @@ class Storage(Tracker):
         Get the values of the storage.
         """
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
-        return [v[slices] for v in self.storage.values()]
+        return [
+            v if k in self._init_keys else v[slices]
+            for k, v in self.storage.items()
+        ]
 
     def items(self):
         """
@@ -354,6 +366,8 @@ class Storage(Tracker):
         return list(zip(self.keys(), self.values()))
 
     def __getitem__(self, key):
+        if key in self._init_keys:
+            return self.storage[key]
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
         return self.storage[key][slices]
 
