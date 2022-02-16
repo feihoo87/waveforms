@@ -290,15 +290,40 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
 
 
 class Storage(Tracker):
+    """
+    A tracker that stores the results of the steps.
 
-    def __init__(self, title):
-        self.title = title
+    Parameters
+    ----------
+    storage : dict
+        The storage of the results.
+    shape : tuple
+        The shape of the results.
+    ctime : datetime.datetime
+        The creation time of the tracker.
+    mtime : datetime.datetime
+        The modification time of the tracker.
+    """
+
+    def __init__(self):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
-        self._storage = {}
+        self.storage = {}
         self.shape = ()
 
     def feed(self, step: StepStatus, dataframe: dict):
+        """
+        Feed the results of the step to the storage.
+
+        Parameters
+        ----------
+        step : StepStatus
+            The step.
+        dataframe : dict
+            The results of the step.
+        """
+        self.storage[step.pos] = dataframe
+        self.shape = step.pos + step.index
         self.mtime = datetime.utcnow()
         if not self.shape:
             self.shape = tuple([i + 1 for i in step.pos])
@@ -306,24 +331,33 @@ class Storage(Tracker):
             self.shape = tuple(
                 [max(i + 1, j) for i, j in zip(step.pos, self.shape)])
         for k, v in dataframe.items():
-            if k not in self._storage:
+            if k not in self.storage:
                 self._create_data(k, v, step.pos)
             else:
                 self._fill_data(k, v, step.pos)
 
     def keys(self):
-        return self._storage.keys()
+        """
+        Get the keys of the storage.
+        """
+        return self.storage.keys()
 
     def values(self):
+        """
+        Get the values of the storage.
+        """
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
-        return [v[slices] for v in self._storage.values()]
+        return [v[slices] for v in self.storage.values()]
 
     def items(self):
+        """
+        Get the items of the storage.
+        """
         return list(zip(self.keys(), self.values()))
 
     def __getitem__(self, key):
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
-        return self._storage[key][slices]
+        return self.storage[key][slices]
 
     def _create_data(self, key, value, pos):
         import numpy as np
@@ -337,15 +371,15 @@ class Storage(Tracker):
                 dtype = type(value)
             else:
                 dtype = object
-        self._storage[key] = np.full(size, np.nan, dtype=dtype)
-        self._storage[key][pos + (..., )] = value
+        self.storage[key] = np.full(size, np.nan, dtype=dtype)
+        self.storage[key][pos + (..., )] = value
 
     def _fill_data(self, key, value, pos):
         import numpy as np
 
         shape = []
         slices = []
-        data = self._storage[key]
+        data = self.storage[key]
         extend = False
 
         if isinstance(value, np.ndarray):
@@ -362,10 +396,11 @@ class Storage(Tracker):
 
         if extend:
             shape = tuple(shape)
-            self._storage[key] = np.full(shape, np.nan, dtype=data.dtype)
-            self._storage[key][tuple(slices)] = data
+            self.storage[key] = np.full(shape, np.nan, dtype=data.dtype)
+            self.storage[key][tuple(slices)] = data
         if isinstance(value, np.ndarray):
-            self._storage[key][pos + tuple(
-                slice(None, i, None) for i in value.shape)] = value
+            self.storage[key][pos +
+                              tuple(slice(None, i, None)
+                                    for i in value.shape)] = value
         else:
-            self._storage[key][pos] = value
+            self.storage[key][pos] = value
