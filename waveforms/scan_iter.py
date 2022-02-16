@@ -2,11 +2,13 @@ import inspect
 from abc import ABC, abstractclassmethod
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from itertools import count
-from typing import (Any, Callable, Iterable, Optional, Sequence, Type, Union)
+from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
 
 
 class BaseOptimizer(ABC):
+
     @abstractclassmethod
     def ask(self) -> tuple:
         pass
@@ -59,14 +61,6 @@ class FeedbackPipe():
             return f'FeedbackProxy{self.keys}'
 
 
-class Tracker():
-    def update(self, kwds):
-        return kwds
-
-    def feed(self, step, obj):
-        pass
-
-
 @dataclass
 class StepStatus():
     iteration: int = 0
@@ -87,6 +81,15 @@ class StepStatus():
     def feed(self, obj):
         for tracker in self._trackers:
             tracker.feed(self, obj)
+
+
+class Tracker():
+
+    def update(self, kwds: dict):
+        return kwds
+
+    def feed(self, step: StepStatus, obj: Any):
+        pass
 
 
 def _call_func_with_kwds(func, kwds):
@@ -284,3 +287,85 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
         step.index = index
         yield step
         last_pos = step.pos
+
+
+class Storage(Tracker):
+
+    def __init__(self, title):
+        self.title = title
+        self.ctime = datetime.utcnow()
+        self.mtime = datetime.utcnow()
+        self._storage = {}
+        self.shape = ()
+
+    def feed(self, step: StepStatus, dataframe: dict):
+        self.mtime = datetime.utcnow()
+        if not self.shape:
+            self.shape = tuple([i + 1 for i in step.pos])
+        else:
+            self.shape = tuple(
+                [max(i + 1, j) for i, j in zip(step.pos, self.shape)])
+        for k, v in dataframe.items():
+            if k not in self._storage:
+                self._create_data(k, v, step.pos)
+            else:
+                self._fill_data(k, v, step.pos)
+
+    def keys(self):
+        return self._storage.keys()
+
+    def values(self):
+        slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
+        return [v[slices] for v in self._storage.values()]
+
+    def items(self):
+        return list(zip(self.keys(), self.values()))
+
+    def __getitem__(self, key):
+        slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
+        return self._storage[key][slices]
+
+    def _create_data(self, key, value, pos):
+        import numpy as np
+
+        if isinstance(value, np.ndarray):
+            size = self.shape + value.shape
+            dtype = value.dtype
+        else:
+            size = self.shape
+            if isinstance(value, (int, float, complex)):
+                dtype = type(value)
+            else:
+                dtype = object
+        self._storage[key] = np.full(size, np.nan, dtype=dtype)
+        self._storage[key][pos + (..., )] = value
+
+    def _fill_data(self, key, value, pos):
+        import numpy as np
+
+        shape = []
+        slices = []
+        data = self._storage[key]
+        extend = False
+
+        if isinstance(value, np.ndarray):
+            frame_shape = value.shape
+        else:
+            frame_shape = ()
+
+        for i, j in zip(data.shape, self.shape + frame_shape):
+            slices.append(slice(None, i, None))
+            while i < j:
+                i *= 2
+                extend = True
+            shape.append(i)
+
+        if extend:
+            shape = tuple(shape)
+            self._storage[key] = np.full(shape, np.nan, dtype=data.dtype)
+            self._storage[key][tuple(slices)] = data
+        if isinstance(value, np.ndarray):
+            self._storage[key][pos + tuple(
+                slice(None, i, None) for i in value.shape)] = value
+        else:
+            self._storage[key][pos] = value
