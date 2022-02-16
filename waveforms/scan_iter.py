@@ -322,8 +322,6 @@ class Storage(Tracker):
         dataframe : dict
             The results of the step.
         """
-        self.storage[step.pos] = dataframe
-        self.shape = step.pos + step.index
         self.mtime = datetime.utcnow()
         if not self.shape:
             self.shape = tuple([i + 1 for i in step.pos])
