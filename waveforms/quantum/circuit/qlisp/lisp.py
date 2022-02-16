@@ -155,10 +155,6 @@ def parse(program):
 ################ Environments
 
 
-class LispError(Exception):
-    pass
-
-
 class Env(dict):
     "An environment: a dict of {'var':val} pairs, with an outer Env."
 
@@ -206,6 +202,12 @@ class Gate(Procedure):
 
 
 ################ eval
+
+
+class LispError(Exception):
+    pass
+
+
 def error(msg, *args):
     raise LispError(msg, *args)
 
