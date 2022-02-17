@@ -7,6 +7,8 @@ from itertools import chain, count
 from typing import (Any, Callable, Iterable, NamedTuple, Optional, Sequence,
                     Type, Union)
 
+from waveforms.waveform import step
+
 
 class BaseOptimizer(ABC):
 
@@ -85,6 +87,7 @@ class StepStatus():
 
 
 class Begin(StepStatus):
+
     def __repr__(self):
         return f'Begin(level={self.level}, kwds={self.kwds})'
 
@@ -214,8 +217,8 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
         except StopIteration:
             break
         yield Begin(level=level,
-                    pos=pos,
-                    kwds=kwds,
+                    pos=pos + (i, ),
+                    kwds=kwds | kw,
                     _pipes=pipes,
                     _trackers=trackers)
         yield from _args_generator(iters, kwds | kw, level + 1, pos + (i, ),
