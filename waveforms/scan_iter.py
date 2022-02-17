@@ -153,9 +153,9 @@ def _generate_kwds(keys, iters, kwds, iteration, limit):
         if hasattr(it[0], 'ask') and hasattr(it[0], 'tell') and hasattr(
                 it[0], 'get_result'):
             if limit > 0 and iteration >= limit - 1:
-                value = it[0].get_result().x
+                value = _call_func_with_kwds(it[0].get_result, kwds).x
             else:
-                value = it[0].ask()
+                value = _call_func_with_kwds(it[0].ask, kwds)
         else:
             value = next(it[0])
             if len(ks) == 1:
@@ -277,7 +277,7 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
                             trackers=trackers,
                             pipes={})):
         if last_pos is None:
-            i = step.level - 1
+            i = 0
             index = (0, ) * len(step.pos)
         else:
             i = _find_diff_pos(last_pos, step.pos)
