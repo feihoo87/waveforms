@@ -4,7 +4,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
-from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
+from typing import (Any, Callable, Iterable, NamedTuple, Optional, Sequence,
+                    Type, Union)
 
 
 class BaseOptimizer(ABC):
@@ -81,6 +82,15 @@ class StepStatus():
     def feed(self, obj):
         for tracker in self._trackers:
             tracker.feed(self, obj)
+
+
+class Begin(StepStatus):
+    def __repr__(self):
+        return f'Begin(level={self.level}, kwds={self.kwds})'
+
+
+class End(StepStatus):
+    pass
 
 
 class Tracker():
@@ -203,8 +213,18 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
             kw = _generate_kwds(keys, current_iters, kwds, i, limit)
         except StopIteration:
             break
+        yield Begin(level=level,
+                    pos=pos,
+                    kwds=kwds,
+                    _pipes=pipes,
+                    _trackers=trackers)
         yield from _args_generator(iters, kwds | kw, level + 1, pos + (i, ),
                                    filter, additional_kwds, trackers, pipes)
+        yield End(level=level,
+                  pos=pos,
+                  kwds=kwds,
+                  _pipes=pipes,
+                  _trackers=trackers)
         _feedback(current_iters)
 
 
@@ -219,7 +239,8 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
                                                            ...]]] = {},
                filter: Optional[Callable[..., bool]] = None,
                additional_kwds: dict = {},
-               trackers: list = []) -> Iterable[StepStatus]:
+               trackers: list = [],
+               level_marker: bool = False) -> Iterable[StepStatus]:
     """
     Scan the given iterable of iterables.
 
@@ -265,28 +286,39 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     if len(iters) == 0:
         return
 
-    last_pos = None
+    last_step = None
     index = ()
-    for iteration, step in enumerate(
-            _args_generator(list(iters.items()),
-                            kwds={},
-                            level=0,
-                            pos=(),
-                            filter=filter,
-                            additional_kwds=additional_kwds,
-                            trackers=trackers,
-                            pipes={})):
-        if last_pos is None:
+    iteration = count()
+
+    for step in _args_generator(list(iters.items()),
+                                kwds={},
+                                level=0,
+                                pos=(),
+                                filter=filter,
+                                additional_kwds=additional_kwds,
+                                trackers=trackers,
+                                pipes={}):
+        if isinstance(step, (Begin, End)):
+            if level_marker:
+                if isinstance(step, End) and last_step is not None:
+                    step.iteration = last_step.iteration
+                    step.index = last_step.index
+                    step.pos = last_step.pos
+                    step.kwds = last_step.kwds
+                yield step
+            continue
+
+        if last_step is None:
             i = 0
             index = (0, ) * len(step.pos)
         else:
-            i = _find_diff_pos(last_pos, step.pos)
+            i = _find_diff_pos(last_step.pos, step.pos)
             index = tuple((j <= i) * n + (j == i) for j, n in enumerate(index))
-        step.iteration = iteration
+        step.iteration = next(iteration)
         step.level = i
         step.index = index
         yield step
-        last_pos = step.pos
+        last_step = step
 
 
 class Storage(Tracker):
