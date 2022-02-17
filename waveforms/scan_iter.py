@@ -4,8 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
-from typing import (Any, Callable, Iterable, NamedTuple, Optional, Sequence,
-                    Type, Union)
+from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
 
 from waveforms.waveform import step
 
@@ -119,6 +118,9 @@ class End(FeedbackProxy):
 
 
 class Tracker():
+
+    def init(self, iter_dict: dict):
+        pass
 
     def update(self, kwds: dict):
         return kwds
@@ -310,6 +312,9 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     if len(iters) == 0:
         return
 
+    for tracker in trackers:
+        tracker.init(iters)
+
     last_step = None
     index = ()
     iteration = count()
@@ -360,13 +365,39 @@ class Storage(Tracker):
     def __init__(self,
                  storage: dict = None,
                  shape: tuple = (),
-                 save_kwds: bool = True):
+                 save_kwds: bool = False,
+                 frozen_keys: tuple = ()):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
         self.storage = storage if storage is not None else {}
         self._init_keys = list(self.storage.keys())
+        self._frozen_keys = frozen_keys
         self.shape = shape
         self.save_kwds = save_kwds
+
+    def init(self, iter_dict: dict):
+        """
+        Initialize the tracker.
+
+        Parameters
+        ----------
+        iter_dict : dict
+            The map of iterables.
+        """
+        from numpy import ndarray
+
+        for keys, iters in iter_dict.items():
+            if isinstance(keys, str):
+                keys = (keys, )
+                iters = (iters, )
+            if len(keys) != len(iters):
+                continue
+            for key, iter in zip(keys, iters):
+                if key not in self.storage and isinstance(
+                        iter, (list, range, ndarray)):
+                    self.storage[key] = iter
+                    self._frozen_keys = self._frozen_keys + (key, )
+                    self._init_keys.append(key)
 
     def feed(self, step: StepStatus, dataframe: dict):
         """
@@ -390,6 +421,8 @@ class Storage(Tracker):
         else:
             iter = dataframe.items()
         for k, v in iter:
+            if k in self._frozen_keys:
+                continue
             if k not in self.storage:
                 self._create_data(k, v, step.pos)
             else:
