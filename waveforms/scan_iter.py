@@ -64,16 +64,7 @@ class FeedbackPipe():
             return f'FeedbackProxy{self.keys}'
 
 
-@dataclass
-class StepStatus():
-    iteration: int = 0
-    level: int = 0
-    pos: tuple = ()
-    index: tuple = ()
-    kwds: dict = field(default_factory=dict)
-
-    _pipes: dict = field(default_factory=dict, repr=False)
-    _trackers: list = field(default_factory=list, repr=False)
+class FeedbackProxy():
 
     def feedback(self, keywords, obj, suggested=None):
         if keywords in self._pipes:
@@ -86,14 +77,45 @@ class StepStatus():
             tracker.feed(self, obj)
 
 
-class Begin(StepStatus):
+@dataclass
+class StepStatus(FeedbackProxy):
+    iteration: int = 0
+    pos: tuple = ()
+    index: tuple = ()
+    kwds: dict = field(default_factory=dict)
+
+    _pipes: dict = field(default_factory=dict, repr=False)
+    _trackers: list = field(default_factory=list, repr=False)
+
+
+@dataclass
+class Begin(FeedbackProxy):
+    level: int = 0
+    iteration: int = 0
+    pos: tuple = ()
+    index: tuple = ()
+    kwds: dict = field(default_factory=dict)
+
+    _pipes: dict = field(default_factory=dict, repr=False)
+    _trackers: list = field(default_factory=list, repr=False)
 
     def __repr__(self):
         return f'Begin(level={self.level}, kwds={self.kwds})'
 
 
-class End(StepStatus):
-    pass
+@dataclass
+class End(FeedbackProxy):
+    level: int = 0
+    iteration: int = 0
+    pos: tuple = ()
+    index: tuple = ()
+    kwds: dict = field(default_factory=dict)
+
+    _pipes: dict = field(default_factory=dict, repr=False)
+    _trackers: list = field(default_factory=list, repr=False)
+
+    def __repr__(self):
+        return f'End(level={self.level}, kwds={self.kwds})'
 
 
 class Tracker():
@@ -199,8 +221,7 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
         for tracker in trackers:
             kwds = tracker.update(kwds)
         if filter is None or _call_func_with_kwds(filter, kwds):
-            yield StepStatus(level=level,
-                             pos=pos,
+            yield StepStatus(pos=pos,
                              kwds=kwds,
                              _pipes=pipes,
                              _trackers=trackers)
@@ -224,8 +245,8 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
         yield from _args_generator(iters, kwds | kw, level + 1, pos + (i, ),
                                    filter, additional_kwds, trackers, pipes)
         yield End(level=level,
-                  pos=pos,
-                  kwds=kwds,
+                  pos=pos + (i, ),
+                  kwds=kwds | kw,
                   _pipes=pipes,
                   _trackers=trackers)
         _feedback(current_iters)
@@ -269,21 +290,21 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     ...     'b': range(3),
     ... }
     >>> list(scan_iters(iters))
-    [StepStatus(iteration=0, level=1, pos=(0, 0), index=(0, 0), kwds={'a': 0, 'b': 0}),
-     StepStatus(iteration=1, level=1, pos=(0, 1), index=(0, 1), kwds={'a': 0, 'b': 1}),
-     StepStatus(iteration=2, level=1, pos=(0, 2), index=(0, 2), kwds={'a': 0, 'b': 2}),
-     StepStatus(iteration=3, level=0, pos=(1, 0), index=(1, 0), kwds={'a': 1, 'b': 0}),
-     StepStatus(iteration=4, level=1, pos=(1, 1), index=(1, 1), kwds={'a': 1, 'b': 1}),
-     StepStatus(iteration=5, level=1, pos=(1, 2), index=(1, 2), kwds={'a': 1, 'b': 2})]
+    [StepStatus(iteration=0, pos=(0, 0), index=(0, 0), kwds={'a': 0, 'b': 0}),
+     StepStatus(iteration=1, pos=(0, 1), index=(0, 1), kwds={'a': 0, 'b': 1}),
+     StepStatus(iteration=2, pos=(0, 2), index=(0, 2), kwds={'a': 0, 'b': 2}),
+     StepStatus(iteration=3, pos=(1, 0), index=(1, 0), kwds={'a': 1, 'b': 0}),
+     StepStatus(iteration=4, pos=(1, 1), index=(1, 1), kwds={'a': 1, 'b': 1}),
+     StepStatus(iteration=5, pos=(1, 2), index=(1, 2), kwds={'a': 1, 'b': 2})]
 
     >>> iters = {
     ...     'a': range(2),
     ...     'b': range(3),
     ... }
     ... list(scan_iters(iters, lambda a, b: a < b))
-    [StepStatus(iteration=0, level=1, pos=(0, 1), index=(0, 0), kwds={'a': 0, 'b': 1}),
-     StepStatus(iteration=1, level=1, pos=(0, 2), index=(0, 1), kwds={'a': 0, 'b': 2}),
-     StepStatus(iteration=2, level=0, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
+    [StepStatus(iteration=0, pos=(0, 1), index=(0, 0), kwds={'a': 0, 'b': 1}),
+     StepStatus(iteration=1, pos=(0, 2), index=(0, 1), kwds={'a': 0, 'b': 2}),
+     StepStatus(iteration=2, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
     """
 
     if len(iters) == 0:
@@ -303,11 +324,8 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
                                 pipes={}):
         if isinstance(step, (Begin, End)):
             if level_marker:
-                if isinstance(step, End) and last_step is not None:
+                if last_step is not None:
                     step.iteration = last_step.iteration
-                    step.index = last_step.index
-                    step.pos = last_step.pos
-                    step.kwds = last_step.kwds
                 yield step
             continue
 
@@ -318,7 +336,6 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
             i = _find_diff_pos(last_step.pos, step.pos)
             index = tuple((j <= i) * n + (j == i) for j, n in enumerate(index))
         step.iteration = next(iteration)
-        step.level = i
         step.index = index
         yield step
         last_step = step
