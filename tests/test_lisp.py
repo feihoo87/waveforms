@@ -1,4 +1,4 @@
-from numpy import inf
+from numpy import inf, pi
 from waveforms import Waveform, sin, square
 from waveforms.quantum.circuit.qlisp.lisp import *
 
@@ -55,14 +55,15 @@ def test_lisp_eval():
     assert stack.pop() == 121
 
     def f(x):
-        yield ('!set_waveform', 'test', sin(12e6))
-        yield ('!set_phase', 'test', ('+', x, x))
+        yield ('!set_waveform', Channel(('Q1', ), 'test'), sin(12e6))
+        yield ('!set_phase', ('quote', 'Q1'), ('+', x, x))
         return ('double', x)
 
     eval(Expression((f, 8)), env, stack)
     assert stack.pop() == 16
-    assert stack.raw_waveforms['test'] == sin(12e6)
-    assert stack.phases_ext['test'][1] == 16
+    assert Channel(('Q1', ), 'test') in stack.raw_waveforms
+    assert stack.raw_waveforms[Channel(('Q1', ), 'test')] == sin(12e6)
+    assert stack.phases_ext[Symbol('Q1')][1] == 16
 
     eval(
         parse("""
@@ -82,3 +83,42 @@ def test_lisp_eval():
         (waveform "sin(10)"))
     """), env, stack)
     assert stack.pop() == (square(10) * sin(10))
+
+
+def test_gate():
+    from waveforms import wave_eval
+    stack = Stack()
+    env = standard_env()
+
+    eval(
+        parse("""
+        (gate Y (qubit) ((rfUnitary pi (/ pi 2)) qubit))
+    """), env, stack)
+    assert stack.pop() is None
+
+    eval(
+        parse("""
+        (gate (rfUnitary theta phi) (qubit)
+            (!set_waveform (channel qubit "RF") (waveform "gaussian(20e-9) * sin(4e9)"))
+            (!set_phase (channel qubit "RF") phi)
+            )
+    """), env, stack)
+    assert stack.pop() is None
+
+    eval(parse("""
+        (rfUnitary pi 0)
+    """), env, stack)
+    gate = stack.pop()
+    assert gate.name == 'rfUnitary'
+    assert gate.params == ['theta', 'phi']
+    assert gate.bindings == {'theta': pi, 'phi': 0}
+
+    eval(parse("""
+        (Y 'Q1)
+    """), env, stack)
+    assert stack.pop() is None
+    assert stack.raw_waveforms[Channel(
+        qubits='RF',
+        name=('qubit', ))] == wave_eval("gaussian(20e-9) * sin(4e9)")
+    assert stack.phases_ext[Channel(qubits='RF',
+                                    name=('qubit', ))][1] == pi / 2

@@ -195,10 +195,18 @@ class Procedure():
 class Gate(Procedure):
     "A quantum operation."
 
-    def __init__(self, name, params, qubits, body, env):
-        super().__init__(qubits, body, env)
+    def __init__(self, name, params, qubits, body, env, bindings=None):
         self.name = name
         self.params = params
+        self.bindings = bindings
+        self.qubits = qubits
+        self.body = body
+        self.env = env
+
+
+class Channel(NamedTuple):
+    qubits: tuple
+    name: str
 
 
 ################ eval
@@ -356,14 +364,6 @@ class Stack():
     def pick(self):
         return self._ret[-1]
 
-    def execute(self, cmd, target, *args):
-        if cmd == '!set_waveform':
-            self.raw_waveforms[target] = args[0]
-        elif cmd == '!set_phase':
-            self.phases[target] = args[0]
-        else:
-            pass
-
 
 def eval_quote(exp, env, stack):
     (_, exp) = exp
@@ -448,6 +448,22 @@ def eval_defun(exp, env, stack):
     stack.push(None)
 
 
+def eval_gate(exp, env, stack):
+    (_, var, qubits, *body) = exp
+    if isinstance(var, Expression):
+        gate, *params = var
+    elif isinstance(var, Symbol):
+        gate = var
+        params = []
+    else:
+        raise TypeError(f'var must be a symbol')
+    env.assign(
+        gate.name,
+        Gate(gate.name, [p.name for p in params], [q.name for q in qubits],
+             Expression([Symbol('begin'), *body]), env))
+    stack.push(None)
+
+
 def eval_begin(exp, env, stack):
     for x in exp[1:-1]:
         eval(x, env, stack)
@@ -478,7 +494,7 @@ def eval_letstar(exp, env, stack):
 
 
 def python_to_qlisp(exp):
-    if isinstance(exp, Expression):
+    if isinstance(exp, (Expression, Channel)):
         return exp
     elif isinstance(exp, tuple):
         return Expression([python_to_qlisp(x) for x in exp])
@@ -496,8 +512,29 @@ def get_ret(gen, env, stack):
     eval(python_to_qlisp(ret), env, stack)
 
 
+def apply_gate(gate: Gate, args, env, stack):
+    if gate.bindings is None and len(gate.params) > 0:
+        bindings = dict(zip(gate.params, args))
+        stack.push(
+            Gate(gate.name, gate.params, gate.qubits, gate.body, gate.env,
+                 bindings))
+        return
+    else:
+        qubits = args
+
+    if isinstance(gate.body, Expression):
+        inner_env = Env(gate.qubits, qubits, gate.env)
+        if gate.bindings is not None:
+            inner_env.update(gate.bindings)
+        eval(gate.body, inner_env, stack)
+    else:
+        pass
+
+
 def apply(proc, args, env, stack):
-    if isinstance(proc, Procedure):
+    if isinstance(proc, Gate):
+        apply_gate(proc, args, env, stack)
+    elif isinstance(proc, Procedure):
         eval(proc.body, Env(proc.params, args, proc.env), stack)
     elif callable(proc):
         x = proc(*args)
@@ -505,14 +542,17 @@ def apply(proc, args, env, stack):
             for instruction in get_ret(x, env, stack):
                 instruction = python_to_qlisp(instruction)
                 if instruction[0].name.startswith('!'):
-                    try:
-                        cmd, target, *args = instruction
-                        for a in reversed(args):
-                            eval(a, env, stack)
-                        args = [stack.pop() for _ in args]
-                        stack.execute(cmd.name, target.name, *args)
-                    except:
-                        raise Exception(f'bad instruction {instruction}')
+                    eval_instruction(instruction, env, stack)
+                    # try:
+                    #     cmd, target, *args = instruction
+                    #     for a in reversed(args):
+                    #         eval(a, env, stack)
+                    #     args = [stack.pop() for _ in args]
+                    #     if isinstance(target, Symbol):
+                    #         target = target.name
+                    #     execute(stack, cmd.name, target, *args)
+                    # except:
+                    #     raise Exception(f'bad instruction {instruction}')
                 else:
                     eval(instruction, env, stack)
                     stack.pop()
@@ -532,6 +572,28 @@ def eval_apply(exp, env, stack):
     apply(proc, args, env, stack)
 
 
+def eval_channel(exp, env, stack):
+    (_, *qubits, name) = exp
+    if isinstance(name, Symbol):
+        name = name.name
+    qubits = tuple(q.name for q in qubits)
+    stack.push(Channel(name, qubits))
+
+
+def eval_instruction(instruction, env, stack):
+    env = Env(params=[], args=[], outer=env)
+    try:
+        cmd, target, *args = instruction
+        for a in reversed(args):
+            eval(a, env, stack)
+        args = [stack.pop() for _ in args]
+        eval(target, env, stack)
+        target = stack.pop()
+        execute(stack, cmd.name, target, *args)
+    except:
+        raise Exception(f'bad instruction {instruction}')
+
+
 __eval_table = {
     'quote': eval_quote,
     'if': eval_if,
@@ -539,6 +601,7 @@ __eval_table = {
     'while': eval_while,
     'define': eval_define,
     'defun': eval_defun,
+    'gate': eval_gate,
     'set!': eval_set,
     'setq': eval_setq,
     'lambda': eval_lambda,
@@ -546,6 +609,7 @@ __eval_table = {
     'let': eval_let,
     'let*': eval_letstar,
     'apply': eval_apply,
+    'channel': eval_channel,
 }
 
 
@@ -556,12 +620,31 @@ def eval(x, env, stack):
     elif isinstance(x, Expression):
         if len(x) == 0:
             stack.push(None)
+        elif isinstance(x[0], Symbol) and x[0].name.startswith('!'):
+            eval_instruction(x, env, stack)
         elif isinstance(x[0], Symbol) and x[0].name in __eval_table:
             __eval_table[x[0].name](x, env, stack)
         else:
             eval(Expression([Symbol('apply'), x[0], x[1:]]), env, stack)
     else:  # constant literal
         stack.push(x)
+
+
+################ virtual machine
+
+
+def execute(stack, cmd, target, *args):
+    if cmd == '!nop':
+        pass
+    elif cmd == '!set_waveform':
+        stack.raw_waveforms[target] = args[0]
+    elif cmd == '!add_waveform':
+        stack.raw_waveforms[target] += args[0]
+    elif cmd == '!set_phase':
+        stack.phases[target] = args[0]
+    else:
+        pass
+    stack.push(None)
 
 
 ################ Interaction: A REPL
