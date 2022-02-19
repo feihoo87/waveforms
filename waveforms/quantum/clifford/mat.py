@@ -60,7 +60,7 @@ def num2mat(num):
     将 64 位整数还原成矩阵
     """
     absData, phaseData = num & 0xffffffff, num >> 32
-    mat = np.zeros((4, 4), dtype=np.complex)
+    mat = np.zeros((4, 4), dtype=complex)
 
     for index, (i, j) in zip(count(start=0, step=2), product(range(4),
                                                              repeat=2)):
