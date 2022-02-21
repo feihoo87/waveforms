@@ -120,7 +120,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
     func, params_declaration = lib.getOpaque(name, gatecfg.type)
     if func is None:
-        raise KeyError('Undefined {gatecfg.type} type of {name} opaque.')
+        raise KeyError(f'Undefined {gatecfg.type} type of {name} opaque.')
     for p in params_declaration:
         if p.name not in gatecfg.params:
             pass
@@ -160,9 +160,7 @@ def _addMultChannelWaveforms(ctx: Context, wav, ch: MultAWGChannel):
             print("====== ERROR WAVEFORM ======")
             print("    lofreq =", lofreq)
             print("")
-            print(w.bounds)
-            print("")
-            print(w.seq)
+            print("    waveform =", w.tilist())
             print("====== ERROR WAVEFORM ======")
             raise
         ctx.waveforms[ch.I.name] += I
