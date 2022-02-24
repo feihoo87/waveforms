@@ -44,6 +44,46 @@ def fit_pole(x, y):
     return -0.5 * b / a, c - 0.25 * b**2 / a
 
 
+def fit_cosine(data, repeat=1):
+    """
+    Find the amplitude and phase of the data.
+    solve equations:
+        data[i] = offset + R * cos(phi + i * repeat * 2 * pi / N)
+        where i = 0, 1, ..., N-1 and N = len(data)
+
+    Args:
+        data (array): data
+        repeat (int, optional): Number of cycles. Defaults to 1.
+    
+    Returns:
+        tuple: (R, offset, phi)
+    
+    Examples:
+        >>> import numpy as np
+        >>> np.random.seed(1234)
+        >>> N = 100
+        >>> x = 2 * np.pi * np.linspace(0, 1, N, endpoint=False)
+        >>> y = 1.2 * np.cos(x - 0.9) + 0.4 + 0.01*np.random.randn(N)
+        >>> R, offset, phi = find_amp_and_phase(y)
+        >>> R, offset, phi
+        (1.20002782555664, 0.4003511228312543, -0.9002458177749354)
+    """
+    data = np.asarray(data)
+    N = data.shape[0]
+    x = np.linspace(0, 2 * np.pi * repeat, N, endpoint=False)
+
+    offset = data.mean(axis=0)
+    data -= offset
+
+    a = np.sum(np.moveaxis(data, 0, -1) * np.cos(x), axis=-1)
+    b = np.sum(np.moveaxis(data, 0, -1) * np.sin(x), axis=-1)
+
+    R = 2 * np.sqrt(a**2 + b**2) / N
+    phi = np.arctan2(-b, a)
+
+    return R, offset, phi
+
+
 def goodness_of_fit(pnum, ydata, fvec, sigma=None):
     """
     拟合优度
@@ -285,6 +325,7 @@ def mult_gaussian_cdf(x, mu, sigma, amp):
 
 
 def fit_readout_distribution(s0, s1):
+
     def loss(params, s0, s1):
         c0, c1, r0, r1, p0, p1 = params
         x0, y0 = cdf(None, s0)
