@@ -1,6 +1,7 @@
 import inspect
 
 from numpy import pi
+from waveforms.dicttree import NOTSET
 from waveforms.waveform import Waveform, cos, sin, step
 
 from .library import Library
@@ -91,6 +92,16 @@ def _try_to_call(x, kwds):
     return x
 
 
+def _try_to_lookup_config(cfg, key):
+    if isinstance(key, str) and key.startswith('cfg:'):
+        value = cfg.query(key[4:])
+        if isinstance(value, tuple) and len(value) == 2 and value[0] is NOTSET:
+            raise QLispError(f'Unknown config key: {key[4:]}')
+        return value
+    else:
+        return key
+
+
 def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
@@ -106,11 +117,12 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
                     if isinstance(p, tuple) and len(p) == 2 and isinstance(
                             p[0], str):
                         if p[0] == 'type':
-                            type = p[1]
+                            type = _try_to_lookup_config(ctx.cfg, p[1])
                         elif p[0].startswith('param:'):
-                            params[p[0][6:]] = p[1]
+                            params[p[0][6:]] = _try_to_lookup_config(
+                                ctx.cfg, p[1])
             else:
-                args.append(arg)
+                args.append(_try_to_lookup_config(ctx.cfg, arg))
     gatecfg = ctx.cfg._getGateConfig(name, *qubits, type=type)
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
