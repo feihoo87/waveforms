@@ -44,7 +44,7 @@ def fit_pole(x, y):
     return -0.5 * b / a, c - 0.25 * b**2 / a
 
 
-def fit_cosine(data, repeat=1):
+def fit_cosine(data, repeat=1, weight=None):
     """
     Find the amplitude and phase of the data.
     solve equations:
@@ -54,6 +54,7 @@ def fit_cosine(data, repeat=1):
     Args:
         data (array): data
         repeat (int, optional): Number of cycles. Defaults to 1.
+        weight (array, optional): weight. Defaults to None.
     
     Returns:
         tuple: (R, offset, phi)
@@ -71,15 +72,48 @@ def fit_cosine(data, repeat=1):
     data = np.asarray(data)
     N = data.shape[0]
     x = np.linspace(0, 2 * np.pi * repeat, N, endpoint=False)
+    if weight is None:
+        offset = data.mean(axis=0)
+        data -= offset
+        e = np.sum(np.moveaxis(data, 0, -1) * np.cos(x), axis=-1)
+        f = np.sum(np.moveaxis(data, 0, -1) * np.sin(x), axis=-1)
+        R = 2 * np.sqrt(e**2 + f**2) / N
+        phi = np.arctan2(-f, e)
+    else:
+        if weight.ndim == 1:
+            assert weight.shape[0] == N, "len(weight) != data.shape[0]"
+        elif weight.ndim == 2:
+            assert weight.shape == data.shape, "weight.shape != data.shape"
+        else:
+            raise ValueError("weight must be 1d or 2d array")
+        weight = weight / weight.sum(axis=0)
+        y = np.sum(np.moveaxis(data, 0, -1) * np.moveaxis(weight, 0, -1),
+                   axis=-1)
 
-    offset = data.mean(axis=0)
-    data -= offset
-
-    a = np.sum(np.moveaxis(data, 0, -1) * np.cos(x), axis=-1)
-    b = np.sum(np.moveaxis(data, 0, -1) * np.sin(x), axis=-1)
-
-    R = 2 * np.sqrt(a**2 + b**2) / N
-    phi = np.arctan2(-b, a)
+        a = np.sum(np.moveaxis(weight, 0, -1) * np.cos(x), axis=-1)
+        b = np.sum(np.moveaxis(weight, 0, -1) * np.sin(x), axis=-1)
+        c = np.sum(np.moveaxis(weight, 0, -1) * np.cos(2 * x), axis=-1)
+        d = np.sum(np.moveaxis(weight, 0, -1) * np.sin(2 * x), axis=-1)
+        e = np.sum(np.moveaxis(data, 0, -1) * np.moveaxis(weight, 0, -1) *
+                   np.cos(x),
+                   axis=-1)
+        f = np.sum(np.moveaxis(data, 0, -1) * np.moveaxis(weight, 0, -1) *
+                   np.sin(x),
+                   axis=-1)
+        offset = (2 * a * c * e - 2 * a * e + 2 * b * d * e - 2 * b * f -
+                  2 * b * c * f + 2 * a * d * f + y - c**2 * y -
+                  d**2 * y) / (1 - 2 * a**2 - 2 * b**2 + 2 * a**2 * c -
+                               2 * b**2 * c - c**2 + 4 * a * b * d - d**2)
+        data -= offset
+        e = np.sum(np.moveaxis(data, 0, -1) * np.moveaxis(weight, 0, -1) *
+                   np.cos(x),
+                   axis=-1)
+        f = np.sum(np.moveaxis(data, 0, -1) * np.moveaxis(weight, 0, -1) *
+                   np.sin(x),
+                   axis=-1)
+        R = (2 * np.sqrt(((c - 1)**2 + d**2) * e**2 + (
+            (c + 1)**2 + d**2) * f**2 - 4 * d * e * f)) / (c**2 + d**2 - 1)
+        phi = np.arctan2(e - c * e - d * f, f + c * f - d * e)
 
     return R, offset, phi
 
