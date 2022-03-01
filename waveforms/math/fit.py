@@ -44,7 +44,7 @@ def fit_pole(x, y):
     return -0.5 * b / a, c - 0.25 * b**2 / a
 
 
-def fit_cosine(data, repeat=1, weight=None):
+def fit_cosine(data, repeat=1, weight=None, x=None):
     """
     Find the amplitude and phase of the data.
     solve equations:
@@ -65,13 +65,16 @@ def fit_cosine(data, repeat=1, weight=None):
         >>> N = 100
         >>> x = 2 * np.pi * np.linspace(0, 1, N, endpoint=False)
         >>> y = 1.2 * np.cos(x - 0.9) + 0.4 + 0.01*np.random.randn(N)
-        >>> R, offset, phi = find_amp_and_phase(y)
+        >>> R, offset, phi = fit_cosine(y)
         >>> R, offset, phi
         (1.20002782555664, 0.4003511228312543, -0.9002458177749354)
     """
     data = np.asarray(data)
     N = data.shape[0]
-    x = np.linspace(0, 2 * np.pi * repeat, N, endpoint=False)
+    if x is None:
+        x = np.linspace(0, 2 * np.pi * repeat, N, endpoint=False)
+    else:
+        weight = np.ones_like(x)
     if weight is None:
         offset = data.mean(axis=0)
         data -= offset
@@ -113,7 +116,7 @@ def fit_cosine(data, repeat=1, weight=None):
                    axis=-1)
         R = (2 * np.sqrt(((c - 1)**2 + d**2) * e**2 + (
             (c + 1)**2 + d**2) * f**2 - 4 * d * e * f)) / (c**2 + d**2 - 1)
-        phi = np.arctan2(e - c * e - d * f, f + c * f - d * e)
+        phi = np.arctan2(e - c * e - d * f, f + c * f - d * e) + np.pi / 2
 
     return R, offset, phi
 
