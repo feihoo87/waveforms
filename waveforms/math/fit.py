@@ -2,7 +2,7 @@ import warnings
 from collections import defaultdict
 
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import curve_fit, minimize
 from scipy.special import erf
 
 from .geo import EPS, point_in_polygon
@@ -119,6 +119,44 @@ def fit_cosine(data, repeat=1, weight=None, x=None):
         phi = np.arctan2(e - c * e - d * f, f + c * f - d * e) + np.pi / 2
 
     return R, offset, phi
+
+
+def transmon_spectrum(x, EJ, Ec, d, offset, period):
+    from waveforms import Transmon
+
+    x = (x - offset) / period
+    q = Transmon(EJ=EJ, Ec=Ec, d=d)
+    if isinstance(x, (int, float, complex)):
+        return q.levels(flux=x)[1] - q.levels(flux=x)[0]
+    else:
+        y = []
+        for b in x:
+            y.append(q.levels(flux=b)[1] - q.levels(flux=b)[0])
+        return np.asarray(y)
+
+
+def fit_transmon_spectrum(bias,
+                          f01,
+                          offset=0,
+                          period=1,
+                          f01_max=None,
+                          f01_min=None,
+                          alpha=None):
+    from waveforms import Transmon
+
+    x = (bias - offset) / period
+
+    f01_max = np.max(f01) if f01_max is None else f01_max
+    f01_min = np.min(f01) if f01_min is None else f01_min
+    alpha = -0.24 if alpha is None else alpha
+
+    q = Transmon(f01_max=f01_max, f01_min=f01_min, alpha=alpha)
+    EJ, Ec, d = q.EJ, q.Ec, q.d
+
+    return curve_fit(transmon_spectrum,
+                     bias,
+                     f01,
+                     p0=[EJ, Ec, d, offset, period])
 
 
 def goodness_of_fit(pnum, ydata, fvec, sigma=None):
