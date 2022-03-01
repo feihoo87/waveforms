@@ -80,12 +80,12 @@ class Transmon():
 
         def err(x, target=(f01_max, alpha1, f01_min, alpha2)):
             EJS, Ec, d = x
-            levels = self._levels(Ec, self._flux_to_EJ(0, EJS), ng=ng)
+            levels = self._levels(Ec, self._flux_to_EJ(0, EJS, d), ng=ng)
             f01_max = levels[1] - levels[0]
             f12 = levels[2] - levels[1]
             alpha1 = f12 - f01_max
 
-            levels = self._levels(Ec, self._flux_to_EJ(0.5, EJS), ng=ng)
+            levels = self._levels(Ec, self._flux_to_EJ(0.5, EJS, d), ng=ng)
             f01_min = levels[1] - levels[0]
             f12 = levels[2] - levels[1]
             alpha2 = f12 - f01_min
