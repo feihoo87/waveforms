@@ -4,10 +4,31 @@ import warnings
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
+from enum import Flag, auto
+from inspect import classify_class_attrs
 from pathlib import Path
-from typing import Any, NamedTuple, Optional, Union
+from typing import Any, Literal, NamedTuple, Optional, Union
 
 from waveforms.waveform import Waveform, zero
+
+
+class Signal(Flag):
+    trace = auto()
+    iq = auto()
+    state = auto()
+
+    _avg_trace = auto()
+    _avg_iq = auto()
+    _avg_state = auto()
+    _count = auto()
+
+    trace_avg = trace | _avg_trace
+
+    iq_avg = iq | _avg_iq
+
+    population = state | _avg_state
+    count = state | _count
+    diag = state | _count | _avg_state
 
 
 def gateName(st):
@@ -25,7 +46,7 @@ class MeasurementTask(NamedTuple):
     qubit: str
     cbit: int
     time: float
-    signal: Union[str, tuple[str]]
+    signal: Signal
     params: dict
     hardware: Union[ADChannel, MultADChannel] = None
     shift: float = 0
@@ -195,7 +216,7 @@ class QLispCode():
     waveforms: dict[str, Waveform] = field(repr=True)
     measures: dict[int, list[MeasurementTask]] = field(repr=True)
     end: float = field(default=0, repr=True)
-    signal: str = 'state'
+    signal: Signal = Signal.state
     shots: int = 1024
     arch: str = 'general'
     cbit_alias: dict[int, tuple[int, int]] = field(default_factory=dict)
