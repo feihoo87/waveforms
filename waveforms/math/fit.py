@@ -443,8 +443,6 @@ def get_threshold_info(s0, s1):
     im0 = (s0 * np.exp(-1j * phi)).imag
     im1 = (s1 * np.exp(-1j * phi)).imag
 
-    fit_readout_distribution(re0, re1)
-
     x = np.unique(np.hstack([re0, re1]))
     x.sort()
     a = cdf(x, re0)
@@ -452,7 +450,8 @@ def get_threshold_info(s0, s1):
     c = a - b
 
     visibility = c.max()
-    thr = x[c == visibility].mean()
+    thr = x[c == visibility]
+    thr = 0.5 * (thr.min() + thr.max())
 
     c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
     c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
