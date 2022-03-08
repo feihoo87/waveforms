@@ -5,7 +5,6 @@ import numpy as np
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
 from scipy.optimize import curve_fit
 from scipy.signal import fftconvolve, lfilter
-from waveforms import square
 
 
 def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
@@ -154,6 +153,7 @@ def phase_curve(t, params, df_dphi, pulse_width, start, wav, sample_rate):
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    from waveforms import square
 
     data = np.load('Z_distortion.npz')
 
