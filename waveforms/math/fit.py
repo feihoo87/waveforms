@@ -8,12 +8,13 @@ from scipy.special import erf
 from .geo import EPS, point_in_polygon
 
 
-def lin_fit(x, y):
+def lin_fit(x, y, axis=None):
     """use less memory than np.polyfit"""
     x, y = np.asarray(x), np.asarray(y)
-    xm, ym = x.mean(), y.mean()
+    xm, ym = x.mean(axis=axis), y.mean(axis=axis)
     N = len(x)
-    a = (np.sum(x * y) - N * xm * ym) / ((x**2).sum() - N * xm * xm)
+    a = (np.sum(x * y, axis=axis) - N * xm * ym) / (
+        (x**2).sum(axis=axis) - N * xm * xm)
     b = ym - a * xm
     return np.array([a, b])
 
@@ -119,6 +120,12 @@ def fit_cosine(data, repeat=1, weight=None, x=None):
         phi = np.arctan2(e - c * e - d * f, f + c * f - d * e) + np.pi / 2
 
     return R, offset, phi
+
+
+def complex_amp_to_real(s, axis=None):
+    k, _ = lin_fit(s.real, s.imag, axis=axis)
+    phi = np.arctan(k)
+    return np.real(s * np.exp(-1j * phi))
 
 
 def transmon_spectrum(x, EJ, Ec, d, offset, period):
