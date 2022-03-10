@@ -106,7 +106,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     name = gateName(st)
     gate, qubits = st
     type = None
-    params = {}
+    tmp_params = {}
     args = []
 
     if isinstance(gate, tuple):
@@ -119,7 +119,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
                         if p[0] == 'type':
                             type = _try_to_lookup_config(ctx.cfg, p[1])
                         elif p[0].startswith('param:'):
-                            params[p[0][6:]] = _try_to_lookup_config(
+                            tmp_params[p[0][6:]] = _try_to_lookup_config(
                                 ctx.cfg, p[1])
             else:
                 args.append(_try_to_lookup_config(ctx.cfg, arg))
@@ -127,14 +127,18 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
 
-    params = {k: _try_to_call(v, gatecfg.params) for k, v in params.items()}
-    gatecfg.params.update(params)
+    tmp_params = {
+        k: _try_to_call(v, gatecfg.params)
+        for k, v in tmp_params.items()
+    }
+    params = gatecfg.params.copy()
+    params.update(tmp_params)
 
     func, params_declaration = lib.getOpaque(name, gatecfg.type)
     if func is None:
         raise KeyError(f'Undefined {gatecfg.type} type of {name} opaque.')
     for p in params_declaration:
-        if p.name not in gatecfg.params:
+        if p.name not in params:
             pass
             # raise ValueError(
             #     f'{name} (type={gatecfg.type}) opaque of {qubits} missing parameter {k}.'
@@ -142,7 +146,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
 
     args = tuple(args)
 
-    sub_ctx = create_context(ctx, scopes=[*ctx.scopes, gatecfg.params])
+    sub_ctx = create_context(ctx, scopes=[*ctx.scopes, params])
 
     for cmd in func(sub_ctx, gatecfg.qubits, *args):
         _execute(sub_ctx, cmd)
