@@ -157,7 +157,7 @@ def test_compile(lib, cfg):
         if k == 'AWG.Z':
             assert wav != ret3.waveforms[k]
             assert wav != ret4.waveforms[k]
-            assert ret3.waveforms[k] != ret4.waveforms[k]
+            assert ret3.waveforms[k] == ret4.waveforms[k]
         else:
             assert wav == ret3.waveforms[k]
             assert wav == ret4.waveforms[k]
