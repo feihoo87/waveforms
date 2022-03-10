@@ -6,8 +6,6 @@ from datetime import datetime
 from itertools import chain, count
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
 
-from waveforms.waveform import step
-
 
 class BaseOptimizer(ABC):
 
@@ -71,9 +69,9 @@ class FeedbackProxy():
                 suggested = [self.kwds[k] for k in keywords]
             self._pipes[keywords].send((suggested, obj))
 
-    def feed(self, obj):
+    def feed(self, obj, **options):
         for tracker in self._trackers:
-            tracker.feed(self, obj)
+            tracker.feed(self, obj, **options)
 
 
 @dataclass
@@ -125,7 +123,7 @@ class Tracker():
     def update(self, kwds: dict):
         return kwds
 
-    def feed(self, step: StepStatus, obj: Any):
+    def feed(self, step: StepStatus, obj: Any, **options):
         pass
 
 
@@ -399,7 +397,7 @@ class Storage(Tracker):
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
 
-    def feed(self, step: StepStatus, dataframe: dict):
+    def feed(self, step: StepStatus, dataframe: dict, **options):
         """
         Feed the results of the step to the storage.
 
@@ -410,6 +408,8 @@ class Storage(Tracker):
         dataframe : dict
             The results of the step.
         """
+        if not options.get('store', False):
+            return
         self.mtime = datetime.utcnow()
         if not self.shape:
             self.shape = tuple([i + 1 for i in step.pos])

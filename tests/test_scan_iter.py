@@ -111,7 +111,7 @@ def test_storage():
             trackers=[data]):
         y = f(step.kwds['bias'], step.kwds['freq'])
 
-        step.feed({'z': y})
+        step.feed({'z': y}, store=True)
         step.feedback(('center', ), (step.kwds['freq'], y))
 
     assert set(data.keys()) == {'bias', 'freq', 'z'}
