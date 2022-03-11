@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.constants as const
 
 
 def Svv(f, T, Z=lambda f: 50 * np.ones_like(f)):
@@ -49,6 +50,15 @@ def atts_and_heat(f, atts=[], input=None):
         heat += 300 / T * (A - 1) / A * spec
         spec = spec / A + Svv(f, T) * (A - 1) / A
     return spec, heat
+
+
+def thermal_excitation(f01, T):
+    """
+    p1 / p0 = exp(-beta*E01)
+    p0 + p1 = 1
+    p1 = tanh(-beta * E01 / 2) / 2 + 1 / 2
+    """
+    return 0.5 * np.tanh(-0.5 * const.h * f01 / const.k / T) + 0.5
 
 
 def Z_in(w, ZL, l, Z0=50, v=1e8):
