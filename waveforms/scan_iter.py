@@ -397,7 +397,7 @@ class Storage(Tracker):
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
 
-    def feed(self, step: StepStatus, dataframe: dict, **options):
+    def feed(self, step: StepStatus, dataframe: dict, store=False, **options):
         """
         Feed the results of the step to the storage.
 
@@ -408,7 +408,7 @@ class Storage(Tracker):
         dataframe : dict
             The results of the step.
         """
-        if not options.get('store', False):
+        if not store:
             return
         self.mtime = datetime.utcnow()
         if not self.shape:
