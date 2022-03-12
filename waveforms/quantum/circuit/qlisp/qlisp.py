@@ -147,7 +147,7 @@ def set_config_factory(factory):
 def getConfig() -> ABCCompileConfigMixin:
     if __config_factory is None:
         raise FileNotFoundError(
-            'setConfig(path) or set_config_factory(factory) must be run first.'
+            'set_config_factory(factory) must be run first.'
         )
     else:
         return __config_factory()
