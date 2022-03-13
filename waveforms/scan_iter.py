@@ -363,7 +363,7 @@ class Storage(Tracker):
     def __init__(self,
                  storage: dict = None,
                  shape: tuple = (),
-                 save_kwds: bool = False,
+                 save_kwds: Union[bool, Sequence[str]] = False,
                  frozen_keys: tuple = ()):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
@@ -408,6 +408,8 @@ class Storage(Tracker):
         dataframe : dict
             The results of the step.
         """
+        import numpy as np
+
         if not store:
             return
         self.mtime = datetime.utcnow()
@@ -417,7 +419,13 @@ class Storage(Tracker):
             self.shape = tuple(
                 [max(i + 1, j) for i, j in zip(step.pos, self.shape)])
         if self.save_kwds:
-            iter = chain(step.kwds.items(), dataframe.items())
+            if isinstance(self.save_kwds, bool):
+                iter = chain(step.kwds.items(), dataframe.items())
+            else:
+                kwds = {}
+                for key in self.save_kwds:
+                    kwds[key] = step.kwds.get(key, np.nan)
+                iter = chain(kwds.items(), dataframe.items())
         else:
             iter = dataframe.items()
         for k, v in iter:
@@ -455,6 +463,18 @@ class Storage(Tracker):
             return self.storage[key]
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
         return self.storage[key][slices]
+
+    def __getstate__(self):
+        storage = dict(self.items())
+        return {
+            'storage': storage,
+            'shape': self.shape,
+            'ctime': self.ctime,
+            'mtime': self.mtime,
+            '_init_keys': self._init_keys,
+            '_frozen_keys': self._frozen_keys,
+            'save_kwds': self.save_kwds,
+        }
 
     def _create_data(self, key, value, pos):
         import numpy as np
