@@ -73,6 +73,17 @@ class FeedbackProxy():
         for tracker in self._trackers:
             tracker.feed(self, obj, **options)
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_pipes']
+        del state['_trackers']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        self._pipes = {}
+        self._trackers = []
+
 
 @dataclass
 class StepStatus(FeedbackProxy):
