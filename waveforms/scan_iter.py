@@ -1,4 +1,5 @@
 import inspect
+import warnings
 from abc import ABC, abstractclassmethod
 from collections import deque
 from dataclasses import dataclass, field
@@ -68,6 +69,9 @@ class FeedbackProxy():
             if suggested is None:
                 suggested = [self.kwds[k] for k in keywords]
             self._pipes[keywords].send((suggested, obj))
+        else:
+            warnings.warn(f'No feedback pipe for {keywords}', RuntimeWarning,
+                          2)
 
     def feed(self, obj, **options):
         for tracker in self._trackers:
