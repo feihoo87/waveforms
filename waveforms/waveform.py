@@ -303,6 +303,47 @@ class Waveform:
         w.seq = tuple(seq)
         return w
 
+    def totree(self):
+        header = (self.max, self.min, self.start, self.stop, self.sample_rate)
+        body = []
+
+        for seq, b in zip(self.seq, self.bounds):
+            tlist, amplist = seq
+            new_seq = []
+            for t, amp in zip(tlist, amplist):
+                mtlist, nlist = t
+                new_t = []
+                for fun, n in zip(mtlist, nlist):
+                    new_t.append((n, fun))
+                new_seq.append((amp, tuple(new_t)))
+            body.append((b, tuple(new_seq)))
+        return header, tuple(body)
+
+    @staticmethod
+    def fromtree(tree):
+        w = Waveform()
+        header, body = tree
+
+        (w.max, w.min, w.start, w.stop, w.sample_rate) = header
+        bounds = []
+        seqs = []
+        for b, seq in body:
+            bounds.append(b)
+            amp_list = []
+            t_list = []
+            for amp, t in seq:
+                amp_list.append(amp)
+                n_list = []
+                mt_list = []
+                for n, mt in t:
+                    n_list.append(n)
+                    mt_list.append(mt)
+                t_list.append((tuple(mt_list), tuple(n_list)))
+            seqs.append((tuple(t_list), tuple(amp_list)))
+        w.bounds = tuple(bounds)
+        w.seq = tuple(seqs)
+        return w
+
     def simplify(self):
         seq = [_simplify(self.seq[0])]
         bounds = [self.bounds[0]]
@@ -492,7 +533,8 @@ class Waveform:
             return ret
 
     def __hash__(self):
-        return hash((self.bounds, self.seq))
+        return hash((self.max, self.min, self.start, self.stop,
+                     self.sample_rate, self.bounds, self.seq))
 
     def __eq__(self, o: object) -> bool:
         if isinstance(o, (int, float, complex)):

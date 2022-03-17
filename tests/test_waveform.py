@@ -41,6 +41,21 @@ def test_tolist():
     assert Waveform.fromlist(l) == pulse
 
 
+def test_totree():
+    pulse = gaussian(10) >> 5
+    pulse += gaussian(10) >> 50
+    pulse = pulse * cos(200)
+
+    t = pulse.totree()
+    assert t == ((np.inf, -np.inf, None, None, None),
+                 ((-2.5, ()), (12.5, ((1.0, ((1, (2, 3.0028060219661246, 5)),
+                                             (1, (4, 200, 0.0)))), )),
+                  (42.5, ()), (57.5, ((1.0, ((1, (2, 3.0028060219661246, 50)),
+                                             (1, (4, 200, 0.0)))), )), (np.inf,
+                                                                        ())))
+    assert Waveform.fromtree(t) == pulse
+
+
 def test_op():
     t = np.linspace(-10, 10, 1001)
 
