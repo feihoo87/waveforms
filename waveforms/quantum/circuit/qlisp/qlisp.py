@@ -186,10 +186,10 @@ class Context():
                 self.ctx = ctx
 
             def __getitem__(self, qubit):
-                return self.ctx.phases_ext[qubit][1]
+                return self.ctx.phases_ext[qubit][1] - self.ctx.phases_ext[qubit][0]
 
             def __setitem__(self, qubit, phase):
-                self.ctx.phases_ext[qubit][1] = phase
+                self.ctx.phases_ext[qubit][1] = phase + self.ctx.phases_ext[qubit][0]
 
         return D(self)
 
