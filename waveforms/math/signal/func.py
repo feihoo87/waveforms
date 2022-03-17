@@ -52,13 +52,19 @@ def atts_and_heat(f, atts=[], input=None):
     return spec, heat
 
 
-def thermal_excitation(f01, T):
+def thermal_excitation(T, f01, *levels):
     """
     p1 / p0 = exp(-beta*E01)
     p0 + p1 = 1
     p1 = tanh(-beta * E01 / 2) / 2 + 1 / 2
     """
-    return 0.5 * np.tanh(-0.5 * const.h * f01 / const.k / T) + 0.5
+    if len(levels) == 0:
+        return 0.5 * np.tanh(-0.5 * const.h * f01 / const.k / T) + 0.5
+    else:
+        levels = np.hstack([[f01], levels])
+        pp = np.exp(-const.h * levels / const.k / T)
+        p0 = 1 / (np.sum(pp) + 1)
+        return pp * p0
 
 
 def Z_in(w, ZL, l, Z0=50, v=1e8):
