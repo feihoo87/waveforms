@@ -98,7 +98,8 @@ def test_storage():
                 z[i, j] = f(bias, freq)
         center = freq_list[np.argmin(np.abs(freq_list - (1 - bias**2)))]
 
-    data = Storage(save_kwds=False)
+    data = Storage(save_kwds=False, lazy=False)
+    data2 = Storage(save_kwds=False, lazy=True)
 
     for step in scan_iters(
         {
@@ -108,7 +109,7 @@ def test_storage():
             freq_list,
         },
             filter=filt,
-            trackers=[data]):
+            trackers=[data, data2]):
         y = f(step.kwds['bias'], step.kwds['freq'])
 
         step.feed({'z': y}, store=True)
@@ -119,6 +120,12 @@ def test_storage():
     assert np.all(freq_list == data['freq'])
     assert data['z'].shape == (101, 121)
     assert np.all((z == data['z'])[np.isnan(z) == False])
+
+    assert set(data2.keys()) == {'bias', 'freq', 'z'}
+    assert np.all(bias_list == data2['bias'])
+    assert np.all(freq_list == data2['freq'])
+    assert data2['z'].shape == (101, 121)
+    assert np.all((z == data2['z'])[np.isnan(z) == False])
 
 
 def test_level_marker():

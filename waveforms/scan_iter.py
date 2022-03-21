@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
-
+from queue import Queue, Empty
 
 class BaseOptimizer(ABC):
 
@@ -379,7 +379,8 @@ class Storage(Tracker):
                  storage: dict = None,
                  shape: tuple = (),
                  save_kwds: Union[bool, Sequence[str]] = False,
-                 frozen_keys: tuple = ()):
+                 frozen_keys: tuple = (),
+                 lazy: bool = False):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
         self.storage = storage if storage is not None else {}
@@ -387,6 +388,8 @@ class Storage(Tracker):
         self._frozen_keys = frozen_keys
         self.shape = shape
         self.save_kwds = save_kwds
+        self.lazy = lazy
+        self.queue = Queue()
 
     def init(self, iter_dict: dict):
         """
@@ -443,24 +446,37 @@ class Storage(Tracker):
                 iter = chain(kwds.items(), dataframe.items())
         else:
             iter = dataframe.items()
+        if self.lazy:
+            self.queue.put_nowait((step.pos, dict(iter)))
+        else:
+            self._append(step.pos, iter)
+
+    def _append(self, pos, iter):
         for k, v in iter:
             if k in self._frozen_keys:
                 continue
             if k not in self.storage:
-                self._create_data(k, v, step.pos)
+                self._create_data(k, v, pos)
             else:
-                self._fill_data(k, v, step.pos)
+                self._fill_data(k, v, pos)
+
+    def _flush(self):
+        while not self.queue.empty():
+            pos, data = self.queue.get()
+            self._append(pos, data.items())
 
     def keys(self):
         """
         Get the keys of the storage.
         """
+        self._flush()
         return self.storage.keys()
 
     def values(self):
         """
         Get the values of the storage.
         """
+        self._flush()
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
         return [
             v if k in self._init_keys else v[slices]
@@ -471,15 +487,18 @@ class Storage(Tracker):
         """
         Get the items of the storage.
         """
+        self._flush()
         return list(zip(self.keys(), self.values()))
 
     def __getitem__(self, key):
+        self._flush()
         if key in self._init_keys:
             return self.storage[key]
         slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
         return self.storage[key][slices]
 
     def __getstate__(self):
+        self._flush()
         storage = dict(self.items())
         return {
             'storage': storage,
