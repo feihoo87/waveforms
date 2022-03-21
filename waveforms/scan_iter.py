@@ -447,7 +447,7 @@ class Storage(Tracker):
         else:
             iter = dataframe.items()
         if self.lazy:
-            self.queue.put_nowait((step.pos, dict(iter)))
+            self.queue.put_nowait((step.pos, list(iter)))
         else:
             self._append(step.pos, iter)
 
@@ -463,7 +463,7 @@ class Storage(Tracker):
     def _flush(self):
         while not self.queue.empty():
             pos, data = self.queue.get()
-            self._append(pos, data.items())
+            self._append(pos, data)
 
     def keys(self):
         """
