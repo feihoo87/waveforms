@@ -100,6 +100,7 @@ def test_storage():
 
     data = Storage(save_kwds=False, lazy=False)
     data2 = Storage(save_kwds=False, lazy=True)
+    data3 = Storage(save_kwds=True, lazy=True)
 
     for step in scan_iters(
         {
@@ -109,7 +110,7 @@ def test_storage():
             freq_list,
         },
             filter=filt,
-            trackers=[data, data2]):
+            trackers=[data, data2, data3]):
         y = f(step.kwds['bias'], step.kwds['freq'])
 
         step.feed({'z': y}, store=True)
@@ -126,6 +127,13 @@ def test_storage():
     assert np.all(freq_list == data2['freq'])
     assert data2['z'].shape == (101, 121)
     assert np.all((z == data2['z'])[np.isnan(z) == False])
+
+    assert set(data3.keys()) == {'bias', 'freq', 'z', 'center'}
+    assert np.all(bias_list == data3['bias'])
+    assert np.all(freq_list == data3['freq'])
+    assert data3['z'].shape == (101, 121)
+    assert data3['center'].shape == (101, 121)
+    assert np.all((z == data3['z'])[np.isnan(z) == False])
 
 
 def test_level_marker():

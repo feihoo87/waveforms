@@ -5,8 +5,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
+from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
-from queue import Queue, Empty
+
 
 class BaseOptimizer(ABC):
 
@@ -378,15 +379,18 @@ class Storage(Tracker):
     def __init__(self,
                  storage: dict = None,
                  shape: tuple = (),
-                 save_kwds: Union[bool, Sequence[str]] = False,
+                 save_kwds: Union[bool, Sequence[str]] = True,
                  frozen_keys: tuple = (),
-                 lazy: bool = False):
+                 lazy: bool = True):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
         self.storage = storage if storage is not None else {}
+        self.cache = {}
+        self.pos = {}
         self._init_keys = list(self.storage.keys())
         self._frozen_keys = frozen_keys
         self.shape = shape
+        self.count = 0
         self.save_kwds = save_kwds
         self.lazy = lazy
         self.queue = Queue()
@@ -455,10 +459,14 @@ class Storage(Tracker):
         for k, v in iter:
             if k in self._frozen_keys:
                 continue
+            self.count += 1
             if k not in self.storage:
-                self._create_data(k, v, pos)
+                self.storage[k] = [v]
+                self.pos[k] = tuple([i] for i in pos)
             else:
-                self._fill_data(k, v, pos)
+                self.storage[k].append(v)
+                for i, l in zip(pos, self.pos[k]):
+                    l.append(i)
 
     def _flush(self):
         while not self.queue.empty():
@@ -477,11 +485,7 @@ class Storage(Tracker):
         Get the values of the storage.
         """
         self._flush()
-        slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
-        return [
-            v if k in self._init_keys else v[slices]
-            for k, v in self.storage.items()
-        ]
+        return [self[k] for k in self.storage]
 
     def items(self):
         """
@@ -494,14 +498,30 @@ class Storage(Tracker):
         self._flush()
         if key in self._init_keys:
             return self.storage[key]
-        slices = tuple(slice(None, i, None) for i in self.shape) + (..., )
-        return self.storage[key][slices]
+        else:
+            return self._get_array(key, self.shape, self.count)
+
+    def _get_array(self, key, shape, count):
+        import numpy as np
+
+        if key in self.cache:
+            data, data_shape, data_count = self.cache[key]
+            if (data_shape, data_count) == (shape, count):
+                return data
+            else:
+                del self.cache[key]
+        if key not in self.cache or data_shape != shape:
+            data = np.full(shape, np.nan)
+        data[self.pos[key]] = self.storage[key]
+        self.cache[key] = (data, shape, count)
+        return data
 
     def __getstate__(self):
         self._flush()
         storage = dict(self.items())
         return {
             'storage': storage,
+            'pos': self.pos,
             'shape': self.shape,
             'ctime': self.ctime,
             'mtime': self.mtime,
@@ -509,49 +529,3 @@ class Storage(Tracker):
             '_frozen_keys': self._frozen_keys,
             'save_kwds': self.save_kwds,
         }
-
-    def _create_data(self, key, value, pos):
-        import numpy as np
-
-        if isinstance(value, np.ndarray):
-            size = self.shape + value.shape
-            dtype = value.dtype
-        else:
-            size = self.shape
-            if isinstance(value, (int, float, complex)):
-                dtype = type(value)
-            else:
-                dtype = object
-        self.storage[key] = np.full(size, np.nan, dtype=dtype)
-        self.storage[key][pos + (..., )] = value
-
-    def _fill_data(self, key, value, pos):
-        import numpy as np
-
-        shape = []
-        slices = []
-        data = self.storage[key]
-        extend = False
-
-        if isinstance(value, np.ndarray):
-            frame_shape = value.shape
-        else:
-            frame_shape = ()
-
-        for i, j in zip(data.shape, self.shape + frame_shape):
-            slices.append(slice(None, i, None))
-            while i < j:
-                i *= 2
-                extend = True
-            shape.append(i)
-
-        if extend:
-            shape = tuple(shape)
-            self.storage[key] = np.full(shape, np.nan, dtype=data.dtype)
-            self.storage[key][tuple(slices)] = data
-        if isinstance(value, np.ndarray):
-            self.storage[key][pos +
-                              tuple(slice(None, i, None)
-                                    for i in value.shape)] = value
-        else:
-            self.storage[key][pos] = value
