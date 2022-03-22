@@ -445,7 +445,7 @@ class Storage(Tracker):
                 iter = chain(step.kwds.items(), dataframe.items())
             else:
                 kwds = {}
-                for key in self.save_kwds:
+                for key in set(self.save_kwds) | set(step.kwds):
                     kwds[key] = step.kwds.get(key, np.nan)
                 iter = chain(kwds.items(), dataframe.items())
         else:
@@ -473,6 +473,19 @@ class Storage(Tracker):
             pos, data = self.queue.get()
             self._append(pos, data)
 
+    def _get_array(self, key, shape, count):
+        import numpy as np
+
+        data, data_shape, data_count = self.cache.get(key, (None, (), 0))
+        if (data_shape, data_count) == (shape, count):
+            return data
+        tmp = np.asarray(self.storage[key])
+        if data_shape != shape:
+            data = np.full(shape + tmp.shape[1:], np.nan, dtype=tmp.dtype)
+        data[self.pos[key]] = tmp
+        self.cache[key] = (data, shape, count)
+        return data
+
     def keys(self):
         """
         Get the keys of the storage.
@@ -498,23 +511,10 @@ class Storage(Tracker):
         self._flush()
         if key in self._init_keys:
             return self.storage[key]
-        else:
+        elif key in self.storage:
             return self._get_array(key, self.shape, self.count)
-
-    def _get_array(self, key, shape, count):
-        import numpy as np
-
-        if key in self.cache:
-            data, data_shape, data_count = self.cache[key]
-            if (data_shape, data_count) == (shape, count):
-                return data
-            else:
-                del self.cache[key]
-        if key not in self.cache or data_shape != shape:
-            data = np.full(shape, np.nan)
-        data[self.pos[key]] = self.storage[key]
-        self.cache[key] = (data, shape, count)
-        return data
+        else:
+            raise KeyError(key)
 
     def __getstate__(self):
         self._flush()

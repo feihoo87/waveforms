@@ -88,20 +88,27 @@ def test_storage():
             return -0.1 <= freq - center <= 0.1
 
     z = np.full((101, 121), np.nan)
+    iq = np.full((101, 121, 1024), np.nan, dtype=complex)
+    obj = np.full((101, 121), np.nan, dtype=object)
     center = None
     bias_list = np.linspace(-0.1, 0.1, 101)
     freq_list = np.linspace(-0.1, 1.1, 121)
 
+    np.random.seed(1234)
     for i, bias in enumerate(bias_list):
         for j, freq in enumerate(freq_list):
             if filt(freq, center):
                 z[i, j] = f(bias, freq)
+                iq[i,
+                   j, :] = np.random.randn(1024) + 1j * np.random.randn(1024)
+                obj[i, j] = {'a': 1, 'b': 2}
         center = freq_list[np.argmin(np.abs(freq_list - (1 - bias**2)))]
 
     data = Storage(save_kwds=False, lazy=False)
     data2 = Storage(save_kwds=False, lazy=True)
     data3 = Storage(save_kwds=True, lazy=True)
 
+    np.random.seed(1234)
     for step in scan_iters(
         {
             ('bias', 'center'):
@@ -113,27 +120,44 @@ def test_storage():
             trackers=[data, data2, data3]):
         y = f(step.kwds['bias'], step.kwds['freq'])
 
-        step.feed({'z': y}, store=True)
+        step.feed(
+            {
+                'z': y,
+                'iq': np.random.randn(1024) + 1j * np.random.randn(1024),
+                'obj': {
+                    'a': 1,
+                    'b': 2
+                }
+            },
+            store=True)
         step.feedback(('center', ), (step.kwds['freq'], y))
 
-    assert set(data.keys()) == {'bias', 'freq', 'z'}
+    assert set(data.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
     assert np.all(bias_list == data['bias'])
     assert np.all(freq_list == data['freq'])
     assert data['z'].shape == (101, 121)
+    assert data['iq'].shape == (101, 121, 1024)
+    assert data['obj'].shape == (101, 121)
+    assert data['obj'][0, 0] == {'a': 1, 'b': 2}
     assert np.all((z == data['z'])[np.isnan(z) == False])
+    assert np.all((iq == data['iq'])[np.isnan(iq) == False])
 
-    assert set(data2.keys()) == {'bias', 'freq', 'z'}
+    assert set(data2.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
     assert np.all(bias_list == data2['bias'])
     assert np.all(freq_list == data2['freq'])
     assert data2['z'].shape == (101, 121)
+    assert data2['iq'].shape == (101, 121, 1024)
     assert np.all((z == data2['z'])[np.isnan(z) == False])
+    assert np.all((iq == data2['iq'])[np.isnan(iq) == False])
 
-    assert set(data3.keys()) == {'bias', 'freq', 'z', 'center'}
+    assert set(data3.keys()) == {'bias', 'freq', 'z', 'iq', 'obj', 'center'}
     assert np.all(bias_list == data3['bias'])
     assert np.all(freq_list == data3['freq'])
     assert data3['z'].shape == (101, 121)
+    assert data3['iq'].shape == (101, 121, 1024)
     assert data3['center'].shape == (101, 121)
     assert np.all((z == data3['z'])[np.isnan(z) == False])
+    assert np.all((iq == data3['iq'])[np.isnan(iq) == False])
 
 
 def test_level_marker():
