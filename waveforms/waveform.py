@@ -257,17 +257,21 @@ class Waveform:
 
     def tolist(self):
         ret = [self.max, self.min, self.start, self.stop, self.sample_rate]
+
         ret.append(len(self.bounds))
-        ret.extend(self.bounds)
-        for t, amp in self.seq:
-            ret.append(len(t))
-            ret.extend(amp)
-            for mt, n in t:
-                ret.append(len(n))
-                ret.extend(n)
-                for fun in mt:
+        for seq, b in zip(self.seq, self.bounds):
+            ret.append(b)
+            tlist, amplist = seq
+            ret.append(len(amplist))
+            for t, amp in zip(tlist, amplist):
+                ret.append(amp)
+                mtlist, nlist = t
+                ret.append(len(nlist))
+                for fun, n in zip(mtlist, nlist):
+                    ret.append(n)
                     ret.append(len(fun))
                     ret.extend(fun)
+
         return ret
 
     @staticmethod
@@ -280,27 +284,29 @@ class Waveform:
                 raise ValueError('Invalid waveform format')
 
         w = Waveform()
-
-        (w.max, w.min, w.start, w.stop, w.sample_rate), pos = _read(l, 0, 5)
-        (nseg, ), pos = _read(l, pos, 1)
-        w.bounds, pos = _read(l, pos, nseg)
-
+        (w.max, w.min, w.start, w.stop, w.sample_rate,
+         nseg), pos = _read(l, 0, 6)
+        bounds = []
         seq = []
-        for i in range(nseg):
-            (nsum, ), pos = _read(l, pos, 1)
-            amp, pos = _read(l, pos, nsum)
+        for _ in range(nseg):
+            (b, nsum), pos = _read(l, pos, 2)
+            bounds.append(b)
+            amp = []
             t = []
-            for j in range(nsum):
-                (nmul, ), pos = _read(l, pos, 1)
-                n, pos = _read(l, pos, nmul)
+            for _ in range(nsum):
+                (a, nmul), pos = _read(l, pos, 2)
+                amp.append(a)
+                nlst = []
                 mt = []
-                for k in range(nmul):
-                    (nfun, ), pos = _read(l, pos, 1)
+                for _ in range(nmul):
+                    (n, nfun), pos = _read(l, pos, 2)
+                    nlst.append(n)
                     fun, pos = _read(l, pos, nfun)
                     mt.append(fun)
-                t.append((tuple(mt), n))
-            seq.append((tuple(t), amp))
+                t.append((tuple(mt), tuple(nlst)))
+            seq.append((tuple(t), tuple(amp)))
         w.seq = tuple(seq)
+        w.bounds = tuple(bounds)
         return w
 
     def totree(self):

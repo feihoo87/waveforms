@@ -68,13 +68,12 @@ def test_lisp_eval():
     eval(
         parse("""
         (waveform inf -inf nil nil nil
-            3 -1e-07 5e-07 inf 0 1 1.0 2
-            1 1 3 2 1.20112240878645e-07 2e-07
-            3 4 100000000.0 0.0 0)
+            3 -1e-07 0 5e-07 1 1.0 2 1 3 2 1.20112240878645e-07
+            2e-07 1 3 4 100000000.0 0.0 inf 0)
     """), env, stack)
     assert stack.pop() == Waveform.fromlist([
-        inf, -inf, None, None, None, 3, -1e-07, 5e-07, inf, 0, 1, 1.0, 2, 1, 1,
-        3, 2, 1.20112240878645e-07, 2e-07, 3, 4, 100000000.0, 0.0, 0
+        inf, -inf, None, None, None, 3, -1e-07, 0, 5e-07, 1, 1.0, 2, 1, 3, 2,
+        1.20112240878645e-07, 2e-07, 1, 3, 4, 100000000.0, 0.0, inf, 0
     ])
 
     eval(
