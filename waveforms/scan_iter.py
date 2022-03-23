@@ -410,7 +410,7 @@ class Storage(Tracker):
             if isinstance(keys, str):
                 keys = (keys, )
                 iters = (iters, )
-            if len(keys) != len(iters):
+            if not isinstance(iters, tuple) or len(keys) != len(iters):
                 continue
             for key, iter in zip(keys, iters):
                 if key not in self.storage and isinstance(
