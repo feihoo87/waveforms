@@ -8,6 +8,8 @@ from numpy import e, inf, pi
 
 from .math import comb
 
+NDIGITS = 15
+
 _zero = ((), ())
 
 
@@ -507,8 +509,9 @@ class Waveform:
         return v + (-self)
 
     def __rshift__(self, time):
-        return Waveform(tuple(bound + time for bound in self.bounds),
-                        tuple(_shift(expr, time) for expr in self.seq))
+        return Waveform(
+            tuple(round(bound + time, NDIGITS) for bound in self.bounds),
+            tuple(_shift(expr, time) for expr in self.seq))
 
     def __lshift__(self, time):
         return self >> (-time)
@@ -723,24 +726,32 @@ def step(edge, type='erf'):
     if type == 'cos':
         rise = _add(_half,
                     _mul(_half, _basic_wave(COS, pi / edge, shift=0.5 * edge)))
-        return Waveform(bounds=(-edge / 2, edge / 2, +inf),
+        return Waveform(bounds=(round(-edge / 2,
+                                      NDIGITS), round(edge / 2,
+                                                      NDIGITS), +inf),
                         seq=(_zero, rise, _one))
     elif type == 'linear':
         rise = _add(_half, _mul(_const(1 / edge), _basic_wave(LINEAR)))
-        return Waveform(bounds=(-edge / 2, edge / 2, +inf),
+        return Waveform(bounds=(round(-edge / 2,
+                                      NDIGITS), round(edge / 2,
+                                                      NDIGITS), +inf),
                         seq=(_zero, rise, _one))
     else:
         std_sq2 = edge / 5
         # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
         rise = ((((), ()), (((ERF, std_sq2, 0), ), (1, ))), (0.5, 0.5))
-        return Waveform(bounds=(-edge, edge, +inf), seq=(_zero, rise, _one))
+        return Waveform(bounds=(-round(edge, NDIGITS), round(edge,
+                                                             NDIGITS), +inf),
+                        seq=(_zero, rise, _one))
 
 
 def square(width, edge=0, type='erf'):
     if width <= 0:
         return zero()
     if edge == 0:
-        return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
+        return Waveform(bounds=(round(-0.5 * width,
+                                      NDIGITS), round(0.5 * width,
+                                                      NDIGITS), +inf),
                         seq=(_zero, _one, _zero))
     else:
         return ((step(edge, type=type) << width / 2) -
@@ -755,7 +766,9 @@ def gaussian(width):
     std_sq2 = width / 3.3302184446307908
     # std is set to give total pulse area same as a square
     #std_sq2 = width/np.sqrt(np.pi)
-    return Waveform(bounds=(-0.75 * width, 0.75 * width, +inf),
+    return Waveform(bounds=(round(-0.75 * width,
+                                  NDIGITS), round(0.75 * width,
+                                                  NDIGITS), +inf),
                     seq=(_zero, _basic_wave(GAUSSIAN, std_sq2), _zero))
 
 
@@ -785,7 +798,8 @@ def sinc(bw):
     if bw <= 0:
         return zero()
     width = 100 / bw
-    return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
+    return Waveform(bounds=(round(-0.5 * width,
+                                  NDIGITS), round(0.5 * width, NDIGITS), +inf),
                     seq=(_zero, _basic_wave(SINC, bw), _zero))
 
 
@@ -796,7 +810,8 @@ def cosPulse(width):
         return zero()
     pulse = ((((), ()), (((COS, 6.283185307179586 / width, 0), ), (1, ))),
              (0.5, 0.5))
-    return Waveform(bounds=(-0.5 * width, 0.5 * width, +inf),
+    return Waveform(bounds=(round(-0.5 * width,
+                                  NDIGITS), round(0.5 * width, NDIGITS), +inf),
                     seq=(_zero, pulse, _zero))
 
 
@@ -840,7 +855,7 @@ def chirp(f0, f1, T, phi0=0, type='linear'):
 
     if type == 'linear':
         # f(t) = f1 * (t/T) + f0 * (1 - t/T)
-        return Waveform(bounds=(0, T, +inf),
+        return Waveform(bounds=(0, round(T, NDIGITS), +inf),
                         seq=(_zero, _basic_wave(LINEARCHIRP, f0, f1, T,
                                                 phi0), _zero))
     elif type in ['exp', 'exponential', 'geometric']:
@@ -848,7 +863,7 @@ def chirp(f0, f1, T, phi0=0, type='linear'):
         if f0 == 0:
             raise ValueError('f0 must be non-zero')
         alpha = np.log(f1 / f0) / T
-        return Waveform(bounds=(0, T, +inf),
+        return Waveform(bounds=(0, round(T, NDIGITS), +inf),
                         seq=(_zero,
                              _basic_wave(EXPONENTIALCHIRP, f0, alpha,
                                          phi0), _zero))
@@ -857,7 +872,7 @@ def chirp(f0, f1, T, phi0=0, type='linear'):
         if f0 * f1 == 0:
             return const(np.sin(phi0))
         k = (f0 - f1) / (f1 * T)
-        return Waveform(bounds=(0, T, +inf),
+        return Waveform(bounds=(0, round(T, NDIGITS), +inf),
                         seq=(_zero, _basic_wave(HYPERBOLICCHIRP, f0, k,
                                                 phi0), _zero))
     else:
@@ -876,7 +891,9 @@ def interp(x, y):
         bounds.append(x2)
     bounds.append(inf)
     seq.append(_zero)
-    return Waveform(seq=tuple(seq), bounds=tuple(bounds)).simplify()
+    return Waveform(seq=tuple(seq),
+                    bounds=tuple(round(b, NDIGITS)
+                                 for b in bounds)).simplify()
 
 
 def cut(wav, start=None, stop=None, head=None, tail=None, min=None, max=None):
@@ -910,7 +927,7 @@ def function(fun, *args, start=None, stop=None):
 
 
 def samplingPoints(start, stop, points):
-    return Waveform(bounds=(start, stop, inf),
+    return Waveform(bounds=(round(start, NDIGITS), round(stop, NDIGITS), inf),
                     seq=(_zero, _basic_wave(INTERP, start, stop,
                                             tuple(points)), _zero))
 
