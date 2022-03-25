@@ -1,3 +1,4 @@
+import bisect
 import inspect
 import warnings
 from abc import ABC, abstractclassmethod
@@ -5,8 +6,10 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
-from queue import Empty, Queue
+from queue import Queue
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
+
+_NODEFAULT = object()
 
 
 class BaseOptimizer(ABC):
@@ -387,8 +390,10 @@ class Storage(Tracker):
         self.storage = storage if storage is not None else {}
         self.cache = {}
         self.pos = {}
+        self.iteration = {}
         self._init_keys = list(self.storage.keys())
         self._frozen_keys = frozen_keys
+        self._key_levels = ()
         self.shape = shape
         self.count = 0
         self.save_kwds = save_kwds
@@ -406,7 +411,7 @@ class Storage(Tracker):
         """
         from numpy import ndarray
 
-        for keys, iters in iter_dict.items():
+        for level, (keys, iters) in enumerate(iter_dict.items()):
             if isinstance(keys, str):
                 keys = (keys, )
                 iters = (iters, )
@@ -418,6 +423,7 @@ class Storage(Tracker):
                     self.storage[key] = iter
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
+                    self._key_levels = self._key_levels + ((key, level), )
 
     def feed(self, step: StepStatus, dataframe: dict, store=False, **options):
         """
@@ -451,11 +457,11 @@ class Storage(Tracker):
         else:
             iter = dataframe.items()
         if self.lazy:
-            self.queue.put_nowait((step.pos, list(iter)))
+            self.queue.put_nowait((step.iteration, step.pos, list(iter)))
         else:
-            self._append(step.pos, iter)
+            self._append(step.iteration, step.pos, iter)
 
-    def _append(self, pos, iter):
+    def _append(self, iteration, pos, iter):
         for k, v in iter:
             if k in self._frozen_keys:
                 continue
@@ -463,15 +469,17 @@ class Storage(Tracker):
             if k not in self.storage:
                 self.storage[k] = [v]
                 self.pos[k] = tuple([i] for i in pos)
+                self.iteration[k] = [iteration]
             else:
                 self.storage[k].append(v)
                 for i, l in zip(pos, self.pos[k]):
                     l.append(i)
+                self.iteration[k].append(iteration)
 
     def _flush(self):
         while not self.queue.empty():
-            pos, data = self.queue.get()
-            self._append(pos, data)
+            iteration, pos, data = self.queue.get()
+            self._append(iteration, pos, data)
 
     def _get_array(self, key, shape, count):
         import numpy as np
@@ -485,6 +493,13 @@ class Storage(Tracker):
         data[self.pos[key]] = tmp
         self.cache[key] = (data, shape, count)
         return data
+
+    def _get_part(self, key, skip):
+        i = bisect.bisect_left(self.iteration[key], skip)
+        pos = tuple(p[i:] for p in self.pos[key])
+        iteration = self.iteration[key][i:]
+        data = self.storage[key][i:]
+        return data, iteration, pos
 
     def keys(self):
         """
@@ -507,14 +522,25 @@ class Storage(Tracker):
         self._flush()
         return list(zip(self.keys(), self.values()))
 
-    def __getitem__(self, key):
+    def get(self, key, default=_NODEFAULT, skip=None):
+        """
+        Get the value of the storage.
+        """
         self._flush()
         if key in self._init_keys:
             return self.storage[key]
         elif key in self.storage:
-            return self._get_array(key, self.shape, self.count)
-        else:
+            if skip is None:
+                return self._get_array(key, self.shape, self.count)
+            else:
+                return self._get_part(key, skip)
+        elif default is _NODEFAULT:
             raise KeyError(key)
+        else:
+            return default
+
+    def __getitem__(self, key):
+        return self.get(key)
 
     def __getstate__(self):
         self._flush()
@@ -522,10 +548,12 @@ class Storage(Tracker):
         return {
             'storage': storage,
             'pos': self.pos,
+            'iteration': self.iteration,
             'shape': self.shape,
             'ctime': self.ctime,
             'mtime': self.mtime,
             '_init_keys': self._init_keys,
             '_frozen_keys': self._frozen_keys,
+            '_key_levels': self._key_levels,
             'save_kwds': self.save_kwds,
         }
