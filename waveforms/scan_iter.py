@@ -3,6 +3,7 @@ import inspect
 import warnings
 from abc import ABC, abstractclassmethod
 from collections import deque
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
@@ -399,6 +400,7 @@ class Storage(Tracker):
         self.save_kwds = save_kwds
         self.lazy = lazy
         self.queue = Queue()
+        self._queue_buffer = None
 
     def init(self, iter_dict: dict):
         """
@@ -448,21 +450,21 @@ class Storage(Tracker):
                 [max(i + 1, j) for i, j in zip(step.pos, self.shape)])
         if self.save_kwds:
             if isinstance(self.save_kwds, bool):
-                iter = chain(step.kwds.items(), dataframe.items())
+                kwds = step.kwds
             else:
-                kwds = {}
-                for key in set(self.save_kwds) | set(step.kwds):
-                    kwds[key] = step.kwds.get(key, np.nan)
-                iter = chain(kwds.items(), dataframe.items())
+                kwds = {
+                    key: step.kwds.get(key, np.nan)
+                    for key in self.save_kwds
+                }
         else:
-            iter = dataframe.items()
+            kwds = {}
         if self.lazy:
-            self.queue.put_nowait((step.iteration, step.pos, list(iter)))
+            self.queue.put_nowait((step.iteration, step.pos, dataframe, kwds))
         else:
-            self._append(step.iteration, step.pos, iter)
+            self._append(step.iteration, step.pos, dataframe, kwds)
 
-    def _append(self, iteration, pos, iter):
-        for k, v in iter:
+    def _append(self, iteration, pos, dataframe, kwds):
+        for k, v in chain(kwds.items(), dataframe.items()):
             if k in self._frozen_keys:
                 continue
             self.count += 1
@@ -477,9 +479,23 @@ class Storage(Tracker):
                 self.iteration[k].append(iteration)
 
     def _flush(self):
+        if self._queue_buffer is not None:
+            iteration, pos, fut, kwds = self._queue_buffer
+            if fut.done():
+                self._append(iteration, pos, fut.result(), kwds)
+                self._queue_buffer = None
+            else:
+                return
         while not self.queue.empty():
-            iteration, pos, data = self.queue.get()
-            self._append(iteration, pos, data)
+            iteration, pos, dataframe, kwds = self.queue.get()
+            if isinstance(dataframe, Future):
+                if not dataframe.done():
+                    self._queue_buffer = (iteration, pos, dataframe, kwds)
+                    return
+                else:
+                    self._append(iteration, pos, dataframe.result(), kwds)
+            else:
+                self._append(iteration, pos, dataframe, kwds)
 
     def _get_array(self, key, shape, count):
         import numpy as np
