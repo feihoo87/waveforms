@@ -1,5 +1,71 @@
 import numpy as np
 from waveforms.scan_iter import *
+import pytest
+
+
+class FindPeak(BaseOptimizer):
+
+    def __init__(self, dimensions):
+        self.index = -1
+        self.max_args = dimensions[0]
+        self.max_value = -np.inf
+
+    def tell(self, suggested, value):
+        args, value = value
+        if self.max_value <= value:
+            self.max_value = value
+            self.max_args = args
+
+    def ask(self):
+        self.index += 1
+        self.max_value = -np.inf
+        return self.max_args,
+
+    def get_result(self):
+
+        class Result():
+            x = self.max_args,
+
+        return Result()
+
+
+def spectrum_func(b, f):
+    c = 1 - b**2
+    return np.exp(-((f - c) / 0.01)**2)
+
+
+def spectrum_mask(freq, center=None):
+    if center is None:
+        return True
+    else:
+        return -0.1 <= freq - center <= 0.1
+
+
+@pytest.fixture
+def spectrum_data():
+    z = np.full((101, 121), np.nan)
+    iq = np.full((101, 121, 1024), np.nan, dtype=complex)
+    obj = np.full((101, 121), np.nan, dtype=object)
+    center = None
+    bias_list = np.linspace(-0.1, 0.1, 101)
+    freq_list = np.linspace(-0.1, 1.1, 121)
+
+    np.random.seed(1234)
+    for i, bias in enumerate(bias_list):
+        for j, freq in enumerate(freq_list):
+            if spectrum_mask(freq, center):
+                z[i, j] = spectrum_func(bias, freq)
+                iq[i,
+                   j, :] = np.random.randn(1024) + 1j * np.random.randn(1024)
+                obj[i, j] = {'a': 1, 'b': 2}
+        center = freq_list[np.argmin(np.abs(freq_list - (1 - bias**2)))]
+    return {
+        'z': z,
+        'iq': iq,
+        'obj': obj,
+        'bias_list': bias_list,
+        'freq_list': freq_list
+    }
 
 
 def test_scan_iter():
@@ -50,59 +116,11 @@ def test_scan_iter():
             assert step.kwds[k] == args[k]
 
 
-def test_storage():
-
-    class FindPeak(BaseOptimizer):
-
-        def __init__(self, dimensions):
-            self.index = -1
-            self.max_args = dimensions[0]
-            self.max_value = -np.inf
-
-        def tell(self, suggested, value):
-            args, value = value
-            if self.max_value <= value:
-                self.max_value = value
-                self.max_args = args
-
-        def ask(self):
-            self.index += 1
-            self.max_value = -np.inf
-            return self.max_args,
-
-        def get_result(self):
-
-            class Result():
-                x = self.max_args,
-
-            return Result()
-
-    def f(b, f):
-        c = 1 - b**2
-        return np.exp(-((f - c) / 0.01)**2)
-
-    def filt(freq, center=None):
-        if center is None:
-            return True
-        else:
-            return -0.1 <= freq - center <= 0.1
-
-    z = np.full((101, 121), np.nan)
-    iq = np.full((101, 121, 1024), np.nan, dtype=complex)
-    obj = np.full((101, 121), np.nan, dtype=object)
-    center = None
-    bias_list = np.linspace(-0.1, 0.1, 101)
-    freq_list = np.linspace(-0.1, 1.1, 121)
-
-    np.random.seed(1234)
-    for i, bias in enumerate(bias_list):
-        for j, freq in enumerate(freq_list):
-            if filt(freq, center):
-                z[i, j] = f(bias, freq)
-                iq[i,
-                   j, :] = np.random.randn(1024) + 1j * np.random.randn(1024)
-                obj[i, j] = {'a': 1, 'b': 2}
-        center = freq_list[np.argmin(np.abs(freq_list - (1 - bias**2)))]
+def test_storage(spectrum_data):
+    z = spectrum_data['z']
+    iq = spectrum_data['iq']
+    bias_list = spectrum_data['bias_list']
+    freq_list = spectrum_data['freq_list']
 
     data = Storage(save_kwds=False, lazy=False)
     data2 = Storage(save_kwds=False, lazy=True)
@@ -116,9 +134,9 @@ def test_storage():
             'freq':
             freq_list,
         },
-            filter=filt,
+            filter=spectrum_mask,
             trackers=[data, data2, data3]):
-        y = f(step.kwds['bias'], step.kwds['freq'])
+        y = spectrum_func(step.kwds['bias'], step.kwds['freq'])
 
         step.feed(
             {
@@ -158,6 +176,60 @@ def test_storage():
     assert data3['center'].shape == (101, 121)
     assert np.all((z == data3['z'])[np.isnan(z) == False])
     assert np.all((iq == data3['iq'])[np.isnan(iq) == False])
+
+
+def test_storage_future(spectrum_data):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def init_thread():
+        np.random.seed(1234)
+
+    def get_result(bias, freq):
+        y = spectrum_func(bias, freq)
+        return {
+            'z': y,
+            'iq': np.random.randn(1024) + 1j * np.random.randn(1024),
+            'obj': {
+                'a': 1,
+                'b': 2
+            }
+        }
+
+    pool = ThreadPoolExecutor(max_workers=1, initializer=init_thread)
+
+    z = spectrum_data['z']
+    iq = spectrum_data['iq']
+    bias_list = spectrum_data['bias_list']
+    freq_list = spectrum_data['freq_list']
+
+    data = Storage(save_kwds=False, lazy=True)
+
+    for step in scan_iters(
+        {
+            ('bias', 'center'):
+            (bias_list, OptimizerConfig(FindPeak, [None], max_iters=101)),
+            'freq':
+            freq_list,
+        },
+            filter=spectrum_mask,
+            trackers=[data]):
+
+        fut = pool.submit(get_result, step.kwds['bias'], step.kwds['freq'])
+
+        step.feed(fut, store=True)
+        step.feedback(('center', ), (step.kwds['freq'], fut.result()['z']))
+
+    assert set(data.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
+    assert np.all(bias_list == data['bias'])
+    assert np.all(freq_list == data['freq'])
+    assert data['z'].shape == (101, 121)
+    assert data['iq'].shape == (101, 121, 1024)
+    assert data['obj'].shape == (101, 121)
+    assert data['obj'][0, 0] == {'a': 1, 'b': 2}
+    assert np.all((z == data['z'])[np.isnan(z) == False])
+    assert np.all((iq == data['iq'])[np.isnan(iq) == False])
+
+    pool.shutdown()
 
 
 def test_level_marker():
