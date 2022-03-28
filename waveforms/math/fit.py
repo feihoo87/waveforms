@@ -79,7 +79,7 @@ def fit_cosine(data, repeat=1, weight=None, x=None):
         weight = np.ones_like(x)
     if weight is None:
         offset = data.mean(axis=0)
-        data -= offset
+        data = data - offset
         e = np.sum(np.moveaxis(data, 0, -1) * np.cos(x), axis=-1)
         f = np.sum(np.moveaxis(data, 0, -1) * np.sin(x), axis=-1)
         R = 2 * np.sqrt(e**2 + f**2) / N
@@ -109,7 +109,7 @@ def fit_cosine(data, repeat=1, weight=None, x=None):
                   2 * b * c * f + 2 * a * d * f + y - c**2 * y -
                   d**2 * y) / (1 - 2 * a**2 - 2 * b**2 + 2 * a**2 * c -
                                2 * b**2 * c - c**2 + 4 * a * b * d - d**2)
-        data -= offset
+        data = data - offset
         e = np.sum(np.moveaxis(data, 0, -1) * np.moveaxis(weight, 0, -1) *
                    np.cos(x),
                    axis=-1)
