@@ -1,5 +1,8 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import EngFormatter
 
 
 def plotLine(c0, c1, ax):
@@ -136,3 +139,89 @@ def plotALLXY(data, ax=None):
     ax.set_xticks(np.arange(len(ALLXYSeq)) * repeat + 0.5 * (repeat - 1))
     ax.set_xticklabels([','.join(seq) for seq in ALLXYSeq], rotation=60)
     ax.grid(which='major')
+
+
+def _get_log_ticks(x):
+    log10x = np.log10(x)
+
+    major_ticks = np.array(
+        range(math.floor(log10x[0]) - 1,
+              math.ceil(log10x[-1]) + 1))
+    minor_ticks = np.hstack([
+        np.log10(np.linspace(2, 10, 9, endpoint=False)) + x
+        for x in major_ticks
+    ])
+
+    major_ticks = major_ticks[(major_ticks >= log10x[0]) *
+                              (major_ticks <= log10x[-1])]
+    minor_ticks = minor_ticks[(minor_ticks >= log10x[0]) *
+                              (minor_ticks <= log10x[-1])]
+
+    return log10x, major_ticks, minor_ticks
+
+
+def imshow_logx(x, y, z, x_unit='s', ax=None, **kwargs):
+    if ax is None:
+        ax = plt.gca()
+
+    log10x, major_ticks, minor_ticks = _get_log_ticks(x)
+
+    dlogx, dy = log10x[1] - log10x[0], y[1] - y[0]
+    extent = (log10x[0] - dlogx / 2, log10x[-1] + dlogx / 2, y[0] - dy / 2,
+              y[-1] + dy / 2)
+
+    img = ax.imshow(z, extent=extent, **kwargs)
+
+    ax.set_xticks(major_ticks, minor=False)
+    formater = EngFormatter(unit=x_unit)
+    ax.set_xticklabels([formater.format_data(10.0**i) for i in major_ticks])
+
+    ax.set_xticks(minor_ticks, minor=True)
+
+    return img
+
+
+def imshow_logy(x, y, z, y_unit='s', ax=None, **kwargs):
+    if ax is None:
+        ax = plt.gca()
+
+    log10y, major_ticks, minor_ticks = _get_log_ticks(y)
+
+    dlogy, dx = log10y[1] - log10y[0], x[1] - x[0]
+    extent = (x[0] - dx / 2, x[-1] + dx / 2, log10y[0] - dlogy / 2,
+              log10y[-1] + dlogy / 2)
+
+    img = ax.imshow(z, extent=extent, **kwargs)
+
+    ax.set_yticks(major_ticks, minor=False)
+    formater = EngFormatter(unit=y_unit)
+    ax.set_yticklabels([formater.format_data(10.0**i) for i in major_ticks])
+    ax.set_yticks(minor_ticks, minor=True)
+
+    return img
+
+
+def imshow_loglog(x, y, z, x_unit='s', y_unit='Hz', ax=None, **kwargs):
+    if ax is None:
+        ax = plt.gca()
+
+    log10x, major_ticks, minor_ticks = _get_log_ticks(x)
+    log10y, major_ticks, minor_ticks = _get_log_ticks(y)
+
+    dlogx, dlogy = log10x[1] - log10x[0], log10y[1] - log10y[0]
+    extent = (log10x[0] - dlogx / 2, log10x[-1] + dlogx / 2,
+              log10y[0] - dlogy / 2, log10y[-1] + dlogy / 2)
+
+    img = ax.imshow(z, extent=extent, **kwargs)
+
+    ax.set_xticks(major_ticks, minor=False)
+    formater = EngFormatter(unit=x_unit)
+    ax.set_xticklabels([formater.format_data(10.0**i) for i in major_ticks])
+    ax.set_xticks(minor_ticks, minor=True)
+
+    ax.set_yticks(major_ticks, minor=False)
+    formater = EngFormatter(unit=y_unit)
+    ax.set_yticklabels([formater.format_data(10.0**i) for i in major_ticks])
+    ax.set_yticks(minor_ticks, minor=True)
+
+    return img
