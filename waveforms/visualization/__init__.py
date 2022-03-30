@@ -205,8 +205,8 @@ def imshow_loglog(x, y, z, x_unit='s', y_unit='Hz', ax=None, **kwargs):
     if ax is None:
         ax = plt.gca()
 
-    log10x, major_ticks, minor_ticks = _get_log_ticks(x)
-    log10y, major_ticks, minor_ticks = _get_log_ticks(y)
+    log10x, x_major_ticks, x_minor_ticks = _get_log_ticks(x)
+    log10y, y_major_ticks, y_minor_ticks = _get_log_ticks(y)
 
     dlogx, dlogy = log10x[1] - log10x[0], log10y[1] - log10y[0]
     extent = (log10x[0] - dlogx / 2, log10x[-1] + dlogx / 2,
@@ -214,14 +214,14 @@ def imshow_loglog(x, y, z, x_unit='s', y_unit='Hz', ax=None, **kwargs):
 
     img = ax.imshow(z, extent=extent, **kwargs)
 
-    ax.set_xticks(major_ticks, minor=False)
+    ax.set_xticks(x_major_ticks, minor=False)
     formater = EngFormatter(unit=x_unit)
-    ax.set_xticklabels([formater.format_data(10.0**i) for i in major_ticks])
-    ax.set_xticks(minor_ticks, minor=True)
+    ax.set_xticklabels([formater.format_data(10.0**i) for i in x_major_ticks])
+    ax.set_xticks(x_minor_ticks, minor=True)
 
-    ax.set_yticks(major_ticks, minor=False)
+    ax.set_yticks(y_major_ticks, minor=False)
     formater = EngFormatter(unit=y_unit)
-    ax.set_yticklabels([formater.format_data(10.0**i) for i in major_ticks])
-    ax.set_yticks(minor_ticks, minor=True)
+    ax.set_yticklabels([formater.format_data(10.0**i) for i in y_major_ticks])
+    ax.set_yticks(y_minor_ticks, minor=True)
 
     return img
