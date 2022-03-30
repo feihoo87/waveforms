@@ -339,6 +339,7 @@ def rfUnitary_BB1(ctx, qubits, theta, phi):
                 Parameter('duration', float, 1e-6, 's'),
                 Parameter('amp', float, 0.1, 'a.u.'),
                 Parameter('frequency', float, 6.5e9, 'Hz'),
+                Parameter('bias', float, 0, 'a.u.'),
                 Parameter('signal', str, 'state'),
                 Parameter('weight', str, 'const(1)'),
                 Parameter('phi', float, 0),
@@ -347,8 +348,7 @@ def rfUnitary_BB1(ctx, qubits, theta, phi):
                 Parameter('ring_up_time', float, 50e-9, 's')
             ])
 def measure(ctx, qubits, cbit=None):
-    import numpy as np
-    from waveforms import exp, step
+    from waveforms import cos, exp, pi, step
 
     qubit, = qubits
 
@@ -362,10 +362,11 @@ def measure(ctx, qubits, cbit=None):
     amp = ctx.params['amp']
     duration = ctx.params['duration']
     frequency = ctx.params['frequency']
+    bias = ctx.params.get('bias', None)
     signal = ctx.params.get('signal', 'state')
     ring_up_amp = ctx.params.get('ring_up_amp', amp)
     ring_up_time = ctx.params.get('ring_up_time', 50e-9)
-    edge = ctx.params.get('edge', 0)
+    rsing_edge_time = ctx.params.get('rsing_edge_time', 5e-9)
 
     try:
         w = ctx.params['w']
@@ -379,11 +380,14 @@ def measure(ctx, qubits, cbit=None):
 
     # phi = 2 * np.pi * (lo - frequency) * t
 
-    pulse = (ring_up_amp * (step(edge) >> t) - (ring_up_amp - amp) *
-             (step(edge) >> (t + ring_up_time)) - amp * (step(edge) >>
-                                                         (t + duration)))
+    pulse = (ring_up_amp * (step(rsing_edge_time) >> t) - (ring_up_amp - amp) *
+             (step(rsing_edge_time) >>
+              (t + ring_up_time)) - amp * (step(rsing_edge_time) >>
+                                           (t + duration)))
     yield ('!add', 'waveform',
            pulse * cos(2 * pi * frequency)), ('readoutLine.RF', qubit)
+    if bias is not None:
+        yield ('!set', 'bias', bias), ('Z', qubit)
 
     # pulse = square(2 * duration) >> duration
     # ctx.channel['readoutLine.AD.trigger', qubit] |= pulse.marker
@@ -391,8 +395,10 @@ def measure(ctx, qubits, cbit=None):
     params = {k: v for k, v in ctx.params.items()}
     params['w'] = w
     params['weight'] = weight
-    yield ('!set', 'cbit',
-           MeasurementTask(qubit, cbit, ctx.time[qubit], signal, params)), cbit
+    if cbit >= 0:
+        yield ('!set', 'cbit',
+               MeasurementTask(qubit, cbit, ctx.time[qubit], signal,
+                               params)), cbit
     yield ('!set', 'time', t + duration), qubit
     yield ('!set', 'phase', 0), qubit
 
