@@ -5,23 +5,23 @@ import numpy as np
 from matplotlib.ticker import EngFormatter
 
 
-def plotLine(c0, c1, ax):
+def plotLine(c0, c1, ax, **kwargs):
     t = np.linspace(0, 1, 11)
     c = (c1 - c0) * t + c0
-    ax.plot(c.real, c.imag)
+    ax.plot(c.real, c.imag, **kwargs)
 
 
-def plotCircle(c0, r, ax):
+def plotCircle(c0, r, ax, **kwargs):
     t = np.linspace(0, 1, 1001) * 2 * np.pi
     s = c0 + r * np.exp(1j * t)
-    ax.plot(s.real, s.imag)
+    ax.plot(s.real, s.imag, **kwargs)
 
 
-def plotEllipse(c0, a, b, phi, ax):
+def plotEllipse(c0, a, b, phi, ax, **kwargs):
     t = np.linspace(0, 1, 1001) * 2 * np.pi
     c = np.exp(1j * t)
     s = c0 + (c.real * a + 1j * c.imag * b) * np.exp(1j * phi)
-    ax.plot(s.real, s.imag)
+    ax.plot(s.real, s.imag, **kwargs)
 
 
 def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
