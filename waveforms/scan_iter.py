@@ -414,6 +414,7 @@ class Storage(Tracker):
         from numpy import ndarray
 
         for level, (keys, iters) in enumerate(iter_dict.items()):
+            self._key_levels = self._key_levels + ((keys, level), )
             if isinstance(keys, str):
                 keys = (keys, )
                 iters = (iters, )
@@ -425,7 +426,6 @@ class Storage(Tracker):
                     self.storage[key] = iter
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
-                    self._key_levels = self._key_levels + ((key, level), )
 
     def feed(self, step: StepStatus, dataframe: dict, store=False, **options):
         """
