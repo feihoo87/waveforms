@@ -176,7 +176,7 @@ def _addMultChannelWaveforms(ctx: Context, wav, ch: MultAWGChannel):
             print("====== ERROR WAVEFORM ======")
             print("    lofreq =", lofreq)
             print("")
-            print("    waveform =", w.tilist())
+            print("    waveform =", w.tolist())
             print("====== ERROR WAVEFORM ======")
             raise
         ctx.waveforms[ch.I.name] += I
