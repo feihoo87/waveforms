@@ -2,7 +2,7 @@ import math
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.ticker import EngFormatter
+from matplotlib.ticker import EngFormatter, LogFormatterSciNotation
 
 
 def plotLine(c0, c1, ax, **kwargs):
@@ -160,7 +160,24 @@ def _get_log_ticks(x):
     return log10x, major_ticks, minor_ticks
 
 
-def imshow_logx(x, y, z, x_unit='s', ax=None, **kwargs):
+class MyLogFormatter(EngFormatter):
+
+    def format_ticks(self, values):
+        if self.unit is None or self.unit == '':
+            fmt = LogFormatterSciNotation()
+            return [f"${fmt.format_data(10**x)}$" for x in values]
+        else:
+            return super().format_ticks(values)
+
+    def format_eng(self, x):
+        if self.unit is None or self.unit == '':
+            self.unit = ''
+            return f"{10**x:g}"
+        else:
+            return super().format_eng(10**x)
+
+
+def imshow_logx(x, y, z, x_unit=None, ax=None, **kwargs):
     if ax is None:
         ax = plt.gca()
 
@@ -173,15 +190,13 @@ def imshow_logx(x, y, z, x_unit='s', ax=None, **kwargs):
     img = ax.imshow(z, extent=extent, **kwargs)
 
     ax.set_xticks(major_ticks, minor=False)
-    formater = EngFormatter(unit=x_unit)
-    ax.set_xticklabels([formater.format_data(10.0**i) for i in major_ticks])
-
+    ax.xaxis.set_major_formatter(MyLogFormatter(x_unit))
     ax.set_xticks(minor_ticks, minor=True)
 
     return img
 
 
-def imshow_logy(x, y, z, y_unit='s', ax=None, **kwargs):
+def imshow_logy(x, y, z, y_unit=None, ax=None, **kwargs):
     if ax is None:
         ax = plt.gca()
 
@@ -194,14 +209,13 @@ def imshow_logy(x, y, z, y_unit='s', ax=None, **kwargs):
     img = ax.imshow(z, extent=extent, **kwargs)
 
     ax.set_yticks(major_ticks, minor=False)
-    formater = EngFormatter(unit=y_unit)
-    ax.set_yticklabels([formater.format_data(10.0**i) for i in major_ticks])
+    ax.yaxis.set_major_formatter(MyLogFormatter(y_unit))
     ax.set_yticks(minor_ticks, minor=True)
 
     return img
 
 
-def imshow_loglog(x, y, z, x_unit='s', y_unit='Hz', ax=None, **kwargs):
+def imshow_loglog(x, y, z, x_unit=None, y_unit=None, ax=None, **kwargs):
     if ax is None:
         ax = plt.gca()
 
@@ -215,13 +229,11 @@ def imshow_loglog(x, y, z, x_unit='s', y_unit='Hz', ax=None, **kwargs):
     img = ax.imshow(z, extent=extent, **kwargs)
 
     ax.set_xticks(x_major_ticks, minor=False)
-    formater = EngFormatter(unit=x_unit)
-    ax.set_xticklabels([formater.format_data(10.0**i) for i in x_major_ticks])
+    ax.xaxis.set_major_formatter(MyLogFormatter(x_unit))
     ax.set_xticks(x_minor_ticks, minor=True)
 
     ax.set_yticks(y_major_ticks, minor=False)
-    formater = EngFormatter(unit=y_unit)
-    ax.set_yticklabels([formater.format_data(10.0**i) for i in y_major_ticks])
+    ax.yaxis.set_major_formatter(MyLogFormatter(y_unit))
     ax.set_yticks(y_minor_ticks, minor=True)
 
     return img
