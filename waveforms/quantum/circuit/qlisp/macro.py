@@ -5,6 +5,26 @@ from numpy import mod, pi
 from .qlisp import QLispError, gateName
 
 
+def _lookup(name, env):
+    try:
+        return env.get(name, name)
+    except:
+        return name
+
+
+def lookup(st, env):
+    if isinstance(st[1], tuple):
+        return (st[0], tuple(_lookup(q, env) for q in st[1]))
+    elif isinstance(st[1], (str, int)):
+        return (st[0], _lookup(st[1], env))
+    else:
+        return st
+
+
+def define_macro(name, value, env):
+    env[name] = value
+
+
 def call_macro(gate, st):
     qubits = st[1]
     if isinstance(st[0], str):
@@ -31,17 +51,23 @@ def extend_control_gate(st, scope):
         return [st]
 
 
-def extend_macro(qlisp, lib):
+def extend_macro(qlisp, lib, env=None):
+    if env is None:
+        env = {}
     for st in qlisp:
-        if gateName(st) == 'C':
+        if gateName(st) == 'define':
+            define_macro(st[1], st[2], env)
+        elif gateName(st) == 'C':
+            st = lookup(st, env)
             yield from extend_control_gate(st, lib)
         else:
+            st = lookup(st, env)
             gate = lib.getGate(gateName(st))
             if gate is None:
                 yield st
             else:
                 for st in call_macro(gate, st):
-                    yield from extend_macro([st], lib)
+                    yield from extend_macro([st], lib, env)
 
 
 _VZ_rules = {}

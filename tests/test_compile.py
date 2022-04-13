@@ -52,8 +52,10 @@ qlisp3 = [
 ]
 
 qlisp4 = [
-    ('createBellPair', (0, 1)),
-    (('iSWAP', ('with', ('param:amp', lambda amp: amp-0.3))), (0, 1)),
+    ('define', 'Q1', 0),
+    ('define', 'Q2', 1),
+    ('createBellPair', ('Q1', 'Q2')),
+    (('iSWAP', ('with', ('param:amp', lambda amp: amp - 0.3))), ('Q1', 'Q2')),
     ('bellMeasure', (0, 1)),
     ('Barrier', (0, 1)),
     (('Measure', 0), 0),
