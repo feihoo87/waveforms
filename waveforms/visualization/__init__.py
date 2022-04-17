@@ -165,16 +165,16 @@ class MyLogFormatter(EngFormatter):
     def format_ticks(self, values):
         if self.unit is None or self.unit == '':
             fmt = LogFormatterSciNotation()
-            return [f"${fmt.format_data(10**x)}$" for x in values]
+            return [f"${fmt.format_data(10.0**x)}$" for x in values]
         else:
             return super().format_ticks(values)
 
     def format_eng(self, x):
         if self.unit is None or self.unit == '':
             self.unit = ''
-            return f"{10**x:g}"
+            return f"{10.0**x:g}"
         else:
-            return super().format_eng(10**x)
+            return super().format_eng(10.0**x)
 
 
 def imshow_logx(x, y, z, x_unit=None, ax=None, **kwargs):
