@@ -58,6 +58,7 @@ class AWGChannel(NamedTuple):
     size: int = -1
     amplitude: Optional[float] = None
     offset: Optional[float] = None
+    commandAddresses: tuple = ()
 
 
 class MultAWGChannel(NamedTuple):
@@ -74,6 +75,7 @@ class ADChannel(NamedTuple):
     trigger: str = ''
     triggerDelay: float = 0
     triggerClockCycle: float = 8e-9
+    commandAddresses: tuple = ()
 
 
 class MultADChannel(NamedTuple):
@@ -147,8 +149,7 @@ def set_config_factory(factory):
 def getConfig() -> ABCCompileConfigMixin:
     if __config_factory is None:
         raise FileNotFoundError(
-            'set_config_factory(factory) must be run first.'
-        )
+            'set_config_factory(factory) must be run first.')
     else:
         return __config_factory()
 
@@ -186,10 +187,12 @@ class Context():
                 self.ctx = ctx
 
             def __getitem__(self, qubit):
-                return self.ctx.phases_ext[qubit][1] - self.ctx.phases_ext[qubit][0]
+                return self.ctx.phases_ext[qubit][1] - self.ctx.phases_ext[
+                    qubit][0]
 
             def __setitem__(self, qubit, phase):
-                self.ctx.phases_ext[qubit][1] = phase + self.ctx.phases_ext[qubit][0]
+                self.ctx.phases_ext[qubit][
+                    1] = phase + self.ctx.phases_ext[qubit][0]
 
         return D(self)
 
