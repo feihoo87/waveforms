@@ -138,7 +138,7 @@ def test_storage(spectrum_data):
             trackers=[data, data2, data3]):
         y = spectrum_func(step.kwds['bias'], step.kwds['freq'])
 
-        step.feed(
+        step.store(
             {
                 'z': y,
                 'iq': np.random.randn(1024) + 1j * np.random.randn(1024),
@@ -146,8 +146,7 @@ def test_storage(spectrum_data):
                     'a': 1,
                     'b': 2
                 }
-            },
-            store=True)
+            })
         step.feedback(('center', ), (step.kwds['freq'], y))
 
     assert set(data.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
@@ -216,7 +215,7 @@ def test_storage_future(spectrum_data):
 
         fut = pool.submit(get_result, step.kwds['bias'], step.kwds['freq'])
 
-        step.feed(fut, store=True)
+        step.store(fut)
         step.feedback(('center', ), (step.kwds['freq'], fut.result()['z']))
 
     assert set(data.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}

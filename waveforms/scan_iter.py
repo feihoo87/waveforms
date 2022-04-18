@@ -82,6 +82,9 @@ class FeedbackProxy():
         for tracker in self._trackers:
             tracker.feed(self, obj, **options)
 
+    def store(self, obj, **options):
+        self.feed(obj, store=True, **options)
+
     def __getstate__(self):
         state = self.__dict__.copy()
         del state['_pipes']
