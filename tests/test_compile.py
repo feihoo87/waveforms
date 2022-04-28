@@ -153,6 +153,7 @@ def test_compile(lib, cfg):
     assert isinstance(ret3, QLispCode)
     ret4 = compile(qlisp4, cfg=cfg, lib=lib)
     assert isinstance(ret4, QLispCode)
+    assert 'AWG.Z' in ret.waveforms
     for k, wav in ret.waveforms.items():
         assert k in ret2.waveforms
         assert wav == ret2.waveforms[k]
