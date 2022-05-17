@@ -451,23 +451,24 @@ def fit_readout_distribution(s0, s1):
     return res
 
 
-def get_threshold_info(s0, s1):
+def get_threshold_info(s0, s1, thr=None, phi=None):
     from sklearn import svm
 
     s0, s1 = np.asarray(s0), np.asarray(s1)
 
-    data = np.hstack([s0, s1])
-    scale = 0.2 * np.abs(data).max()
-    data /= scale
-    target = np.hstack(
-        [np.zeros_like(s0, dtype=float),
-         np.ones_like(s1, dtype=float)])
-    X = np.c_[np.real(data), np.imag(data)]
-    clf = svm.LinearSVC()
-    clf.fit(X, target)
-    A, B, C = clf.coef_[0, 0], clf.coef_[0, 1], clf.intercept_[0]
-    phi = np.arctan2(B, A)
-    #thr = -scale * C / np.sqrt(A**2 + B**2)
+    if phi is None:
+        data = np.hstack([s0, s1])
+        scale = 0.2 * np.abs(data).max()
+        data /= scale
+        target = np.hstack(
+            [np.zeros_like(s0, dtype=float),
+             np.ones_like(s1, dtype=float)])
+        X = np.c_[np.real(data), np.imag(data)]
+        clf = svm.LinearSVC()
+        clf.fit(X, target)
+        A, B, C = clf.coef_[0, 0], clf.coef_[0, 1], clf.intercept_[0]
+        phi = np.arctan2(B, A)
+        #thr = -scale * C / np.sqrt(A**2 + B**2)
 
     re0 = (s0 * np.exp(-1j * phi)).real
     re1 = (s1 * np.exp(-1j * phi)).real
@@ -481,8 +482,10 @@ def get_threshold_info(s0, s1):
     c = a - b
 
     visibility = c.max()
-    thr = x[c == visibility]
-    thr = 0.5 * (thr.min() + thr.max())
+
+    if thr is None:
+        thr = x[c == visibility]
+        thr = 0.5 * (thr.min() + thr.max())
 
     c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
     c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
