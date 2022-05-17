@@ -29,8 +29,10 @@ def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
 
     if info is None:
         info = get_threshold_info(s0, s1)
+    else:
+        info = get_threshold_info(s0, s1, info['threshold'], info['phi'])
     thr, phi = info['threshold'], info['phi']
-    visibility, p0, p1 = info['visibility']
+    # visibility, p0, p1 = info['visibility']
     # print(
     #     f"thr={thr:.6f}, phi={phi:.6f}, visibility={visibility:.3f}, {p0}, {1-p1}"
     # )
