@@ -4,7 +4,7 @@ from collections import defaultdict
 import numpy as np
 from scipy.optimize import curve_fit, minimize
 from scipy.signal import correlate
-from scipy.special import erf
+from scipy.special import erf, erfinv
 
 from .geo import EPS, point_in_polygon
 
@@ -414,6 +414,10 @@ def gaussian_cdf(x, mu, sigma):
     return 0.5 * (1 + erf((x - mu) / (sigma * np.sqrt(2))))
 
 
+def gaussian_cdf_inv(y, mu, sigma):
+    return np.sqrt(2) * sigma * erfinv(2 * y - 1) + mu
+
+
 def mult_gaussian_pdf(x, mu, sigma, amp):
     amp /= np.sum(amp)
     ret = np.zeros_like(x)
@@ -431,6 +435,9 @@ def mult_gaussian_cdf(x, mu, sigma, amp):
 
 
 def fit_readout_distribution(s0, s1):
+    scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
+
+    s0, s1 = s0 / scale, s1 / scale
 
     def loss(params, s0, s1):
         c0, c1, r0, r1, p0, p1 = params
@@ -439,16 +446,18 @@ def fit_readout_distribution(s0, s1):
         Y0 = mult_gaussian_cdf(x0, [c0, c1], [r0, r1], [p0, 1 - p0])
         Y1 = mult_gaussian_cdf(x1, [c0, c1], [r0, r1], [p1, 1 - p1])
 
-        return np.sum((Y0 - y0)**2 + (Y1 - y1)**2)
+        return np.sum((Y0 - y0)**2) + np.sum((Y1 - y1)**2)
 
     res = minimize(loss,
                    [s0.mean(), s1.mean(),
                     s0.std(), s1.std(), 1, 0],
                    args=(s0, s1),
-                   bounds=[(None, None), (None, None), (0, None), (0, None),
-                           (0, 1), (0, 1)])
+                   bounds=[(None, None), (None, None), (1e-6, None),
+                           (1e-6, None), (0, 1), (0, 1)])
 
-    return res
+    c0, c1, r0, r1, p0, p1 = res.x
+
+    return np.array([c0 * scale, c1 * scale, r0 * scale, r1 * scale, p0, p1])
 
 
 def get_threshold_info(s0, s1, thr=None, phi=None):
@@ -490,8 +499,8 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
     c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
     c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
 
-    params_r = fit_readout_distribution(re0, re1).x
-    params_i = fit_readout_distribution(im0, im1).x
+    params_r = fit_readout_distribution(re0, re1)
+    params_i = fit_readout_distribution(im0, im1)
 
     return {
         'threshold': thr,
