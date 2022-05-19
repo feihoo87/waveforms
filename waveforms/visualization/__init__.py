@@ -85,8 +85,10 @@ def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
     a0, b0, a1, b1 = params[0][2], params[1][2], params[0][3], params[1][3]
     c0 = (r0 + 1j * i0) * np.exp(1j * phi)
     c1 = (r1 + 1j * i1) * np.exp(1j * phi)
-    plotEllipse(c0, 2 * a0, 2 * b0, phi, ax1)
-    plotEllipse(c1, 2 * a1, 2 * b1, phi, ax1)
+    phi0 = phi + params[0][6]
+    phi1 = phi + params[1][6]
+    plotEllipse(c0, 2 * a0, 2 * b0, phi0, ax1)
+    plotEllipse(c1, 2 * a1, 2 * b1, phi1, ax1)
 
     im0, im1 = info['idle']
     lim = min(im0.min(), im1.min()), max(im0.max(), im1.max())
@@ -101,23 +103,32 @@ def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
 
     n0, bins0, *_ = ax2.hist(re0, bins=50, alpha=0.5)
     n1, bins1, *_ = ax2.hist(re1, bins=50, alpha=0.5)
+
+    x_range = np.linspace(x.min(), x.max(), 1001)
+    *_, cov0, cov1 = info['std']
     ax2.plot(
-        x,
-        np.sum(n0) * (bins0[1] - bins0[0]) * mult_gaussian_pdf(
-            x, [r0, r1], [a0, a1], [params[0][4], 1 - params[0][4]]))
+        x_range,
+        np.sum(n0) * (bins0[1] - bins0[0]) *
+        mult_gaussian_pdf(x_range, [r0, r1], [
+            np.sqrt(cov0[0, 0]), np.sqrt(cov1[0, 0])
+        ], [params[0][4], 1 - params[0][4]]))
     ax2.plot(
-        x,
-        np.sum(n1) * (bins1[1] - bins1[0]) * mult_gaussian_pdf(
-            x, [r0, r1], [a0, a1], [params[0][5], 1 - params[0][5]]))
+        x_range,
+        np.sum(n1) * (bins1[1] - bins1[0]) *
+        mult_gaussian_pdf(x_range, [r0, r1], [
+            np.sqrt(cov0[0, 0]), np.sqrt(cov1[0, 0])
+        ], [params[0][5], 1 - params[0][5]]))
     ax2.set_ylabel('Count')
     ax2.set_xlabel('Projection Axes')
+    # ax2.set_yscale('log')
+    # ax2.set_ylim(0.1, max(np.sum(n0), np.sum(n1)))
 
     ax3 = ax2.twinx()
-    ax3.plot(x, a)
-    ax3.plot(x, b)
-    ax3.plot(x, c)
+    ax3.plot(x, a, '--', lw=1, color='C0')
+    ax3.plot(x, b, '--', lw=1, color='C1')
+    ax3.plot(x, c, 'k--', alpha=0.5, lw=1)
     ax3.set_ylim(0, 1.1)
-    ax3.vlines(thr, 0, 1.1, 'k')
+    ax3.vlines(thr, 0, 1.1, 'k', alpha=0.5)
     ax3.set_ylabel('Probility')
 
     return info

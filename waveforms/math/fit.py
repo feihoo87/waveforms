@@ -436,6 +436,15 @@ def gaussian_pdf(x, mu, sigma):
                                                      ((x - mu) / sigma)**2)
 
 
+def gaussian_pdf_2d(z, mu, cov):
+    z = z - mu
+    v = np.moveaxis(np.array([z.real, z.imag]), 0, -1).reshape(*z.shape, 2, 1)
+    vT = np.moveaxis(v, -1, -2)
+    m = np.linalg.inv(cov)
+    return 1 / (2 * np.pi * np.sqrt(np.linalg.det(cov))) * np.exp(
+        -0.5 * vT @ m @ v)[..., 0, 0]
+
+
 def gaussian_cdf(x, mu, sigma):
     return 0.5 * (1 + erf((x - mu) / (sigma * np.sqrt(2))))
 
@@ -460,7 +469,76 @@ def mult_gaussian_cdf(x, mu, sigma, amp):
     return ret
 
 
+def readout_distribution(s, p, c0, c1, cov0, cov1):
+    return gaussian_pdf_2d(s, c0, cov0) * p + gaussian_pdf_2d(s, c1,
+                                                              cov1) * (1 - p)
+
+
 def fit_readout_distribution(s0, s1):
+    center = 0.5 * (s0.mean() + s1.mean())
+    s0, s1 = s0 - center, s1 - center
+
+    scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
+
+    s0, s1 = s0 / scale, s1 / scale
+
+    def a_b_phi_2_cov(a, b, phi):
+        m = np.array([[np.cos(phi) * a, -np.sin(phi) * b],
+                      [np.sin(phi) * a, np.cos(phi) * b]])
+
+        return m @ m.T
+
+    def cov_2_a_b_phi(cov):
+        x, y, z = cov[0, 0], cov[1, 1], cov[0, 1]
+        a = (x - y) / z
+        b = np.sqrt(4 + a**2)
+        c = np.sqrt(8 + 2 * a**2 + (2 * a**3 + 8 * a) / b)
+        t = -a / 2 - b / 2 + c / 2
+        d = 1 - 6 * t**2 + t**4
+        phi = np.arctan2(2 * t, 1 - t**2)
+        a = np.sqrt(-(-x + 2 * t**2 * x - t**4 * x + 4 * t**2 * y) / d)
+        b = np.sqrt(-(4 * t**2 * x - y + 2 * t**2 * y - t**4 * y) / d)
+        return a, b, phi
+
+    def loss(params, s0, s1):
+        cr0, cr1, rr0, rr1, ci0, ci1, ri0, ri1, p0, p1, phi0, phi1 = params
+
+        c0, c1 = cr0 + 1j * ci0, cr1 + 1j * ci1
+
+        cov0 = a_b_phi_2_cov(rr0, ri0, phi0)
+        cov1 = a_b_phi_2_cov(rr1, ri1, phi1)
+
+        return (
+            -np.log(readout_distribution(s0, p0, c0, c1, cov0, cov1)).sum() -
+            np.log(readout_distribution(s1, p1, c0, c1, cov0, cov1)).sum())
+
+    res = minimize(loss, [
+        s0.real.mean(),
+        s1.real.mean(),
+        s0.real.std(),
+        s1.real.std(),
+        s0.imag.mean(),
+        s1.imag.mean(),
+        s0.imag.std(),
+        s1.imag.std(), 1, 0, 0, 0
+    ],
+                   args=(s0, s1),
+                   bounds=[(None, None), (None, None), (1e-6, None),
+                           (1e-6, None), (None, None), (None, None),
+                           (1e-6, None), (1e-6, None), (0, 1), (0, 1),
+                           (0, 2 * np.pi), (0, 2 * np.pi)])
+
+    cr0, cr1, rr0, rr1, ci0, ci1, ri0, ri1, p0, p1, phi0, phi1 = res.x
+    c0, c1 = cr0 + 1j * ci0, cr1 + 1j * ci1
+    c0, c1 = c0 * scale + center, c1 * scale + center
+    cov0 = a_b_phi_2_cov(rr0, ri0, phi0)
+    cov1 = a_b_phi_2_cov(rr1, ri1, phi1)
+
+    return (c0, c1, rr0 * scale, rr1 * scale, ri0 * scale, ri1 * scale, p0, p1,
+            phi0, phi1, cov0 * scale**2, cov1 * scale**2)
+
+
+def fit_readout_distribution2(s0, s1):
     center = 0.5 * (s0.mean() + s1.mean())
     s0, s1 = s0 - center, s1 - center
 
@@ -503,7 +581,8 @@ def fit_readout_distribution(s0, s1):
     c0, c1 = cr0 + 1j * ci0, cr1 + 1j * ci1
     c0, c1 = c0 * scale + center, c1 * scale + center
 
-    return (c0, c1, rr0 * scale, rr1 * scale, ri0 * scale, ri1 * scale, p0, p1)
+    return (c0, c1, rr0 * scale, rr1 * scale, ri0 * scale, ri1 * scale, p0, p1,
+            0, 0)
 
 
 def get_threshold_info(s0, s1, thr=None, phi=None):
@@ -542,11 +621,11 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
         thr = x[c == visibility]
         thr = 0.5 * (thr.min() + thr.max())
 
-    (c0, c1, rr0, rr1, ri0, ri1, p0,
-     p1) = fit_readout_distribution(re0 + 1j * im0, re1 + 1j * im1)
+    (c0, c1, rr0, rr1, ri0, ri1, p0, p1, phi0, phi1, cov0,
+     cov1) = fit_readout_distribution(re0 + 1j * im0, re1 + 1j * im1)
 
-    params_r = np.array([c0.real, c1.real, rr0, rr1, p0, p1])
-    params_i = np.array([c0.imag, c1.imag, ri0, ri1, p0, p1])
+    params_r = np.array([c0.real, c1.real, rr0, rr1, p0, p1, phi0])
+    params_i = np.array([c0.imag, c1.imag, ri0, ri1, p0, p1, phi1])
 
     return {
         'threshold': thr,
@@ -556,7 +635,7 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
         'idle': (im0, im1),
         'center': (c0, c1),
         'params': (params_r, params_i),
-        'std': (rr0, ri0, rr1, ri1),
+        'std': (rr0, ri0, rr1, ri1, cov0, cov1),
         'cdf': (x, a, b, c)
     }
 
