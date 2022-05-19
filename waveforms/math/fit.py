@@ -41,6 +41,17 @@ def fit_cross_point(x1, y1, x2, y2):
     return (b2 - b1) / (a1 - a2), (a1 * b2 - a2 * b1) / (a1 - a2)
 
 
+def find_cross_point(z1, z2, z3, z4):
+    v1 = z2 - z1
+    v2 = z4 - z3
+    v3 = z3 - z1
+    a = (v1.real * v2.imag - v1.imag * v2.real)
+    t1 = (v3.real * v2.imag - v3.imag * v2.real) / a
+    t2 = (v3.real * v1.imag - v3.imag * v1.real) / a
+
+    return z1 + t1 * v1, t1, t2
+
+
 def fit_pole(x, y):
     a, b, c = np.polyfit(x, y, 2)
     return -0.5 * b / a, c - 0.25 * b**2 / a
@@ -166,6 +177,21 @@ def transmon_spectrum(x, EJ, Ec, d, offset, period):
         return np.asarray(y)
 
 
+def transmon_spectrum2(x, EJ, Ec, d, offset, period):
+    from scipy.special import mathieu_a, mathieu_b
+    from waveforms.quantum.transmon import Transmon
+
+    x = (x - offset) / period
+    q = 0.5 * Transmon._flux_to_EJ(x, EJ, d) / Ec
+
+    # if ng == 0:
+    #     return Ec * (mathieu_b(2, -q) - mathieu_a(0, -q))
+    # if ng == 0.5:
+    #     return Ec * (mathieu_b(1, -q) - mathieu_a(0, -q))
+    return Ec * (mathieu_b(1, -q) + mathieu_b(2, -q) -
+                 2 * mathieu_a(0, -q)) / 2
+
+
 def fit_transmon_spectrum(bias,
                           f01,
                           offset=0,
@@ -184,7 +210,7 @@ def fit_transmon_spectrum(bias,
     q = Transmon(f01_max=f01_max, f01_min=f01_min, alpha=alpha)
     EJ, Ec, d = q.EJ, q.Ec, q.d
 
-    return curve_fit(transmon_spectrum,
+    return curve_fit(transmon_spectrum2,
                      bias,
                      f01,
                      p0=[EJ, Ec, d, offset, period])
@@ -434,7 +460,7 @@ def mult_gaussian_cdf(x, mu, sigma, amp):
     return ret
 
 
-def fit_readout_distribution(s0, s1):
+def _fit_readout_distribution_re(s0, s1):
     scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
 
     s0, s1 = s0 / scale, s1 / scale
@@ -456,6 +482,31 @@ def fit_readout_distribution(s0, s1):
                            (1e-6, None), (0, 1), (0, 1)])
 
     c0, c1, r0, r1, p0, p1 = res.x
+
+    return np.array([c0 * scale, c1 * scale, r0 * scale, r1 * scale, p0, p1])
+
+
+def _fit_readout_distribution_im(s0, s1, p0, p1):
+    scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
+
+    s0, s1 = s0 / scale, s1 / scale
+
+    def loss(params, s0, s1):
+        c0, c1, r0, r1 = params
+        x0, y0 = cdf(None, s0)
+        x1, y1 = cdf(None, s1)
+        Y0 = mult_gaussian_cdf(x0, [c0, c1], [r0, r1], [p0, 1 - p0])
+        Y1 = mult_gaussian_cdf(x1, [c0, c1], [r0, r1], [p1, 1 - p1])
+
+        return np.sum((Y0 - y0)**2) + np.sum((Y1 - y1)**2)
+
+    res = minimize(loss, [s0.mean(), s1.mean(),
+                          s0.std(), s1.std()],
+                   args=(s0, s1),
+                   bounds=[(None, None), (None, None), (1e-6, None),
+                           (1e-6, None)])
+
+    c0, c1, r0, r1 = res.x
 
     return np.array([c0 * scale, c1 * scale, r0 * scale, r1 * scale, p0, p1])
 
@@ -499,8 +550,9 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
     c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
     c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
 
-    params_r = fit_readout_distribution(re0, re1)
-    params_i = fit_readout_distribution(im0, im1)
+    params_r = _fit_readout_distribution_re(re0, re1)
+    params_i = _fit_readout_distribution_im(im0, im1, params_r[-2],
+                                            params_r[-1])
 
     return {
         'threshold': thr,
