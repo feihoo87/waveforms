@@ -24,7 +24,13 @@ def plotEllipse(c0, a, b, phi, ax, **kwargs):
     ax.plot(s.real, s.imag, **kwargs)
 
 
-def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
+def plotDistribution(s0,
+                     s1,
+                     fig=None,
+                     axes=None,
+                     info=None,
+                     hotThresh=10000,
+                     logy=False):
     from waveforms.math.fit import get_threshold_info, mult_gaussian_pdf
 
     if info is None:
@@ -120,8 +126,9 @@ def plotDistribution(s0, s1, fig=None, axes=None, info=None, hotThresh=10000):
         ], [params[0][5], 1 - params[0][5]]))
     ax2.set_ylabel('Count')
     ax2.set_xlabel('Projection Axes')
-    # ax2.set_yscale('log')
-    # ax2.set_ylim(0.1, max(np.sum(n0), np.sum(n1)))
+    if logy:
+        ax2.set_yscale('log')
+        ax2.set_ylim(0.1, max(np.sum(n0), np.sum(n1)))
 
     ax3 = ax2.twinx()
     ax3.plot(x, a, '--', lw=1, color='C0')

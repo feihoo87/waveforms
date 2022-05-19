@@ -508,9 +508,12 @@ def fit_readout_distribution(s0, s1):
         cov0 = a_b_phi_2_cov(rr0, ri0, phi0)
         cov1 = a_b_phi_2_cov(rr1, ri1, phi1)
 
+        eps = 1e-20
         return (
-            -np.log(readout_distribution(s0, p0, c0, c1, cov0, cov1)).sum() -
-            np.log(readout_distribution(s1, p1, c0, c1, cov0, cov1)).sum())
+            -np.log(readout_distribution(s0, p0, c0, c1, cov0, cov1) +
+                    eps).sum() -
+            np.log(readout_distribution(s1, p1, c0, c1, cov0, cov1) +
+                   eps).sum())
 
     res = minimize(loss, [
         s0.real.mean(),
