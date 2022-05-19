@@ -460,55 +460,50 @@ def mult_gaussian_cdf(x, mu, sigma, amp):
     return ret
 
 
-def _fit_readout_distribution_re(s0, s1):
+def fit_readout_distribution(s0, s1):
+    center = 0.5 * (s0.mean() + s1.mean())
+    s0, s1 = s0 - center, s1 - center
+
     scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
 
     s0, s1 = s0 / scale, s1 / scale
 
     def loss(params, s0, s1):
-        c0, c1, r0, r1, p0, p1 = params
-        x0, y0 = cdf(None, s0)
-        x1, y1 = cdf(None, s1)
-        Y0 = mult_gaussian_cdf(x0, [c0, c1], [r0, r1], [p0, 1 - p0])
-        Y1 = mult_gaussian_cdf(x1, [c0, c1], [r0, r1], [p1, 1 - p1])
+        cr0, cr1, rr0, rr1, ci0, ci1, ri0, ri1, p0, p1 = params
 
-        return np.sum((Y0 - y0)**2) + np.sum((Y1 - y1)**2)
+        x0, y0 = cdf(None, s0.real)
+        x1, y1 = cdf(None, s1.real)
+        x2, y2 = cdf(None, s0.imag)
+        x3, y3 = cdf(None, s1.imag)
 
-    res = minimize(loss,
-                   [s0.mean(), s1.mean(),
-                    s0.std(), s1.std(), 1, 0],
+        Y0 = mult_gaussian_cdf(x0, [cr0, cr1], [rr0, rr1], [p0, 1 - p0])
+        Y1 = mult_gaussian_cdf(x1, [cr0, cr1], [rr0, rr1], [p1, 1 - p1])
+        Y2 = mult_gaussian_cdf(x2, [ci0, ci1], [ri0, ri1], [p0, 1 - p0])
+        Y3 = mult_gaussian_cdf(x3, [ci0, ci1], [ri0, ri1], [p1, 1 - p1])
+
+        return (np.sum((Y0 - y0)**2) + np.sum((Y1 - y1)**2) + np.sum(
+            (Y2 - y2)**2) + np.sum((Y3 - y3)**2))
+
+    res = minimize(loss, [
+        s0.real.mean(),
+        s1.real.mean(),
+        s0.real.std(),
+        s1.real.std(),
+        s0.imag.mean(),
+        s1.imag.mean(),
+        s0.imag.std(),
+        s1.imag.std(), 1, 0
+    ],
                    args=(s0, s1),
                    bounds=[(None, None), (None, None), (1e-6, None),
-                           (1e-6, None), (0, 1), (0, 1)])
+                           (1e-6, None), (None, None), (None, None),
+                           (1e-6, None), (1e-6, None), (0, 1), (0, 1)])
 
-    c0, c1, r0, r1, p0, p1 = res.x
+    cr0, cr1, rr0, rr1, ci0, ci1, ri0, ri1, p0, p1 = res.x
+    c0, c1 = cr0 + 1j * ci0, cr1 + 1j * ci1
+    c0, c1 = c0 * scale + center, c1 * scale + center
 
-    return np.array([c0 * scale, c1 * scale, r0 * scale, r1 * scale, p0, p1])
-
-
-def _fit_readout_distribution_im(s0, s1, p0, p1):
-    scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
-
-    s0, s1 = s0 / scale, s1 / scale
-
-    def loss(params, s0, s1):
-        c0, c1, r0, r1 = params
-        x0, y0 = cdf(None, s0)
-        x1, y1 = cdf(None, s1)
-        Y0 = mult_gaussian_cdf(x0, [c0, c1], [r0, r1], [p0, 1 - p0])
-        Y1 = mult_gaussian_cdf(x1, [c0, c1], [r0, r1], [p1, 1 - p1])
-
-        return np.sum((Y0 - y0)**2) + np.sum((Y1 - y1)**2)
-
-    res = minimize(loss, [s0.mean(), s1.mean(),
-                          s0.std(), s1.std()],
-                   args=(s0, s1),
-                   bounds=[(None, None), (None, None), (1e-6, None),
-                           (1e-6, None)])
-
-    c0, c1, r0, r1 = res.x
-
-    return np.array([c0 * scale, c1 * scale, r0 * scale, r1 * scale, p0, p1])
+    return (c0, c1, rr0 * scale, rr1 * scale, ri0 * scale, ri1 * scale, p0, p1)
 
 
 def get_threshold_info(s0, s1, thr=None, phi=None):
@@ -547,12 +542,11 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
         thr = x[c == visibility]
         thr = 0.5 * (thr.min() + thr.max())
 
-    c0, a0, b0 = np.mean(s0), np.std(re0), np.std(im0)
-    c1, a1, b1 = np.mean(s1), np.std(re1), np.std(im1)
+    (c0, c1, rr0, rr1, ri0, ri1, p0,
+     p1) = fit_readout_distribution(re0 + 1j * im0, re1 + 1j * im1)
 
-    params_r = _fit_readout_distribution_re(re0, re1)
-    params_i = _fit_readout_distribution_im(im0, im1, params_r[-2],
-                                            params_r[-1])
+    params_r = np.array([c0.real, c1.real, rr0, rr1, p0, p1])
+    params_i = np.array([c0.imag, c1.imag, ri0, ri1, p0, p1])
 
     return {
         'threshold': thr,
@@ -562,7 +556,7 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
         'idle': (im0, im1),
         'center': (c0, c1),
         'params': (params_r, params_i),
-        'std': (a0, b0, a1, b1),
+        'std': (rr0, ri0, rr1, ri1),
         'cdf': (x, a, b, c)
     }
 
