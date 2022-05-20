@@ -237,8 +237,8 @@ def I(ctx, qubits):
     yield ('!add', 'waveform', zero()), ('readoutLine.RF', qubit)
 
 
-def _rfUnitary(ctx, qubits, theta, phi):
-    import numpy as np
+def _rfUnitary(ctx, qubits, theta, phi, level1=0, level2=1):
+    from numpy import interp
 
     qubit, = qubits
 
@@ -250,20 +250,28 @@ def _rfUnitary(ctx, qubits, theta, phi):
         theta = 2 * pi - theta
         phi += pi
 
-    phi = mod(phi - ctx.phases[qubit], 2 * pi)
+    phi = mod(
+        phi + ctx.phases_ext[qubit][level1] - ctx.phases_ext[qubit][level2],
+        2 * pi)
+    phi = phi if abs(level2 - level1) % 2 == 0 else phi - pi
     if phi > pi:
         phi -= 2 * pi
+    phi = phi / (level2 - level1)
 
     shape = ctx.params.get('shape', 'CosPulse')
     buffer = ctx.params.get('buffer', 0)
     alpha = ctx.params.get('alpha', 1)
     beta = ctx.params.get('beta', 0)
     delta = ctx.params.get('delta', 0)
-    phase = np.pi * np.interp(phi / np.pi, *ctx.params['phase'])
+
+    phase = pi * interp(phi / pi, *ctx.params['phase'])
 
     pulseLib = {
         'CosPulse': cosPulse,
         'Gaussian': gaussian,
+        'Square': square,
+        'cosPulse': cosPulse,
+        'gaussian': gaussian,
         'square': square,
         'DC': square,
     }
@@ -276,8 +284,8 @@ def _rfUnitary(ctx, qubits, theta, phi):
             theta1 = theta
             theta = 0
 
-        duration = np.interp(theta1 / np.pi, *ctx.params['duration'])
-        amp = np.interp(theta1 / np.pi, *ctx.params['amp'])
+        duration = interp(theta1 / pi, *ctx.params['duration'])
+        amp = interp(theta1 / pi, *ctx.params['amp'])
         pulse = pulseLib[shape](duration)
 
         if duration > 0 and amp > 0:
@@ -286,7 +294,12 @@ def _rfUnitary(ctx, qubits, theta, phi):
                           freq=delta,
                           DRAGScaling=beta / alpha)
             t = (duration + buffer) / 2 + ctx.time[qubit]
-            wav, _ = mixing(I >> t, Q >> t, freq=ctx.params['frequency'])
+            if 'levels' in ctx.params:
+                freq = (ctx.params['levels'][level2] -
+                        ctx.params['levels'][level1]) / (level2 - level1)
+            else:
+                freq = ctx.params['frequency']
+            wav, _ = mixing(I >> t, Q >> t, freq=freq)
             yield ('!add', 'waveform', wav), ('RF', qubit)
             yield ('!add', 'time', duration + buffer), qubit
 
