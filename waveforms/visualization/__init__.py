@@ -107,8 +107,10 @@ def plotDistribution(s0,
     re0, re1 = info['signal']
     x, a, b, c = info['cdf']
 
-    n0, bins0, *_ = ax2.hist(re0, bins=50, alpha=0.5)
-    n1, bins1, *_ = ax2.hist(re1, bins=50, alpha=0.5)
+    xrange = (min(re0.min(), re1.min()), max(re0.max(), re1.max()))
+
+    n0, bins0, *_ = ax2.hist(re0, bins=80, range=xrange, alpha=0.5)
+    n1, bins1, *_ = ax2.hist(re1, bins=80, range=xrange, alpha=0.5)
 
     x_range = np.linspace(x.min(), x.max(), 1001)
     *_, cov0, cov1 = info['std']
