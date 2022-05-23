@@ -259,3 +259,57 @@ def imshow_loglog(x, y, z, x_unit=None, y_unit=None, ax=None, **kwargs):
     ax.set_yticks(y_minor_ticks, minor=True)
 
     return img
+
+
+def autoplot(x,
+             y,
+             z,
+             xlabel='x',
+             ylabel='y',
+             zlabel='z',
+             fig=None,
+             ax=None,
+             index=None,
+             **kwds):
+    if ax is not None:
+        fig = ax.figure
+    if fig is None:
+        fig = plt.gcf()
+    if ax is None:
+        ax = fig.add_subplot(111)
+
+    if len(y) <= 5 or len(x) <= 5 or index is not None:
+        plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=index, **kwds)
+    else:
+        plot_img(x, y, z, xlabel, ylabel, zlabel, fig, ax, **kwds)
+
+
+def plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=None, **kwds):
+    z = np.asarray(z)
+    if len(y) > len(x):
+        x, y = y, x
+        xlabel, ylabel = ylabel, xlabel
+        z = z.T
+    if index is not None:
+        y = y[index]
+        z = z[index, :]
+
+    for i, l in enumerate(y):
+        ax.plot(x, z[i, :], label=f"{ylabel}={l:.3}", **kwds)
+    ax.legend()
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(zlabel)
+
+
+def plot_img(x, y, z, xlabel, ylabel, zlabel, fig, ax, **kwds):
+    dx, dy = x[1] - x[0], y[1] - y[0]
+    extent = (x[0] - dx / 2, x[-1] + dx / 2, y[0] - dy / 2, y[1] + dy / 2)
+    kwds.setdefault('extent', extent)
+    kwds.setdefault('origin', 'lower')
+    kwds.setdefault('aspect', 'auto')
+    kwds.setdefault('interpolation', 'nearest')
+    img = ax.imshow(np.asarray(z), **kwds)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    cb = fig.colorbar(img, ax=ax)
+    cb.set_label(zlabel)
