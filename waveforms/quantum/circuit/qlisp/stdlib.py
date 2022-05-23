@@ -253,7 +253,7 @@ def _rfUnitary(ctx, qubits, theta, phi, level1=0, level2=1):
     phi = mod(
         phi + ctx.phases_ext[qubit][level1] - ctx.phases_ext[qubit][level2],
         2 * pi)
-    phi = phi if abs(level2 - level1) % 2 == 0 else phi - pi
+    phi = phi if abs(level2 - level1) % 2 else phi - pi
     if phi > pi:
         phi -= 2 * pi
     phi = phi / (level2 - level1)
