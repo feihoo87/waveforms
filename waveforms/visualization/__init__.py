@@ -303,7 +303,7 @@ def plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=None, **kwds):
 
 def plot_img(x, y, z, xlabel, ylabel, zlabel, fig, ax, **kwds):
     dx, dy = x[1] - x[0], y[1] - y[0]
-    extent = (x[0] - dx / 2, x[-1] + dx / 2, y[0] - dy / 2, y[1] + dy / 2)
+    extent = (x[0] - dx / 2, x[-1] + dx / 2, y[0] - dy / 2, y[-1] + dy / 2)
     kwds.setdefault('extent', extent)
     kwds.setdefault('origin', 'lower')
     kwds.setdefault('aspect', 'auto')
