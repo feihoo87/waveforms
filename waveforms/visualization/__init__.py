@@ -278,7 +278,7 @@ def autoplot(x,
     if ax is None:
         ax = fig.add_subplot(111)
 
-    if len(y) <= 5 or len(x) <= 5 or index is not None:
+    if len(y) <= 3 or len(x) <= 3 or index is not None:
         plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=index, **kwds)
     else:
         plot_img(x, y, z, xlabel, ylabel, zlabel, fig, ax, **kwds)
