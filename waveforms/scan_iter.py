@@ -387,8 +387,7 @@ class Storage(Tracker):
                  storage: dict = None,
                  shape: tuple = (),
                  save_kwds: Union[bool, Sequence[str]] = True,
-                 frozen_keys: tuple = (),
-                 lazy: bool = True):
+                 frozen_keys: tuple = ()):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
         self.storage = storage if storage is not None else {}
@@ -402,7 +401,6 @@ class Storage(Tracker):
         self.shape = shape
         self.count = 0
         self.save_kwds = save_kwds
-        self.lazy = lazy
         self.queue = Queue()
         self._queue_buffer = None
 
@@ -462,11 +460,8 @@ class Storage(Tracker):
                 }
         else:
             kwds = {}
-        if self.lazy:
-            self.queue.put_nowait(
-                (step.iteration, step.pos, dataframe, kwds, self.mtime))
-        else:
-            self._append(step.iteration, step.pos, dataframe, kwds, self.mtime)
+        self.queue.put_nowait(
+            (step.iteration, step.pos, dataframe, kwds, self.mtime))
 
     def _append(self, iteration, pos, dataframe, kwds, now):
         for k, v in chain(kwds.items(), dataframe.items()):
