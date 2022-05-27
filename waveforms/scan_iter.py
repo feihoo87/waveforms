@@ -394,6 +394,7 @@ class Storage(Tracker):
         self.storage = storage if storage is not None else {}
         self.cache = {}
         self.pos = {}
+        self.timestamps = {}
         self.iteration = {}
         self._init_keys = list(self.storage.keys())
         self._frozen_keys = frozen_keys
@@ -475,11 +476,13 @@ class Storage(Tracker):
             if k not in self.storage:
                 self.storage[k] = [v]
                 self.pos[k] = tuple([i] for i in pos)
+                self.timestamps[k] = [now.timestamp()]
                 self.iteration[k] = [iteration]
             else:
                 self.storage[k].append(v)
                 for i, l in zip(pos, self.pos[k]):
                     l.append(i)
+                self.timestamps[k].append(now.timestamp())
                 self.iteration[k].append(iteration)
 
     def _flush(self):
@@ -568,6 +571,7 @@ class Storage(Tracker):
         return {
             'storage': storage,
             'pos': self.pos,
+            'timestamps': self.timestamps,
             'iteration': self.iteration,
             'shape': self.shape,
             'ctime': self.ctime,
