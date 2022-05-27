@@ -462,11 +462,12 @@ class Storage(Tracker):
         else:
             kwds = {}
         if self.lazy:
-            self.queue.put_nowait((step.iteration, step.pos, dataframe, kwds))
+            self.queue.put_nowait(
+                (step.iteration, step.pos, dataframe, kwds, self.mtime))
         else:
-            self._append(step.iteration, step.pos, dataframe, kwds)
+            self._append(step.iteration, step.pos, dataframe, kwds, self.mtime)
 
-    def _append(self, iteration, pos, dataframe, kwds):
+    def _append(self, iteration, pos, dataframe, kwds, now):
         for k, v in chain(kwds.items(), dataframe.items()):
             if k in self._frozen_keys:
                 continue
@@ -483,22 +484,22 @@ class Storage(Tracker):
 
     def _flush(self):
         if self._queue_buffer is not None:
-            iteration, pos, fut, kwds = self._queue_buffer
+            iteration, pos, fut, kwds, now = self._queue_buffer
             if fut.done():
-                self._append(iteration, pos, fut.result(), kwds)
+                self._append(iteration, pos, fut.result(), kwds, now)
                 self._queue_buffer = None
             else:
                 return
         while not self.queue.empty():
-            iteration, pos, dataframe, kwds = self.queue.get()
+            iteration, pos, dataframe, kwds, now = self.queue.get()
             if isinstance(dataframe, Future):
                 if not dataframe.done():
-                    self._queue_buffer = (iteration, pos, dataframe, kwds)
+                    self._queue_buffer = (iteration, pos, dataframe, kwds, now)
                     return
                 else:
-                    self._append(iteration, pos, dataframe.result(), kwds)
+                    self._append(iteration, pos, dataframe.result(), kwds, now)
             else:
-                self._append(iteration, pos, dataframe, kwds)
+                self._append(iteration, pos, dataframe, kwds, now)
 
     def _get_array(self, key, shape, count):
         import numpy as np
