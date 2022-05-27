@@ -122,9 +122,8 @@ def test_storage(spectrum_data):
     bias_list = spectrum_data['bias_list']
     freq_list = spectrum_data['freq_list']
 
-    data = Storage(save_kwds=False, lazy=False)
-    data2 = Storage(save_kwds=False, lazy=True)
-    data3 = Storage(save_kwds=True, lazy=True)
+    data1 = Storage(save_kwds=False)
+    data2 = Storage(save_kwds=True)
 
     np.random.seed(1234)
     for step in scan_iters(
@@ -135,46 +134,34 @@ def test_storage(spectrum_data):
             freq_list,
         },
             filter=spectrum_mask,
-            trackers=[data, data2, data3]):
+            trackers=[data1, data2]):
         y = spectrum_func(step.kwds['bias'], step.kwds['freq'])
 
-        step.store(
-            {
-                'z': y,
-                'iq': np.random.randn(1024) + 1j * np.random.randn(1024),
-                'obj': {
-                    'a': 1,
-                    'b': 2
-                }
-            })
+        step.store({
+            'z': y,
+            'iq': np.random.randn(1024) + 1j * np.random.randn(1024),
+            'obj': {
+                'a': 1,
+                'b': 2
+            }
+        })
         step.feedback(('center', ), (step.kwds['freq'], y))
 
-    assert set(data.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
-    assert np.all(bias_list == data['bias'])
-    assert np.all(freq_list == data['freq'])
-    assert data['z'].shape == (101, 121)
-    assert data['iq'].shape == (101, 121, 1024)
-    assert data['obj'].shape == (101, 121)
-    assert data['obj'][0, 0] == {'a': 1, 'b': 2}
-    assert np.all((z == data['z'])[np.isnan(z) == False])
-    assert np.all((iq == data['iq'])[np.isnan(iq) == False])
+    for data in [data1, data2]:
+        assert np.all(bias_list == data['bias'])
+        assert np.all(freq_list == data['freq'])
+        assert data['z'].shape == (101, 121)
+        assert data['iq'].shape == (101, 121, 1024)
+        assert np.all((z == data['z'])[np.isnan(z) == False])
+        assert np.all((iq == data['iq'])[np.isnan(iq) == False])
 
-    assert set(data2.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
-    assert np.all(bias_list == data2['bias'])
-    assert np.all(freq_list == data2['freq'])
-    assert data2['z'].shape == (101, 121)
-    assert data2['iq'].shape == (101, 121, 1024)
-    assert np.all((z == data2['z'])[np.isnan(z) == False])
-    assert np.all((iq == data2['iq'])[np.isnan(iq) == False])
+    assert set(data1.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
 
-    assert set(data3.keys()) == {'bias', 'freq', 'z', 'iq', 'obj', 'center'}
-    assert np.all(bias_list == data3['bias'])
-    assert np.all(freq_list == data3['freq'])
-    assert data3['z'].shape == (101, 121)
-    assert data3['iq'].shape == (101, 121, 1024)
-    assert data3['center'].shape == (101, 121)
-    assert np.all((z == data3['z'])[np.isnan(z) == False])
-    assert np.all((iq == data3['iq'])[np.isnan(iq) == False])
+    assert set(data2.keys()) == {'bias', 'freq', 'z', 'iq', 'obj', 'center'}
+    assert data2['center'].shape == (101, 121)
+
+    for key in ['z', 'iq', 'obj']:
+        assert np.allclose(data1.timestamps[key], data2.timestamps[key])
 
 
 def test_storage_future(spectrum_data):
@@ -201,7 +188,7 @@ def test_storage_future(spectrum_data):
     bias_list = spectrum_data['bias_list']
     freq_list = spectrum_data['freq_list']
 
-    data = Storage(save_kwds=False, lazy=True)
+    data = Storage(save_kwds=False)
 
     for step in scan_iters(
         {
