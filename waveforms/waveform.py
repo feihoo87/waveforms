@@ -249,6 +249,37 @@ class Waveform:
         self.stop = None
         self.sample_rate = None
 
+    def _head(self):
+        for i, s in enumerate(self.seq):
+            if s is not _zero:
+                if i == 0:
+                    return -inf
+                return self.bounds[i - 1]
+        return inf
+
+    def _tail(self):
+        N = len(self.bounds)
+        for i, s in enumerate(self.seq[::-1]):
+            if s is not _zero:
+                if i == 0:
+                    return inf
+                return self.bounds[N - i - 1]
+        return -inf
+
+    @property
+    def head(self):
+        if self.start is None:
+            return self._head()
+        else:
+            return max(self.start, self._head())
+
+    @property
+    def tail(self):
+        if self.stop is None:
+            return self._tail()
+        else:
+            return min(self.stop, self._tail())
+
     def sample(self, sample_rate=None, out=None):
         if sample_rate is None:
             sample_rate = self.sample_rate
@@ -523,16 +554,18 @@ class Waveform:
         #ret = np.zeros_like(x)
         ret = []
         start, stop = 0, 0
+        dtype = float
         for i, stop in enumerate(range_list):
             if start < stop and self.seq[i] != _zero:
-                #ret[start:stop] = _calc(self.seq[i], x[start:stop])
-                ret.append((start, stop,
-                            np.clip(_calc(self.seq[i], x[start:stop]),
-                                    self.min, self.max)))
+                part = np.clip(_calc(self.seq[i], x[start:stop]), self.min,
+                               self.max)
+                if isinstance(part[0], complex):
+                    dtype = complex
+                ret.append((start, stop, part))
             start = stop
         if not frag:
             if out is None:
-                out = np.zeros_like(x)
+                out = np.zeros_like(x, dtype=dtype)
             else:
                 out *= 0
             for start, stop, part in ret:
@@ -791,7 +824,13 @@ def sin(w, phi=0):
 
 
 def exp(alpha):
-    return Waveform(seq=(_basic_wave(EXP, alpha), ))
+    if isinstance(alpha, complex):
+        if alpha.real == 0:
+            return cos(alpha.imag) + 1j * sin(alpha.imag)
+        else:
+            return exp(alpha.real) * (cos(alpha.imag) + 1j * sin(alpha.imag))
+    else:
+        return Waveform(seq=(_basic_wave(EXP, alpha), ))
 
 
 def sinc(bw):
