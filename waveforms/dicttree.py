@@ -1,4 +1,5 @@
 import copy
+import pickle
 import sys
 from typing import Any, Generator
 
@@ -100,11 +101,31 @@ class Create():
                           Create) and self.n == o.n and self.delete == o.delete
 
 
+def _eq(a, b):
+    import numpy as np
+    try:
+        return a == b
+    except:
+        pass
+    if isinstance(a, np.ndarray):
+        return np.array_equal(a, b)
+    if isinstance(a, (list, tuple)):
+        return len(a) == len(b) and all(_eq(a[i], b[i]) for i in range(len(a)))
+    if isinstance(a, dict):
+        return set(a.keys()) == set(b.keys()) and all(
+            _eq(a[k], b[k]) for k in a)
+
+    try:
+        return pickle.dumps(a) == pickle.dumps(b)
+    except:
+        return False
+
+
 def diff(d1: dict, d2: dict) -> dict:
     ret = {}
     for k in d2:
         if k in d1:
-            if isinstance(d2[k], type(d1[k])) and d1[k] == d2[k]:
+            if isinstance(d2[k], type(d1[k])) and _eq(d1[k], d2[k]):
                 pass
             elif isinstance(d1[k], dict) and isinstance(d2[k], dict):
                 ret[k] = diff(d1[k], d2[k])
