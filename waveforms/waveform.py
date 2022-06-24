@@ -174,16 +174,28 @@ def _trigMul(x, y):
     return ret
 
 
-def _trigReduce(mtlist, v):
+def _exp_trig_Reduce(mtlist, v):
     trig = _one
+    alpha = 0
+    shift = 0
     ml, nl = [], []
     for mt, n in zip(*mtlist):
         if mt[0] == COS:
             trig = _trigMul(trig, _cos_power_n(mt, n))
+        elif mt[0] == EXP:
+            x = alpha * shift + n * mt[1] * mt[-1]
+            alpha += n * mt[1]
+            if alpha == 0:
+                shift = 0
+            else:
+                shift = x / alpha
         else:
             ml.append(mt)
             nl.append(n)
     ret = (((tuple(ml), tuple(nl)), ), (v, ))
+
+    if alpha != 0:
+        ret = _mul(ret, _basic_wave(EXP, alpha, shift=shift))
 
     return _mul(ret, trig)
 
@@ -191,7 +203,7 @@ def _trigReduce(mtlist, v):
 def _simplify(expr):
     ret = _zero
     for t, v in zip(*expr):
-        y = _trigReduce(t, v)
+        y = _exp_trig_Reduce(t, v)
         ret = _add(ret, y)
     return ret
 

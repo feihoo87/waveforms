@@ -78,6 +78,14 @@ def test_simplify():
     assert np.allclose(wav(t), np.cos(t) * np.sin(2 * t) * np.cos(3 * t + 4))
     assert np.allclose(wav2(t), np.cos(t) * np.sin(2 * t) * np.cos(3 * t + 4))
 
+    wav = 2 * (exp(1.01 + 22j)**2 << 1) * exp(1.01 + 22j)
+    wav2 = wav.simplify()
+
+    assert np.allclose(
+        wav(t), 2 * np.exp((1.01 + 22j) * (t + 1))**2 * np.exp(
+            (1.01 + 22j) * t))
+    assert np.allclose(wav2(t), wav(t))
+
 
 def test_shift():
     t = np.linspace(-10, 10, 1001)
