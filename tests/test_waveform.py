@@ -26,6 +26,13 @@ def test_waveform():
     wav = poly([1, -1 / 2, 1 / 6, -1 / 12])
     assert np.allclose(wav(t), np.poly1d([-1 / 12, 1 / 6, -1 / 2, 1])(t))
 
+    sample_rate = 4e9
+    width = 20e-9
+    time_line = np.linspace(0, width * 100, int(width * 100 * sample_rate))
+    wave = square(width) >> (width * 2)
+    points = wave(time_line)
+    assert isinstance(points, np.ndarray)
+
 
 def test_tolist():
     pulse = gaussian(10) >> 5

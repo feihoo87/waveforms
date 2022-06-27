@@ -189,6 +189,9 @@ def _exp_trig_Reduce(mtlist, v):
                 shift = 0
             else:
                 shift = x / alpha
+        elif mt[0] == GAUSSIAN and n != 1:
+            ml.append((mt[0], mt[1] / np.sqrt(n), mt[2]))
+            nl.append(1)
         else:
             ml.append(mt)
             nl.append(n)
@@ -240,7 +243,10 @@ def _calc(wav, x):
             if mt not in lru_cache:
                 Type, *args, shift = mt
                 lru_cache[mt] = _apply(x, Type, shift, *args)
-            ret = ret * lru_cache[mt]**n
+            if n == 1:
+                ret = ret * lru_cache[mt]
+            else:
+                ret = ret * lru_cache[mt]**n
         return ret
 
     ret = 0
@@ -571,7 +577,8 @@ class Waveform:
             if start < stop and self.seq[i] != _zero:
                 part = np.clip(_calc(self.seq[i], x[start:stop]), self.min,
                                self.max)
-                if isinstance(part[0], complex):
+                if (isinstance(part, complex) or isinstance(part, np.ndarray)
+                        and isinstance(part[0], complex)):
                     dtype = complex
                 ret.append((start, stop, part))
             start = stop
