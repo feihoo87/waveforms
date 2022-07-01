@@ -30,8 +30,7 @@ jobs:
     - name: Build package
       run: python setup.py sdist bdist_wheel
     - name: Repair package
-      if:
-        - ${{ matrix.os }} == 'ubuntu-latest'
+      if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
         pip install auditwheel
         auditwheel repair dist/*.whl
