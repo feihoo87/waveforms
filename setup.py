@@ -25,6 +25,22 @@ requirements = [
     'scipy>=1.0.0',
 ]
 
+
+def get_extensions():
+    from numpy.distutils.misc_util import get_numpy_include_dirs
+
+    extensions = [
+        Extension(
+            'waveforms.math.npufunc',
+            ['src/multi_type_logit.c'],
+            include_dirs=get_numpy_include_dirs(),
+            extra_compile_args=['-std=c99'],
+        ),
+        #cythonize("waveforms/math/prime.pyx"),
+    ]
+
+    return extensions
+
 setup(
     name="waveforms",
     version=__version__,
@@ -37,7 +53,7 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     packages = find_packages(),
-    #ext_modules = cythonize("waveforms/math/prime.pyx"),
+    ext_modules = get_extensions(),
     include_package_data = True,
     #data_files=[('waveforms/Data', waveData)],
     entry_points ={'console_scripts': ['wave_server = waveforms.server.__main__:main']},
