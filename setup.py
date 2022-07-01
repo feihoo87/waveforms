@@ -34,9 +34,9 @@ def get_extensions():
             'waveforms.math.npufunc',
             ['src/multi_type_logit.c'],
             include_dirs=get_numpy_include_dirs(),
-            extra_compile_args=['-std=c99'],
+            # extra_compile_args=['-std=c99'],
         ),
-        #cythonize("waveforms/math/prime.pyx"),
+        # cythonize("waveforms/math/prime.pyx"),
     ]
 
     return extensions
