@@ -38,9 +38,21 @@ jobs:
       run: |
         python -m pip install coveralls==2.2
         coveralls --service=github
+    - name: Build package
+      run: |
+        pip install build setuptools wheel twine
+        python setup.py sdist bdist_wheel
+    - name: Repair package
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: |
+        pip install auditwheel
+        auditwheel repair dist/*.whl
+        rm dist/*.whl
+        mv wheelhouse/*.whl dist/
     - name: Publish package
       if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-      uses: ./.github/actions/publish
-      with:
+      run: |
+        twine upload --verbose --skip-existing dist/*
+      env:
         TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
-        TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
