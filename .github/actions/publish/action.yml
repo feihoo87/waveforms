@@ -1,0 +1,29 @@
+name: 'Publish package'
+description: 'Publish package to PyPI'
+inputs:
+  os:
+    description: 'Operating system'
+  TWINE_USERNAME:
+    description: 'Twine username'
+  TWINE_PASSWORD:
+    description: 'Twine password'
+runs:
+  using: "composite"
+  steps:
+    - name: Build package
+      run: |
+        pip install build setuptools wheel twine numpy
+        python setup.py sdist bdist_wheel
+    - name: Repair package
+      if: ${{ inputs.os == 'ubuntu-latest' }}
+      run: |
+        pip install auditwheel
+        auditwheel repair dist/*.whl
+        rm dist/*.whl
+        mv wheelhouse/*.whl dist/
+    - name: Publish package
+      run: |
+        twine upload --verbose --skip-existing dist/*
+      env:
+        TWINE_USERNAME: ${{ inputs.TWINE_USERNAME }}
+        TWINE_PASSWORD: ${{ inputs.PYPI_API_TOKEN }}
