@@ -39,7 +39,7 @@ jobs:
         python -m pip install coveralls==2.2
         coveralls --service=github
     - name: Publish package
-      if: ${{ github.event_name == 'push' && startsWith(github.event.push.ref, 'refs/tags/v') }}
+      if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
       uses: ./.github/actions/publish
       with:
         TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
