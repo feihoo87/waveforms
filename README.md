@@ -20,6 +20,7 @@ git clone https://github.com/feihoo87/waveforms.git
 Then dependencies and `waveforms` can be installed in this way:
 ```bash
 cd waveforms
+python -m pip install numpy
 python -m pip install -e .
 ```
 
