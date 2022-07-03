@@ -12,10 +12,15 @@ class AutoReload():
 
 def autoreload(func):
 
+    module_name = func.__module__
+    func_name = func.__name__
+
     @wraps(func)
     def wrapper(*args, **kwargs):
-        mod = reload(import_module(func.__module__))
-        func = getattr(mod, func.__name__)
-        return func(*args, **kwargs)
+        mod = reload(import_module(module_name))
+        func = getattr(mod, func_name)
+        return func._func_(*args, **kwargs)
+
+    wrapper._func_ = func
 
     return wrapper
