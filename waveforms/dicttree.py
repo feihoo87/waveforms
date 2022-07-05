@@ -103,12 +103,14 @@ class Create():
 
 def _eq(a, b):
     import numpy as np
+
+    if isinstance(a, np.ndarray):
+        return np.array_equal(a, np.asarray(b))
+
     try:
         return a == b
     except:
         pass
-    if isinstance(a, np.ndarray):
-        return np.array_equal(a, b)
     if isinstance(a, (list, tuple)):
         return len(a) == len(b) and all(_eq(a[i], b[i]) for i in range(len(a)))
     if isinstance(a, dict):
