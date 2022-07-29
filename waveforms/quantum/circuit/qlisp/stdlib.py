@@ -42,7 +42,7 @@ def U(q, theta, phi, lambda_):
         yield (('P', phi + lambda_), q)
     else:
         yield (('P', lambda_), q)
-        if (theta - pi / 2) < EPS:
+        if abs(theta - pi / 2) < EPS:
             yield (('rfUnitary', pi / 2, pi / 2), q)
         else:
             yield (('rfUnitary', pi / 2, 0), q)
