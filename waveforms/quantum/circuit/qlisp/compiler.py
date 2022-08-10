@@ -6,7 +6,6 @@ from .assembly_right import assembly_align_right
 from .config import Config
 from .library import Library, libraries
 from .macro import extend_macro, reduceVirtualZ
-from .qasm import qasm_eval
 from .qlisp import Context, create_context, getConfig
 from .stdlib import std
 
@@ -41,6 +40,9 @@ def compile(prog,
         no_virtual_z = True: keep P gates as original form.
         no_assembly = True: return simplified qlisp.
     """
+
+    from waveforms.qlisp.qasm import qasm_eval
+
     if isinstance(lib, Library):
         lib = lib
     else:

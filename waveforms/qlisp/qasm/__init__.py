@@ -9,7 +9,6 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-
 """
 =========================
 Qasm (:mod:`qiskit.qasm`)
@@ -32,8 +31,10 @@ Pygments
 
 from numpy import pi
 
-from .qasm import Qasm
+from .eval import qasm_eval
 from .exceptions import QasmError
+from .qasm import Qasm
+
 try:
     import pygments
     HAS_PYGMENTS = True

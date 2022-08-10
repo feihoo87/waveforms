@@ -1,7 +1,6 @@
 import pytest
-from waveforms.quantum import compile, libraries, stdlib
-from waveforms.quantum.circuit.qlisp.library import Library, Parameter
-from waveforms.quantum.circuit.qlisp.qlisp import QLispCode
+from waveforms.qlisp import (Library, Parameter, QLispCode, compile, libraries,
+                             stdlib)
 
 from config import config
 

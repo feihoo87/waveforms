@@ -1,2 +1,2 @@
-include waveforms/quantum/circuit/qasm/libs/*.inc
+include waveforms/qlisp/qasm/libs/*.inc
 include MANIFEST.in
