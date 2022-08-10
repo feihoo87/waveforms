@@ -64,7 +64,7 @@ qlisp4 = [
 
 @pytest.fixture
 def cfg():
-    from waveforms.quantum.circuit.qlisp.config import Config
+    from waveforms.qlisp.config import Config
     try:
         yield Config.fromdict(config)
     finally:

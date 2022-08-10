@@ -1,6 +1,6 @@
 from numpy import inf, pi
 from waveforms import Waveform, sin, square
-from waveforms.quantum.circuit.qlisp.lisp import *
+from waveforms.qlisp.parse import *
 
 
 def test_lisp_eval():

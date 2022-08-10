@@ -1,9 +1,10 @@
 from itertools import chain
 from typing import Optional
 
-from .qasm import Qasm
+from ..base import QLispError
+from ..library import Library
 from .node import *
-from ..base import Library, QLispError
+from .qasm import Qasm
 
 __qindex = 0
 __cindex = 0

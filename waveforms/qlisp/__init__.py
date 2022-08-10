@@ -1,8 +1,12 @@
-from ..quantum.circuit.qlisp import compile
-from .base import (COMMAND, FREE, NOTSET, PUSH, READ, SYNC, TRIG, WRITE,
-                   ABCCompileConfigMixin, ADChannel, Architecture, AWGChannel,
-                   CommandList, Config, ConfigProxy, DataMap, GateConfig,
-                   Library, MeasurementTask, MultADChannel, MultAWGChannel,
-                   Parameter, QLispCode, RawData, Result, Signal, get_arch,
-                   libraries, register_arch, stdlib)
+from ..dicttree import NOTSET
+from .arch import Architecture, get_arch, register_arch
+from .base import (ABCCompileConfigMixin, ADChannel, AWGChannel,
+                   MeasurementTask, MultADChannel, MultAWGChannel, QLispCode,
+                   Signal)
+from .commands import (COMMAND, FREE, PUSH, READ, SYNC, TRIG, WRITE,
+                       CommandList, DataMap, RawData, Result)
+from .compiler import compile
+from .config import Config, ConfigProxy, GateConfig
+from .library import Library, Parameter, libraries
+from .libs import std as stdlib
 from .prog import Program, ProgramFrame
