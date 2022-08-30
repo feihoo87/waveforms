@@ -480,10 +480,10 @@ class Storage(Tracker):
                 self.timestamps[k].append(now.timestamp())
                 self.iteration[k].append(iteration)
 
-    def _flush(self):
+    def _flush(self, block=False):
         if self._queue_buffer is not None:
             iteration, pos, fut, kwds, now = self._queue_buffer
-            if fut.done():
+            if fut.done() or block:
                 self._append(iteration, pos, fut.result(), kwds, now)
                 self._queue_buffer = None
             else:
@@ -491,7 +491,7 @@ class Storage(Tracker):
         while not self.queue.empty():
             iteration, pos, dataframe, kwds, now = self.queue.get()
             if isinstance(dataframe, Future):
-                if not dataframe.done():
+                if not dataframe.done() and not block:
                     self._queue_buffer = (iteration, pos, dataframe, kwds, now)
                     return
                 else:
@@ -540,11 +540,11 @@ class Storage(Tracker):
         self._flush()
         return list(zip(self.keys(), self.values()))
 
-    def get(self, key, default=_NODEFAULT, skip=None):
+    def get(self, key, default=_NODEFAULT, skip=None, block=False):
         """
         Get the value of the storage.
         """
-        self._flush()
+        self._flush(block)
         if key in self._init_keys:
             return self.storage[key]
         elif key in self.storage:
