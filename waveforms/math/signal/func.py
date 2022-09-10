@@ -5,6 +5,9 @@ import scipy.constants as const
 def Svv(f, T, Z=lambda f: 50 * np.ones_like(f)):
     """
     power spectral density of the series noise voltage
+
+    Johnson–Nyquist noise
+    https://en.wikipedia.org/wiki/Johnson%E2%80%93Nyquist_noise
     
     f : list of frequency
     T : temperature
@@ -12,8 +15,49 @@ def Svv(f, T, Z=lambda f: 50 * np.ones_like(f)):
         (default 50 Ohm)
     """
     from scipy.constants import h, k
-    eta = h * f / (k * T) / (np.exp(h * f / (k * T)) - 1)
-    return 4 * k * T * np.real(Z(f)) * eta
+
+    if callable(Z):
+        R = np.real(Z(f))
+    else:
+        R = np.real(Z)
+    x = h * f / (k * T)
+    x, R, f, T = np.broadcast_arrays(x, R, f, T)
+    ret = np.zeros_like(x)
+    mask1 = x < 37
+    mask2 = x >= 37
+    ret[mask1] = 4 * k * T[mask1] * R[mask1] * x[mask1] / (np.exp(x[mask1]) -
+                                                           1)
+    ret[mask2] = 4 * h * f[mask2] * R[mask2] * np.exp(-x[mask2])
+    return ret
+
+
+def Sii(f, T, Z=lambda f: 50 * np.ones_like(f)):
+    """
+    power spectral density of the series noise voltage
+
+    Johnson–Nyquist noise
+    https://en.wikipedia.org/wiki/Johnson%E2%80%93Nyquist_noise
+    
+    f : list of frequency
+    T : temperature
+    Z : frequency-dependent complex electrical impedance
+        (default 50 Ohm)
+    """
+    from scipy.constants import h, k
+
+    if callable(Z):
+        Y = np.real(1 / Z(f))
+    else:
+        Y = np.real(1 / Z)
+    x = h * f / (k * T)
+    x, Y, f, T = np.broadcast_arrays(x, Y, f, T)
+    ret = np.zeros_like(x)
+    mask1 = x < 37
+    mask2 = x >= 37
+    ret[mask1] = 4 * k * T[mask1] * Y[mask1] * x[mask1] / (np.exp(x[mask1]) -
+                                                           1)
+    ret[mask2] = 4 * h * f[mask2] * Y[mask2] * np.exp(-x[mask2])
+    return ret
 
 
 def atts(f, atts=[], input=None):
@@ -26,10 +70,10 @@ def atts(f, atts=[], input=None):
     if input is not None:
         spec = input
     else:
-        spec = Svv(f, 300)
+        spec = 0.5 * Svv(f, 300)
     for T, att in atts:
         A = 10**(-att / 10)
-        spec = spec / A + Svv(f, T) * (A - 1) / A
+        spec = spec / A + 0.5 * Svv(f, T) * (A - 1) / A
     return spec
 
 
@@ -44,11 +88,11 @@ def atts_and_heat(f, atts=[], input=None):
     if input is not None:
         spec = input
     else:
-        spec = Svv(f, 300)
+        spec = 0.5 * Svv(f, 300)
     for T, att in atts:
         A = 10**(-att / 10)
         heat += 300 / T * (A - 1) / A * spec
-        spec = spec / A + Svv(f, T) * (A - 1) / A
+        spec = spec / A + 0.5 * Svv(f, T) * (A - 1) / A
     return spec, heat
 
 
