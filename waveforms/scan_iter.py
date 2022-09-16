@@ -420,6 +420,15 @@ class Storage(Tracker):
             if isinstance(keys, str):
                 keys = (keys, )
                 iters = (iters, )
+            if (len(keys) > 1 and len(iters) == 1
+                    and isinstance(iters[0], ndarray) and iters[0].ndim == 2
+                    and iters[0].shape[1] == len(keys)):
+                iters = iters[0]
+                for i, key in enumerate(keys):
+                    self.storage[key] = iters[:, i]
+                    self._frozen_keys = self._frozen_keys + (key, )
+                    self._init_keys.append(key)
+                continue
             if not isinstance(iters, tuple) or len(keys) != len(iters):
                 continue
             for key, iter in zip(keys, iters):
