@@ -196,7 +196,7 @@ def merge(diff1, diff2, origin=None):
                     ret[k] = DELETE
                 elif v is DELETE and isinstance(v2, Create):
                     if isinstance(v2.n, dict):
-                        ret[k] = Create(v2.n, delete=True)
+                        ret[k] = Create(v2.n, replace=True)
                     else:
                         ret[k] = Update(UNKNOW, v2.n)
                 elif isinstance(v2, Create) and v2.replace:

@@ -25,11 +25,11 @@ def test_diff():
     assert isinstance(d1['a'], Create) and d1['a'].n == {
         'x': 1,
         'y': 2
-    } and d1['a'].delete == False
+    } and d1['a'].replace == False
     assert isinstance(d1['b'], Create) and d1['b'].n == {
         'x': 3,
         'y': 4
-    } and d1['b'].delete == False
+    } and d1['b'].replace == False
 
 
 def test_patch():
@@ -54,7 +54,7 @@ def test_patch():
     patch(test, {
         'a': Update(1, 10),
         'b': DELETE,
-        'c': Create({'z': 12}, delete=True),
+        'c': Create({'z': 12}, replace=True),
         'd': {
             'x': Create(5),
             'y': Update(4, 40)
