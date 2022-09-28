@@ -130,6 +130,16 @@ def _eq(a, b):
 
 
 def diff(d1: dict, d2: dict) -> dict:
+    """
+    Compute the difference between two dictionaries
+
+    Args:
+        d1: the original dictionary
+        d2: the new dictionary
+
+    Returns:
+        a dictionary containing the difference between d1 and d2
+    """
     ret = {}
     for k in d2:
         if k in d1:
@@ -148,6 +158,17 @@ def diff(d1: dict, d2: dict) -> dict:
 
 
 def patch(source, diff, in_place=False):
+    """
+    Patch a dictionary with a diff
+
+    Args:
+        source: the original dictionary
+        diff: the diff
+        in_place: if True, patch the source dictionary in place
+    
+    Returns:
+        the patched dictionary
+    """
     if in_place:
         ret = source
     else:
@@ -171,6 +192,17 @@ def patch(source, diff, in_place=False):
 
 
 def merge(diff1, diff2, origin=None):
+    """
+    Merge two diffs
+
+    Args:
+        diff1: the first diff
+        diff2: the second diff
+        origin: the original dictionary
+
+    Returns:
+        the merged diff
+    """
     if origin is not None:
         updated = patch(patch(origin, diff1), diff2)
         return diff(origin, updated)
@@ -211,13 +243,22 @@ def merge(diff1, diff2, origin=None):
     return ret
 
 
-def print_diff(d, lim=None, offset=0, file=sys.stdout):
+def print_diff(d, limit=None, offset=0, file=sys.stdout):
+    """
+    Print a diff
+
+    Args:
+        d: the diff
+        limit: the maximum number of lines to print
+        offset: the offset of the first line
+        file: the file to print to
+    """
     count = 0
     for i, (k, v) in enumerate(flattenDictIter(d)):
         if i >= offset:
             print(f"{k:40}", v, file=file)
             count += 1
-            if lim is not None and count >= lim:
+            if limit is not None and count >= limit:
                 break
 
 
