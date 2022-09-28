@@ -84,21 +84,27 @@ class Update():
 
 
 class Create():
-    __slots__ = ('n', 'delete')
+    __slots__ = ('n', 'replace')
 
-    def __init__(self, n, delete=False):
+    def __init__(self, n, replace=False):
+        """
+        Create a new node
+
+        :param n: the new node
+        :param replace: if True, replace the node if it already exists
+        """
         self.n = n
-        self.delete = delete
+        self.replace = replace
 
     def __repr__(self):
-        if self.delete:
-            return f"Delete and Create: {self.n!r}"
+        if self.replace:
+            return f"Replace: {self.n!r}"
         else:
             return f"Create: {self.n!r}"
 
     def __eq__(self, o: object) -> bool:
-        return isinstance(o,
-                          Create) and self.n == o.n and self.delete == o.delete
+        return isinstance(
+            o, Create) and self.n == o.n and self.replace == o.replace
 
 
 def _eq(a, b):
@@ -153,7 +159,7 @@ def patch(source, diff, in_place=False):
             if isinstance(v, Update):
                 ret[k] = v.n
             elif isinstance(v, Create):
-                if v.delete or k not in ret:
+                if v.replace or k not in ret:
                     ret[k] = v.n
                 else:
                     update_tree(ret[k], v.n)
@@ -193,7 +199,7 @@ def merge(diff1, diff2, origin=None):
                         ret[k] = Create(v2.n, delete=True)
                     else:
                         ret[k] = Update(UNKNOW, v2.n)
-                elif isinstance(v2, Create) and v2.delete:
+                elif isinstance(v2, Create) and v2.replace:
                     ret[k] = v2
                 else:
                     raise ValueError(f"Unsupported merge: {v!r} {v2!r}")
