@@ -376,7 +376,10 @@ def search(session,
             value = export(session, node.id, depth=depth - 1)
         else:
             value = pickle.loads(chunk)
-        value = _getitem(value, patterns[-1].index)
+        try:
+            value = _getitem(value, patterns[-1].index)
+        except (IndexError, TypeError):
+            continue
         yield '.'.join(k.format(s) for s, k in zip(path, patterns)), value
 
 
@@ -410,6 +413,7 @@ def export(session, root_id, depth=-1):
     return foldDict(ret)
 
 
+"""
 def _search_dict_iter(d, patterns, prefix):
     if len(patterns) == 0:
         yield '.'.join(prefix), d
@@ -442,6 +446,7 @@ def search_flatten_dict(d, key, offset=0, limit=-1):
                 return
             limit -= 1
 
+"""
 
 class Registry():
     """A registry is a collection of snapshots.
