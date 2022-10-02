@@ -235,12 +235,14 @@ def _setitem(root: Union[RegistryNode, int], key: str,
 def _create_value(session: Session, value: Any, cache: dict):
     value_obj = RegistryValue()
     value_obj.set_value(value)
+    if value_obj.hash in cache:
+        return cache[value_obj.hash]
     exist_value_id = session.query(RegistryValue.id).filter(
         RegistryValue.hash == value_obj.hash).one_or_none()
     if exist_value_id is None:
         return cache.setdefault(value_obj.hash, value_obj)
     else:
-        return exist_value_id[0]
+        return cache.setdefault(value_obj.hash, exist_value_id[0])
 
 
 def _set_node_value(node: RegistryNode, value: Union[RegistryValue, int]):
@@ -355,7 +357,13 @@ def _search_query(session, root_id, patterns):
                         query_filter = a.key != k.pattern
             q = q.filter(query_filter)
         right_side = a
-    q = q.join(root, root.id == right_side.left_id).filter(root.id == root_id)
+    q = q.join(root, root.id == right_side.left_id)
+    if isinstance(root_id, int):
+        q = q.filter(root.id == root_id)
+    elif isinstance(root_id, (list, tuple, set)):
+        q = q.filter(root.id.in_(root_id))
+    else:
+        raise TypeError('root_id must be int, list, tuple or set')
     #print(q.statement)
     return q
 
@@ -413,7 +421,6 @@ def export(session, root_id, depth=-1):
     return foldDict(ret)
 
 
-"""
 def _search_dict_iter(d, patterns, prefix):
     if len(patterns) == 0:
         yield '.'.join(prefix), d
@@ -446,7 +453,6 @@ def search_flatten_dict(d, key, offset=0, limit=-1):
                 return
             limit -= 1
 
-"""
 
 class Registry():
     """A registry is a collection of snapshots.
