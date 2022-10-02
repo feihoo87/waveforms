@@ -10,9 +10,8 @@ from datetime import datetime
 from itertools import islice
 from typing import Any, Generator, NamedTuple, Optional, Union
 
-from sqlalchemy import (BINARY, BigInteger, Boolean, Column, DateTime,
-                        ForeignKey, Integer, LargeBinary, String, event,
-                        inspect)
+from sqlalchemy import (BigInteger, Boolean, Column, DateTime, ForeignKey,
+                        Integer, LargeBinary, String, event, inspect)
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import aliased, backref, declarative_base, relationship
 from sqlalchemy.orm.session import Session
@@ -140,7 +139,7 @@ class RegistryValue(Base):
     __tablename__ = 'registry_values'
 
     id = Column(BigInteger, primary_key=True)
-    hash = Column(BINARY(16), nullable=False, index=True)
+    hash = Column(LargeBinary(16), nullable=False, index=True)
     chunk = Column(LargeBinary)
 
     @property
@@ -377,7 +376,7 @@ def search(session,
     if depth == 0:
         return
     q = _search_query(session, root_id, patterns).offset(offset)
-    if limit is not None:
+    if limit is not None and limit >= 0:
         q = q.limit(limit)
     for chunk, node, *path in q:
         if node.is_tree:
