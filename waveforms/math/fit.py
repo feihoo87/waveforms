@@ -643,6 +643,51 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
     }
 
 
+def bayesian_correction(state, correction_matrices, subspace):
+    """Apply a correction matrix to a state.
+
+    Args:
+        state (np.array, dtype=int): The state to be corrected.
+        correction_matrices (np.array): A list of correction matrices.
+        subspace (np.array, dtype=int): The basis of subspace.
+
+    Returns:
+        np.array: The corrected state.
+
+    Examples:
+        >>> state = np.random.randint(2, size = (101, 1024, 4))
+        >>> PgPe = np.array([[0.1, 0.8], [0.03, 0.91], [0.02, 0.87], [0.05, 0.9]])
+        >>> correction_matrices = np.array(
+            [np.array([[Pe, Pe - 1], [-Pg, 1 - Pg]]) / (Pe - Pg) for Pg, Pe in PgPe])
+        >>> subspace = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [1, 1, 0, 0]])
+        >>> result = bayesian_correction(state, correction_matrices, subspace)
+        >>> result.shape
+        (101, 1024, 5)
+    """
+    num_qubits = state.shape[-1]
+    site_index = np.arange(num_qubits)
+
+    shape = state.shape
+    state = state.reshape(-1, num_qubits)
+
+    if len(subspace) < len(state):
+        ret = []
+        for target_state in subspace:
+            A = np.prod(correction_matrices[site_index, target_state, state],
+                        axis=-1)
+            ret.append(A)
+        ret = np.array(ret).T.reshape(shape)
+    else:
+        ret = []
+        for bit_string in state:
+            A = np.prod(correction_matrices[site_index, subspace, bit_string],
+                        axis=-1)
+            ret.append(A)
+        ret = np.array(ret).reshape(shape)
+    ret = ret.mean(axis=-2)
+    return ret
+
+
 def getThresholdInfo(s0, s1):
     warnings.warn('getThresholdInfo is deprecated, use get_threshold_info',
                   DeprecationWarning, 2)
