@@ -596,6 +596,10 @@ class Registry():
         self.snapshot = snapshot
         self.updates.clear()
 
+    def rollback(self):
+        """Rollback the updates."""
+        self.updates.clear()
+
     def init(self,
              value: Union[dict, RegistryNode] = None) -> RegistrySnapshot:
         value_cache = {}
