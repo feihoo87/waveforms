@@ -873,6 +873,19 @@ def cosPulse(width):
                     seq=(_zero, pulse, _zero))
 
 
+def hanning(width):
+    return cosPulse(width)
+
+
+def general_cosine(duration, *arg):
+    wav = zero()
+    arg = np.asarray(arg)
+    arg /= arg[::2].sum()
+    for i, a in enumerate(arg, start=1):
+        wav += a / 2 * (1 - (-1)**i * cos(i * 2 * pi / duration))
+    return wav * square(duration)
+
+
 def slepian(duration, *arg):
     wav = zero()
     arg = np.asarray(arg)
@@ -997,6 +1010,7 @@ def mixing(I,
            freq=0.0,
            ratioIQ=1.0,
            phaseDiff=0.0,
+           block_freq=None,
            DRAGScaling=None):
     """SSB or envelope mixing
     """
@@ -1014,8 +1028,14 @@ def mixing(I,
         Iout = I * np.cos(-phase) + Q * np.sin(-phase)
         Qout = -I * np.sin(-phase) + Q * np.cos(-phase)
 
-    if DRAGScaling is not None and DRAGScaling != 0:
-        # apply DRAG
+    # apply DRAG
+    if block_freq is not None:
+        a = block_freq / (block_freq - freq)
+        b = 1 / (block_freq - freq)
+        I = a * Iout + b / (2 * pi) * D(Qout)
+        Q = a * Qout - b / (2 * pi) * D(Iout)
+        Iout, Qout = I, Q
+    elif DRAGScaling is not None and DRAGScaling != 0:
         I = (1 - w * DRAGScaling) * Iout - DRAGScaling * D(Qout)
         Q = (1 - w * DRAGScaling) * Qout + DRAGScaling * D(Iout)
         Iout, Qout = I, Q
@@ -1027,7 +1047,7 @@ def mixing(I,
 
 __all__ = [
     'D', 'Waveform', 'chirp', 'const', 'cos', 'cosPulse', 'cut', 'exp',
-    'function', 'gaussian', 'interp', 'mixing', 'one', 'poly',
-    'registerBaseFunc', 'registerDerivative', 'samplingPoints', 'sign', 'sin',
-    'sinc', 'slepian', 'square', 'step', 'zero'
+    'function', 'gaussian', 'general_cosine', 'hanning', 'interp', 'mixing',
+    'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'samplingPoints',
+    'sign', 'sin', 'sinc', 'square', 'step', 'zero'
 ]

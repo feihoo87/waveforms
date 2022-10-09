@@ -11,6 +11,7 @@ from . import waveform
 class _WaveLexer:
     """Waveform Lexer.
     """
+
     def __init__(self):
         """Create a PLY lexer."""
         self.lexer = lex.lex(module=self, debug=False)
@@ -26,8 +27,8 @@ class _WaveLexer:
     literals = r'=()[]<>,.+-/*^'
     functions = [
         'D', 'chirp', 'const', 'cos', 'cosPulse', 'cut', 'exp', 'gaussian',
-        'interp', 'mixing', 'one', 'poly', 'samplingPoints', 'sign', 'sin',
-        'sinc', 'slepian', 'square', 'step', 'zero'
+        'general_cosine', 'hanning', 'interp', 'mixing', 'one', 'poly',
+        'samplingPoints', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
     ]
     tokens = [
         'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',
@@ -80,6 +81,7 @@ class _WaveLexer:
 
 
 class _WaveParser:
+
     def __init__(self):
         self.lexer = _WaveLexer()
         self.tokens = self.lexer.tokens
