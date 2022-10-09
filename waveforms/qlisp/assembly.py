@@ -48,11 +48,13 @@ def _ctx_update_measurement_tasks(sub_ctx: Context, ctx: Context):
 
 
 def _execute(ctx, cmd):
+    from waveforms.waveform import NDIGITS
+
     (op, target, *values), key = cmd
     if op == '!nop':
         return
     if (op, target) == ('!set', 'time'):
-        ctx.time[key] = values[0]
+        ctx.time[key] = round(values[0], NDIGITS)
     elif (op, target) == ('!set', 'phase'):
         ctx.phases[key] = values[0]
     elif (op, target) == ('!set', 'phase_ext'):
@@ -64,7 +66,7 @@ def _execute(ctx, cmd):
     elif (op, target) == ('!set', 'cbit'):
         ctx.measures[key] = values[0]
     elif (op, target) == ('!add', 'time'):
-        ctx.time[key] += values[0]
+        ctx.time[key] = round(ctx.time[key] + values[0], NDIGITS)
     elif (op, target) == ('!add', 'phase'):
         ctx.phases[key] += values[0]
     elif (op, target) == ('!add', 'phase_ext'):
