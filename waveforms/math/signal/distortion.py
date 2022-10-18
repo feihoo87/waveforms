@@ -72,7 +72,7 @@ def exp_decay_filter(amp, tau, sample_rate):
         sample_rate (float): sampling rate
     """
 
-    alpha = 1 - np.exp(-1 / (sample_rate * tau * (1 + amp)))
+    alpha = 1 - np.exp(-1 / (abs(sample_rate * tau) * (1 + amp)))
 
     if amp >= 0:
         k = amp / (1 + amp - alpha)
@@ -81,7 +81,8 @@ def exp_decay_filter(amp, tau, sample_rate):
         k = -amp / (1 + amp) / (1 - alpha)
         a = [(1 + k - k * alpha), -(1 + k) * (1 - alpha)]
 
-    b = [1, -(1 - alpha)]
+    b = [1 / a[0], -(1 - alpha) / a[0]]
+    a = [1, a[1] / a[0]]
 
     return b, a
 
@@ -126,7 +127,7 @@ def predistort(sig: np.ndarray,
 def distort(points, params, sample_rate):
     filters = []
     for amp, tau in np.asarray(params).reshape(-1, 2):
-        b, a = exp_decay_filter(amp, tau, sample_rate)
+        b, a = exp_decay_filter(amp, abs(tau), sample_rate)
         filters.append((a, b))
     return predistort(points, filters)
 
