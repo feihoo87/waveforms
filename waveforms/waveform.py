@@ -255,6 +255,65 @@ def _calc(wav, x):
     return ret
 
 
+def _num_latex(num):
+    if num == -np.inf:
+        return r"-\infty"
+    elif num == np.inf:
+        return r"\infty"
+    s = f"{num:g}"
+    if "e" in s:
+        a, n = s.split("e")
+        n = float(n)
+        s = f"{a} \\times 10^{{{n:g}}}"
+    return s
+
+
+def _fun_latex(fun):
+    funID, *args, shift = fun
+    if _baseFunc_latex[funID] is None:
+        shift = _num_latex(shift)
+        if shift == "0":
+            shift = ""
+        elif shift[0] != '-':
+            shift = "+" + shift
+        return r"\mathrm{Func}" + f"{funID}(t{shift}, ...)"
+    return _baseFunc_latex[funID](shift, *args)
+
+
+def _wav_latex(wav):
+    from waveforms.waveform import _is_const, _zero
+
+    if wav == _zero:
+        return "0"
+    elif _is_const(wav):
+        return f"{wav[1][0]}"
+
+    sum_expr = []
+    for mul, amp in zip(*wav):
+        if mul == ((), ()):
+            sum_expr.append(_num_latex(amp))
+            continue
+        mul_expr = []
+        amp = _num_latex(amp)
+        if amp != "1":
+            mul_expr.append(amp)
+        for fun, n in zip(*mul):
+            fun_expr = _fun_latex(fun)
+            if n != 1:
+                mul_expr.append(fun_expr + "^{" + f"{n}" + "}")
+            else:
+                mul_expr.append(fun_expr)
+        sum_expr.append(''.join(mul_expr))
+
+    ret = sum_expr[0]
+    for expr in sum_expr[1:]:
+        if expr[0] == '-':
+            ret += expr
+        else:
+            ret += "+" + expr
+    return ret
+
+
 class Waveform:
     __slots__ = ('bounds', 'seq', 'max', 'min', 'start', 'stop', 'sample_rate')
 
@@ -610,6 +669,25 @@ class Waveform:
         else:
             return False
 
+    def _repr_latex_(self):
+        parts = []
+        start = -np.inf
+        for end, wav in zip(self.bounds, self.seq):
+            e_str = _wav_latex(wav)
+            start_str = _num_latex(start)
+            end_str = _num_latex(end)
+            parts.append(e_str + r",~~&t\in" + f"({start_str},{end_str}" +
+                         (']' if end < np.inf else ')'))
+            start = end
+        if len(parts) == 1:
+            expr = ''.join(['f(t)=', *parts[0].split('&')])
+        else:
+            expr = '\n'.join([
+                r"f(t)=\begin{cases}", (r"\\" + '\n').join(parts),
+                r"\end{cases}"
+            ])
+        return "$$\n{}\n$$".format(expr)
+
 
 _zero_waveform = Waveform()
 _one_waveform = Waveform(seq=(_one, ))
@@ -630,14 +708,16 @@ def const(c):
 __TypeIndex = 1
 _baseFunc = {}
 _derivativeBaseFunc = {}
+_baseFunc_latex = {}
 
 
-def registerBaseFunc(func):
+def registerBaseFunc(func, latex=None):
     global __TypeIndex
     Type = __TypeIndex
     __TypeIndex += 1
 
     _baseFunc[Type] = func
+    _baseFunc_latex[Type] = latex
 
     return Type
 
@@ -655,12 +735,95 @@ def registerDerivative(Type, dFunc):
 
 
 # register base function
-LINEAR = registerBaseFunc(lambda t: t)
-GAUSSIAN = registerBaseFunc(lambda t, std_sq2: np.exp(-(t / std_sq2)**2))
-ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2))
-COS = registerBaseFunc(lambda t, w: np.cos(w * t))
-SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
-EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
+def _format_LINEAR(shift, *args):
+    if shift != 0:
+        shift = _num_latex(-shift)
+        if shift[0] == '-':
+            return f"(t{shift})"
+        else:
+            return f"(t+{shift})"
+    else:
+        return 't'
+
+
+def _format_GAUSSIAN(shift, *args):
+    sigma = _num_latex(args[0] / np.sqrt(2))
+    shift = _num_latex(-shift)
+    if shift != '0':
+        if shift[0] != '-':
+            shift = '+' + shift
+        if sigma == '1':
+            return ('\\exp\\left[-\\frac{\\left(t' + shift +
+                    '\\right)^2}{2}\\right]')
+        else:
+            return ('\\exp\\left[-\\frac{1}{2}\\left(\\frac{t' + shift + '}{' +
+                    sigma + '}\\right)^2\\right]')
+    else:
+        if sigma == '1':
+            return ('\\exp\\left(-\\frac{t^2}{2}\\right)')
+        else:
+            return ('\\exp\\left[-\\frac{1}{2}\\left(\\frac{t}{' + sigma +
+                    '}\\right)^2\\right]')
+
+
+def _format_SINC(shift, *args):
+    shift = _num_latex(-shift)
+    bw = _num_latex(args[0])
+    if shift != '0':
+        if shift[0] != '-':
+            shift = '+' + shift
+        if bw == '1':
+            return '\\mathrm{sinc}(t' + shift + ')'
+        else:
+            return '\\mathrm{sinc}[' + bw + '(t' + shift + ')]'
+    else:
+        if bw == '1':
+            return '\\mathrm{sinc}(t)'
+        else:
+            return '\\mathrm{sinc}(' + bw + 't)'
+
+
+def _format_COSINE(shift, *args):
+    freq = args[0] / 2 / np.pi
+    phase = -shift * freq
+    freq = _num_latex(freq)
+    if freq == '1':
+        freq = ''
+    phase = _num_latex(phase)
+    if phase == '0':
+        phase = ''
+    elif phase[0] != '-':
+        phase = '+' + phase
+    if phase != '':
+        return f'\\cos\\left[2\\pi({freq}t{phase})\\right]'
+    elif freq != '':
+        return f'\\cos\\left(2\\pi\\times {freq}t\\right)'
+    else:
+        return '\\cos(2\\pi t)'
+
+
+def _format_ERF(shift, *args):
+    if shift != 0:
+        return '\\mathrm{erf}(\\frac{t-' + f"{shift:g}" + '}{' + f'{args[0]:g}' + '})'
+    else:
+        return '\\mathrm{erf}(\\frac{t}{' + f'{args[0]:g}' + '})'
+
+
+def _format_EXP(shift, *args):
+    if shift != 0:
+        return '\\exp(-' + f'{args[0]:g}' + '(t-' + f"{shift:g}" + '))'
+    else:
+        return '\\exp(-' + f'{args[0]:g}' + 't)'
+
+
+LINEAR = registerBaseFunc(lambda t: t, _format_LINEAR)
+GAUSSIAN = registerBaseFunc(lambda t, std_sq2: np.exp(-(t / std_sq2)**2),
+                            _format_GAUSSIAN)
+ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2),
+                       _format_ERF)
+COS = registerBaseFunc(lambda t, w: np.cos(w * t), _format_COSINE)
+SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t), _format_SINC)
+EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t), _format_EXP)
 INTERP = registerBaseFunc(lambda t, start, stop, points: np.interp(
     t, np.linspace(start, stop, len(points)), points))
 LINEARCHIRP = registerBaseFunc(lambda t, f0, f1, T, phi0: np.sin(
