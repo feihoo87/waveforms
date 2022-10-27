@@ -205,3 +205,30 @@ def oscillation(t, spec=((1, 1), ), amplitude=1, offset=0):
     for A, f in spec:
         ret += A * np.exp(2j * np.pi * f * t)
     return amplitude * np.real(ret) + offset
+
+
+def correlation(in1, in2, sample_rate=1, sample_rate2=None):
+    from math import lcm
+
+    from scipy.signal import correlate, correlation_lags, resample
+
+    sample_rate1 = round(sample_rate)
+    if sample_rate2 is None:
+        sample_rate2 = round(sample_rate)
+    else:
+        sample_rate2 = round(sample_rate2)
+    sample_rate = lcm(sample_rate1, sample_rate2)
+
+    in1_len = len(in1) * sample_rate // sample_rate2
+    in2_len = len(in2) * sample_rate // sample_rate1
+    if in1_len > len(in1):
+        in1 = resample(in1, in1_len)
+    if in2_len > len(in2):
+        in2 = resample(in2, in2_len)
+
+    x = correlation_lags(in1_len, in2_len, mode='full') / float(sample_rate)
+    y = correlate(in1, in2, mode='full', method='fft') / np.sqrt(
+        correlate(in1, in1, mode='valid')[0] *
+        correlate(in2, in2, mode='valid')[0])
+
+    return x, y
