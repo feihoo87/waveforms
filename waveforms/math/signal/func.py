@@ -219,8 +219,8 @@ def correlation(in1, in2, sample_rate=1, sample_rate2=None):
         sample_rate2 = round(sample_rate2)
     sample_rate = lcm(sample_rate1, sample_rate2)
 
-    in1_len = len(in1) * sample_rate // sample_rate2
-    in2_len = len(in2) * sample_rate // sample_rate1
+    in1_len = len(in1) * sample_rate // sample_rate1
+    in2_len = len(in2) * sample_rate // sample_rate2
     if in1_len > len(in1):
         in1 = resample(in1, in1_len)
     if in2_len > len(in2):
