@@ -704,3 +704,42 @@ def countState(state):
     warnings.warn('countState is deprecated, use count_state',
                   DeprecationWarning, 2)
     return count_state(state)
+
+
+def poly_fit(x_data, y_data, degree=20, data_filter=None):
+    try:
+        from sklearn.linear_model import Ridge
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+    except ImportError:
+        raise ImportError('scikit-learn is required for poly_fit')
+
+    poly = PolynomialFeatures(degree=degree)
+    poly.fit(x_data.reshape((-1, 1)))
+    x_train = poly.transform(x_data.reshape((-1, 1)))
+
+    model = Pipeline([
+        ('sca', StandardScaler()),
+        ('ridge', Ridge(solver='cholesky')),
+    ])
+
+    model.fit(x_train, y_data)
+    y_fit = model.predict(x_train)
+
+    # select data
+    for weight in [(0.01, 1), (30, 0.8), (30, 0.9)]:
+        err = (y_fit - y_data)**2
+        thr = np.mean(err) * weight[0] + np.median(err) * weight[1]
+        mask = err < thr
+        model.fit(x_train[mask], np.array(y_data)[mask])
+        y_fit = model.predict(x_train)
+
+    x, y = x_data[mask].reshape(-1), np.array(y_data)[mask]
+    xx = np.linspace(x[0], x[-1], 5001)
+    poly = PolynomialFeatures(degree=degree)
+    poly.fit(xx.reshape((-1, 1)))
+    xxx = poly.transform(xx.reshape((-1, 1)))
+    a = np.polyfit(xx, model.predict(xxx), degree)
+
+    return a, [np.min(x_data), np.max(x_data)], mask
+
