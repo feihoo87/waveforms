@@ -35,3 +35,7 @@ def fit_rabi(x, y, Tr=100e-6, phi=-np.pi, freq=None):
         return popt, pcov, fitted
     except:
         raise ValueError('TimeRabi fitting failed!')
+
+
+def fit_ramsey(x, y, T1=1.0, Tphi=1.0, Delta=0, method='default'):
+    pass

@@ -1,9 +1,12 @@
+from typing import Optional
+
 import numpy as np
 from scipy.optimize import minimize
 from scipy.signal import correlate
+from scipy.sparse import coo_matrix, diags, linalg
 
 
-def fit_delay(waveform, data, sample_rate, fit=True):
+def fit_relative_delay(waveform, data, sample_rate, fit=True):
     t = np.linspace(0, len(data) / sample_rate, len(data), endpoint=False)
     if isinstance(waveform, np.ndarray):
         fit = False
@@ -24,3 +27,49 @@ def fit_delay(waveform, data, sample_rate, fit=True):
 
     ret = minimize(fun, [delay], args=(t, waveform, data))
     return ret.x[0]
+
+
+def calc_delays(relative_delays: dict[tuple[str, str], float],
+                reference: float = 0,
+                reference_channel: Optional[str] = None) -> dict[str, float]:
+    channels = []
+    channels_map = {}
+
+    def new_channel(ch):
+        if ch not in channels:
+            channels_map[ch] = len(channels)
+            channels.append(ch)
+
+    matrix = []
+    weight = []
+    y = []
+    for i, ((ch1, ch2), delay) in enumerate(relative_delays.items()):
+        if ch1 not in channels:
+            new_channel(ch1)
+        if ch2 not in channels:
+            new_channel(ch2)
+        matrix.append([i, channels_map[ch1], 1])
+        matrix.append([i, channels_map[ch2], -1])
+        if isinstance(delay, float):
+            y.append(delay)
+            weight.append(1)
+        else:
+            y.append(delay[0])
+            weight.append(delay[1])
+
+    if reference_channel is None:
+        reference_channel = channels[0]
+    new_channel(reference_channel)
+    matrix.append([i + 1, channels_map[reference_channel], 1])
+    y.append(0)
+    weight.append(np.max(weight))
+
+    row, col, data = list(zip(*matrix))
+
+    A = coo_matrix((data, (row, col)), shape=(len(y), len(channels)))
+    W = diags(weight, 0, shape=(len(y), len(y)))
+
+    x = linalg.inv(A.T @ W @ A) @ A.T @ W @ y
+    offset = reference - x[channels_map[reference_channel]]
+
+    return {ch: v + offset for ch, v in zip(channels, x)}

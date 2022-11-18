@@ -232,3 +232,30 @@ def correlation(in1, in2, sample_rate=1, sample_rate2=None):
         correlate(in2, in2, mode='valid')[0])
 
     return x, y
+
+
+def median_filter(x, window=5):
+    """
+    median filter
+
+    Parameters
+    ----------
+    x : array_like
+        input array
+    window : int
+        half window size
+
+    Returns
+    -------
+    y : ndarray
+        filtered array
+    """
+    y = []
+    for i in range(len(x)):
+        if i - window < 0:
+            y.append(np.median(x[0:i + window + 1]))
+        elif i + window > len(x):
+            y.append(np.median(x[i - window:i + window + 1]))
+        else:
+            y.append(np.median(x[i - window:i + window + 1]))
+    return np.array(y)

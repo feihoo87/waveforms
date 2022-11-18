@@ -1,4 +1,4 @@
-from .delay import fit_delay
+from .delay import fit_relative_delay, calc_delays
 from .readout import (bayesian_correction, cdf, classify, classify_data,
                       count_state, count_to_diag, fit_readout_distribution,
                       fit_readout_distribution2, gaussian_cdf,
