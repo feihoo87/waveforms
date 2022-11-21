@@ -53,3 +53,18 @@ def fit_transmon_spectrum(bias,
                      bias,
                      f01,
                      p0=[EJ, Ec, d, offset, period])
+
+
+def cavity_spectrum(x, offset, period, fc, f01, g=0.05, d=0.1, Ec=0.24):
+    EJS = (f01 + Ec)**2 / 8 / Ec
+    F = np.pi * (x - offset) / period
+
+    EJ = EJS * np.sqrt(np.cos(F)**2 + d**2 * np.sin(F)**2)
+    Delta = np.sqrt(8 * EJ * Ec) - Ec - fc
+    a, b = Delta - np.sqrt(Delta**2 + g**2), Delta + np.sqrt(Delta**2 + g**2)
+    ret = np.zeros_like(a)
+    mask = np.abs(a) > np.abs(b)
+    ret[mask] = b[mask]
+    mask = np.abs(a) <= np.abs(b)
+    ret[mask] = a[mask]
+    return ret + fc
