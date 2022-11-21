@@ -16,7 +16,7 @@ def transmon_spectrum(x, EJ, Ec, d, offset, period):
         return np.asarray(y)
 
 
-def transmon_spectrum2(x, EJ, Ec, d, offset, period):
+def transmon_spectrum_fast(x, EJ, Ec, d, offset, period):
     from scipy.special import mathieu_a, mathieu_b
     from waveforms.quantum.transmon import Transmon
 
@@ -49,7 +49,7 @@ def fit_transmon_spectrum(bias,
     q = Transmon(f01_max=f01_max, f01_min=f01_min, alpha=alpha)
     EJ, Ec, d = q.EJ, q.Ec, q.d
 
-    return curve_fit(transmon_spectrum2,
+    return curve_fit(transmon_spectrum_fast,
                      bias,
                      f01,
                      p0=[EJ, Ec, d, offset, period])
