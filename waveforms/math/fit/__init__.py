@@ -1,4 +1,4 @@
-from .delay import fit_relative_delay, calc_delays
+from .delay import calc_delays, fit_relative_delay
 from .readout import (bayesian_correction, cdf, classify, classify_data,
                       count_state, count_to_diag, fit_readout_distribution,
                       fit_readout_distribution2, gaussian_cdf,
@@ -10,4 +10,4 @@ from .simple import (complex_amp_to_real, find_cross_point, fit_circle,
                      fit_cosine, fit_cross_point, fit_pole, goodness_of_fit,
                      lin_fit, poly_fit)
 from .spectrum import (fit_transmon_spectrum, transmon_spectrum,
-                       transmon_spectrum2)
+                       transmon_spectrum_fast)
