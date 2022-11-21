@@ -154,9 +154,11 @@ def lorentzianGaussian(x, x0, gamma, sigma):
     elif sigma == 0:
         return lorentzian(x, x0, gamma)
     else:
-        return np.convolve(lorentzian(x, x0, gamma),
-                           gaussian(x, x0, sigma),
-                           mode='same')
+        t = np.arange(-3 * sigma, 3 * sigma, x[1] - x[0])
+        t -= t.mean()
+        ker = gaussian(t, 0, sigma)
+        ker /= ker.sum()
+        return np.convolve(lorentzian(x, x0, gamma), ker, mode='same')
 
 
 def peaks(x, peaks, background=0):
