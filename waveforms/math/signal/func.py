@@ -161,6 +161,21 @@ def lorentzianGaussian(x, x0, gamma, sigma):
         return np.convolve(lorentzian(x, x0, gamma), ker, mode='same')
 
 
+def lorentzianSpace(f0, gamma, numOfPoints):
+    """frequencies for lorentzian peak
+
+    Args:
+        f0 : center frequency
+        gamma : width
+        numOfPoints : number of points
+    
+    Returns:
+        frequencies: np.array
+    """
+    theta = np.linspace(-np.pi, np.pi, numOfPoints + 2)[1:-1]
+    return f0 - gamma * np.tan(theta)
+
+
 def peaks(x, peaks, background=0):
     """
     peaks: list of (center, width, amp, shape)
