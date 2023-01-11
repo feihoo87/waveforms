@@ -150,18 +150,22 @@ class Tracker():
         pass
 
 
-def _call_func_with_kwds(func, kwds):
+def _call_func_with_kwds(func, args, kwds):
     sig = inspect.signature(func)
     for p in sig.parameters.values():
         if p.kind == p.VAR_KEYWORD:
-            return func(**kwds)
-    kw = {k: v for k, v in kwds.items() if k in sig.parameters}
-    return func(**kw)
+            return func(*args, **kwds)
+    kw = {
+        k: v
+        for k, v in kwds.items()
+        if k in list(sig.parameters.keys())[len(args):]
+    }
+    return func(*args, **kw)
 
 
-def _try_to_call(x, kwds):
+def _try_to_call(x, args, kwds):
     if callable(x):
-        return _call_func_with_kwds(x, kwds)
+        return _call_func_with_kwds(x, args, kwds)
     return x
 
 
@@ -195,7 +199,7 @@ def _get_current_iters(loops, level, kwds, pipes):
                 limit = it.max_iters
             it = it.cls(it.dimensions, *it.args, **it.kwds)
         else:
-            it = iter(_try_to_call(it, kwds))
+            it = iter(_try_to_call(it, (), kwds))
 
         iters.append((it, pipe))
         pipes[k] = pipe
@@ -239,7 +243,7 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
                     trackers: list[Tracker], pipes: dict):
     if len(iters) == level and level > 0:
         kwds.update(
-            {k: _try_to_call(v, kwds)
+            {k: _try_to_call(v, (), kwds)
              for k, v in additional_kwds.items()})
         for tracker in trackers:
             kwds = tracker.update(kwds)
