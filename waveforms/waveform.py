@@ -1,12 +1,11 @@
 import pickle
 from bisect import bisect_left
 from itertools import chain, product
+from math import comb
 
 import numpy as np
 import scipy.special as special
 from numpy import e, inf, pi
-
-from .math import comb
 
 NDIGITS = 15
 
