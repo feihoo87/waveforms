@@ -27,7 +27,7 @@ _half_pi = _const(pi / 2)
 
 
 def _is_const(x):
-    return x == _zero or len(x[0]) == 1 and x[0][0][0] == ()
+    return x == _zero or x[0] == (((), ()), )
 
 
 def _basic_wave(Type, *args, shift=0):
@@ -66,7 +66,7 @@ def _mul(x, y):
 
 
 def _add(x, y):
-    x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
+    #x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
     t_list, v_list = list(x[0]), list(x[1])
     lo, hi = 0, len(t_list)
     for t, v in zip(*y):
@@ -485,7 +485,7 @@ class Waveform:
         while i1 < h1 or i2 < h2:
             s = oper(self.seq[i1], other.seq[i2])
             b = min(self.bounds[i1], other.bounds[i2])
-            if len(seq) > 0 and s == seq[-1]:
+            if seq and s == seq[-1]:
                 bounds[-1] = b
             else:
                 bounds.append(b)
