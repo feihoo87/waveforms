@@ -31,8 +31,8 @@ class _WaveLexer:
         'samplingPoints', 'sign', 'sin', 'sinc', 'square', 'step', 'zero'
     ]
     tokens = [
-        'REAL', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW', 'CONST',
-        'FUNCTION'
+        'REAL', 'IMAG', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW',
+        'CONST', 'FUNCTION'
     ]
 
     def t_ID(self, t):
@@ -45,6 +45,10 @@ class _WaveLexer:
             return t
         else:
             return t
+
+    def t_IMAG(self, t):
+        r'((([0-9]+|([0-9]+)?\.[0-9]+|[0-9]+\.)[eE][+-]?[0-9]+)|(([0-9]+)?\.[0-9]+|[0-9]+\.)|[1-9][0-9]*|0)j'
+        return t
 
     def t_REAL(self, t):
         r'(([0-9]+|([0-9]+)?\.[0-9]+|[0-9]+\.)[eE][+-]?[0-9]+)|(([0-9]+)?\.[0-9]+|[0-9]+\.)'
@@ -122,9 +126,10 @@ class _WaveParser:
         """
         p[0] = {'pi': waveform.pi, 'e': waveform.e, 'inf': waveform.inf}[p[1]]
 
-    def p_real_int_string(self, p):
+    def p_real_imag_int_string(self, p):
         """
         expression : REAL
+                   | IMAG
                    | INT
                    | STRING
         """
