@@ -215,9 +215,9 @@ def _generate_kwds(keys, iters, kwds, iteration, limit):
         if hasattr(it[0], 'ask') and hasattr(it[0], 'tell') and hasattr(
                 it[0], 'get_result'):
             if limit > 0 and iteration >= limit - 1:
-                value = _call_func_with_kwds(it[0].get_result, kwds).x
+                value = _call_func_with_kwds(it[0].get_result, (), kwds).x
             else:
-                value = _call_func_with_kwds(it[0].ask, kwds)
+                value = _call_func_with_kwds(it[0].ask, (), kwds)
         else:
             value = next(it[0])
             if len(ks) == 1:
@@ -247,7 +247,7 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
              for k, v in additional_kwds.items()})
         for tracker in trackers:
             kwds = tracker.update(kwds)
-        if filter is None or _call_func_with_kwds(filter, kwds):
+        if filter is None or _call_func_with_kwds(filter, (), kwds):
             yield StepStatus(pos=pos,
                              kwds=kwds,
                              _pipes=pipes,
