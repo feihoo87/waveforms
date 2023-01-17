@@ -267,10 +267,39 @@ def autoplot(x,
              xlabel='x',
              ylabel='y',
              zlabel='z',
+             x_unit='',
+             y_unit='',
+             z_unit='',
              fig=None,
              ax=None,
              index=None,
+             xscale='linear',
+             yscale='linear',
+             zscale='linear',
+             max_lines=3,
              **kwds):
+    """
+    Plot a 2D array as a line plot or an image.
+
+    Parameters:
+        x (array): x values
+        y (array): y values
+        z (array): z values
+        xlabel (str): x label
+        ylabel (str): y label
+        zlabel (str): z label
+        x_unit (str): x unit
+        y_unit (str): y unit
+        z_unit (str): z unit
+        fig (Figure): figure to plot on
+        ax (Axes): axes to plot on
+        index (int): index of the line to plot
+        xscale (str): x scale
+        yscale (str): y scale
+        zscale (str): z scale
+        max_lines (int): maximum number of lines to plot
+        **kwds: keyword arguments passed to plot_img or plot_lines
+    """
     if ax is not None:
         fig = ax.figure
     if fig is None:
@@ -278,13 +307,55 @@ def autoplot(x,
     if ax is None:
         ax = fig.add_subplot(111)
 
-    if len(y) <= 3 or len(x) <= 3 or index is not None:
-        plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=index, **kwds)
+    if len(y) <= max_lines or len(x) <= max_lines or index is not None:
+        plot_lines(x,
+                   y,
+                   z,
+                   xlabel,
+                   ylabel,
+                   zlabel,
+                   x_unit=x_unit,
+                   y_unit=y_unit,
+                   z_unit=z_unit,
+                   xscale=xscale,
+                   yscale=yscale,
+                   zscale=zscale,
+                   ax=ax,
+                   index=index,
+                   **kwds)
     else:
-        plot_img(x, y, z, xlabel, ylabel, zlabel, fig, ax, **kwds)
+        plot_img(x,
+                 y,
+                 z,
+                 xlabel,
+                 ylabel,
+                 zlabel,
+                 x_unit=x_unit,
+                 y_unit=y_unit,
+                 z_unit=z_unit,
+                 xscale=xscale,
+                 yscale=yscale,
+                 zscale=zscale,
+                 fig=fig,
+                 ax=ax,
+                 **kwds)
 
 
-def plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=None, **kwds):
+def plot_lines(x,
+               y,
+               z,
+               xlabel,
+               ylabel,
+               zlabel,
+               x_unit,
+               y_unit,
+               z_unit,
+               ax,
+               xscale='linear',
+               yscale='linear',
+               zscale='linear',
+               index=None,
+               **kwds):
     z = np.asarray(z)
     if len(y) > len(x):
         x, y = y, x
@@ -295,20 +366,58 @@ def plot_lines(x, y, z, xlabel, ylabel, zlabel, ax, index=None, **kwds):
         z = z[index, :]
 
     for i, l in enumerate(y):
-        ax.plot(x, z[i, :], label=f"{ylabel}={l:.3}", **kwds)
+        if y_unit:
+            label = f"{ylabel}={l:.3} [{y_unit}]"
+        else:
+            label = f"{ylabel}={l:.3}"
+        ax.plot(x, z[i, :], label=label, **kwds)
     ax.legend()
+    xlabel = f"{xlabel} [{x_unit}]" if x_unit else xlabel
+    zlabel = f"{zlabel} [{z_unit}]" if z_unit else zlabel
     ax.set_xlabel(xlabel)
     ax.set_ylabel(zlabel)
+    ax.set_xscale(xscale)
+    ax.set_yscale(yscale)
 
 
-def plot_img(x, y, z, xlabel, ylabel, zlabel, fig, ax, **kwds):
-    dx, dy = x[1] - x[0], y[1] - y[0]
-    extent = (x[0] - dx / 2, x[-1] + dx / 2, y[0] - dy / 2, y[-1] + dy / 2)
-    kwds.setdefault('extent', extent)
+def plot_img(x,
+             y,
+             z,
+             xlabel,
+             ylabel,
+             zlabel,
+             x_unit,
+             y_unit,
+             z_unit,
+             fig,
+             ax,
+             xscale='linear',
+             yscale='linear',
+             zscale='linear',
+             **kwds):
     kwds.setdefault('origin', 'lower')
     kwds.setdefault('aspect', 'auto')
     kwds.setdefault('interpolation', 'nearest')
-    img = ax.imshow(np.asarray(z), **kwds)
+
+    zlabel = f"{zlabel} [{z_unit}]" if z_unit else zlabel
+
+    if (xscale, yscale) == ('linear', 'linear'):
+        dx, dy = x[1] - x[0], y[1] - y[0]
+        extent = (x[0] - dx / 2, x[-1] + dx / 2, y[0] - dy / 2, y[-1] + dy / 2)
+        kwds.setdefault('extent', extent)
+        img = ax.imshow(np.asarray(z), **kwds)
+        xlabel = f"{xlabel} [{x_unit}]" if x_unit else xlabel
+        ylabel = f"{ylabel} [{y_unit}]" if y_unit else ylabel
+    elif (xscale, yscale) == ('log', 'linear'):
+        ylabel = f"{ylabel} [{y_unit}]" if y_unit else ylabel
+        img = imshow_logx(x, y, z, x_unit, ax, **kwds)
+    elif (xscale, yscale) == ('linear', 'log'):
+        xlabel = f"{xlabel} [{x_unit}]" if x_unit else xlabel
+        img = imshow_logy(x, y, z, y_unit, ax, **kwds)
+    elif (xscale, yscale) == ('log', 'log'):
+        img = imshow_loglog(x, y, z, x_unit, y_unit, ax, **kwds)
+    else:
+        pass
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     cb = fig.colorbar(img, ax=ax)
