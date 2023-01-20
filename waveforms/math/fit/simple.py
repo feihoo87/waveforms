@@ -1,6 +1,14 @@
 import numpy as np
 
 
+def fit_k(x, y, e=None, axis=None):
+    if e is None:
+        e = np.full_like(y, 1.0)
+    weight = 1 / e**2
+
+    return np.sum(x * y * weight, axis=axis) / np.sum(x**2 * weight, axis=axis)
+
+
 def lin_fit(x, y, axis=None):
     """use less memory than np.polyfit"""
     x, y = np.asarray(x), np.asarray(y)
