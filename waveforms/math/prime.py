@@ -89,6 +89,7 @@ def is_prime(q: int) -> bool:
 
 
 class _Primes:
+
     @staticmethod
     def greater_than(x: int) -> Iterator[int]:
         """
@@ -240,7 +241,9 @@ def _prime(n: int) -> int:
 
 def prime(n: int) -> int:
     """第 n 个质数"""
-    if n <= len(__least_primes):
+    if n <= 0:
+        raise ValueError('n must be positive')
+    elif n <= len(__least_primes):
         return __least_primes[n - 1]
 
     return _prime(n)

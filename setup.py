@@ -27,10 +27,12 @@ requirements = [
 
 
 def get_extensions():
-    from numpy.distutils.misc_util import get_numpy_include_dirs
-    from pathlib import Path
+    #from numpy.distutils.misc_util import get_numpy_include_dirs
+    #from pathlib import Path
 
     extensions = [
+        Extension('waveforms._waveform', ['src/waveform.c']),
+        Extension('waveforms.math._prime', ['src/prime.c']),
         # Extension(
         #     'waveforms.math.npufunc',
         #     ['src/multi_type_logit.c'],
