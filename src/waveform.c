@@ -5,6 +5,10 @@
 
 #define FUNC_TAB_SIZE 128
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846264338327950288 /* pi */
+#endif
+
 typedef int64_t Time;
 typedef int64_t Frequency;
 typedef uint64_t Phase;
@@ -47,7 +51,8 @@ static inline size_t bisect_left(const void *array, const void *const value,
     while (lo < hi)
     {
         size_t mid = (lo + hi) / 2;
-        if (cmp(array + mid * size, value) < 0)
+        void *p = (char *)array + mid * size;
+        if (cmp(p, value) < 0)
         {
             lo = mid + 1;
         }
