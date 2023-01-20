@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Hashable, Optional
 
 import numpy as np
 from scipy.optimize import minimize
@@ -31,7 +31,8 @@ def fit_relative_delay(waveform, data, sample_rate, fit=True):
 
 def calc_delays(relative_delays: dict[tuple[str, str], float],
                 reference: float = 0,
-                reference_channel: Optional[str] = None) -> dict[str, float]:
+                reference_channel: Optional[str] = None,
+                full: bool = False) -> dict[str, float]:
     channels = []
     channels_map = {}
 
@@ -42,6 +43,7 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
 
     matrix = []
     weight = []
+    absolute_error = True
     y = []
     for i, ((ch1, ch2), delay) in enumerate(relative_delays.items()):
         if ch1 not in channels:
@@ -53,9 +55,10 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
         if isinstance(delay, float):
             y.append(delay)
             weight.append(1)
+            absolute_error = False
         else:
             y.append(delay[0])
-            weight.append(delay[1])
+            weight.append(1 / delay[1]**2)
 
     if reference_channel is None:
         reference_channel = channels[0]
@@ -66,10 +69,19 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
 
     row, col, data = list(zip(*matrix))
 
-    A = coo_matrix((data, (row, col)), shape=(len(y), len(channels)))
+    X = coo_matrix((data, (row, col)), shape=(len(y), len(channels)))
     W = diags(weight, 0, shape=(len(y), len(y)))
 
-    x = linalg.inv(A.T @ W @ A) @ A.T @ W @ y
-    offset = reference - x[channels_map[reference_channel]]
+    M = linalg.inv(X.T @ W @ X)
 
-    return {ch: v + offset for ch, v in zip(channels, x)}
+    beta = M @ X.T @ W @ y
+    offset = reference - beta[channels_map[reference_channel]]
+
+    if full:
+        if absolute_error:
+            pass
+        else:
+            r = X @ beta - y
+            chi_square = r.T @ W @ r
+
+    return {ch: v + offset for ch, v in zip(channels, beta)}
