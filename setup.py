@@ -66,14 +66,10 @@ setup(
     extras_require={
         'full': [
             'blinker>=1.4',
-            'h5py>=2.7.0',
             'matplotlib>=3.4.1',
-            'netcdf4>=1.5.7',
             'SQLAlchemy>=1.4.11',
             'scikit-learn>=0.24.1',
             'scikit-optimize>=0.8.1',
-            'tensornetwork>=0.4.5',
-            'xarray>=0.18.2'
         ],
         'test': [
             'pytest>=4.4.0',
