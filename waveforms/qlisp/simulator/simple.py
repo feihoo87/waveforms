@@ -9,12 +9,12 @@ from .mat import U, fSim, make_immutable, rfUnitary
 __matrix_of_gates = {}
 
 
-def regesterGateMatrix(gate, mat, N=None):
+def regesterGateMatrix(gate, mat, N=None, docs=''):
     if isinstance(mat, np.ndarray):
         mat = make_immutable(mat)
     if N is None:
-        N = int(np.log2(mat.shape[0]))
-    __matrix_of_gates[gate] = (mat, N)
+        N = round(np.log2(mat.shape[0]))
+    __matrix_of_gates[gate] = (mat, N, docs)
 
 
 def gate_name(gate):
@@ -28,7 +28,7 @@ def gate_name(gate):
 
 def gate2mat(gate):
     if isinstance(gate, str) and gate in __matrix_of_gates:
-        return __matrix_of_gates[gate]
+        return __matrix_of_gates[gate][:2]
     elif isinstance(gate, tuple) and gate[0] in __matrix_of_gates:
         if callable(__matrix_of_gates[gate[0]][0]):
             return __matrix_of_gates[gate[0]][0](
@@ -141,7 +141,7 @@ def applySeq(seq, psi0=None):
         N = 1
     else:
         psi = psi0
-        N = int(np.round(np.log2(psi.shape[0])))
+        N = round(np.log2(psi.shape[0]))
 
     psi0 = np.array([1, 0])
     unitary_process = lambda psi, U: U @ psi
@@ -191,7 +191,7 @@ def seq2mat(seq, U=None):
         U = np.eye(2, dtype=np.complex)
         N = 1
     else:
-        N = int(np.round(np.log2(U.shape[0])))
+        N = round(np.log2(U.shape[0]))
 
     unitary_process = lambda U0, U: U @ U0
 
