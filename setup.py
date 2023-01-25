@@ -16,6 +16,7 @@ __version__ = ""
 exec(open('waveforms/version.py').read())
 
 requirements = [
+    'antlr4-python3-runtime>=4.11.1',
     'click>=7.1.2',
     'cryptography>=3.4.7',
     'GitPython>=3.1.14',
@@ -33,6 +34,7 @@ def get_extensions():
     extensions = [
         Extension('waveforms._waveform', ['src/waveform.c']),
         Extension('waveforms.math._prime', ['src/prime.c']),
+        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c']),
         # Extension(
         #     'waveforms.math.npufunc',
         #     ['src/multi_type_logit.c'],
