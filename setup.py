@@ -31,17 +31,10 @@ def get_extensions():
     #from numpy.distutils.misc_util import get_numpy_include_dirs
     #from pathlib import Path
 
-    extra_compile_args = ['-static-libgcc'
-                          ] if platform.system() == 'Linux' else []
-
     extensions = [
-        Extension('waveforms._waveform', ['src/waveform.c'],
-                  include_dirs=['src'],
-                  extra_compile_args=extra_compile_args),
-        Extension('waveforms.math._prime', ['src/prime.c'],
-                  extra_compile_args=extra_compile_args),
-        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
-                  extra_compile_args=extra_compile_args),
+        Extension('waveforms._waveform', ['src/waveform.c']),
+        Extension('waveforms.math._prime', ['src/prime.c']),
+        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c']),
         # Extension(
         #     'waveforms.math.npufunc',
         #     ['src/multi_type_logit.c'],
