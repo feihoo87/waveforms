@@ -32,7 +32,10 @@ def get_extensions():
     #from pathlib import Path
 
     extensions = [
-        Extension('waveforms._waveform', ['src/waveform.c']),
+        Extension('waveforms._waveform', ['src/waveform.c'],
+                  include_dirs=['src'],
+                  extra_compile_args=['-static-libgcc']
+                  if platform.system() == 'Linux' else []),
         Extension('waveforms.math._prime', ['src/prime.c']),
         Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c']),
         # Extension(
