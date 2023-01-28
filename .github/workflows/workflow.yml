@@ -52,6 +52,7 @@ jobs:
         auditwheel repair dist/*.whl
         rm dist/*.whl
         mv wheelhouse/*.whl dist/
+        ls -lh dist/
     - name: Publish package
       if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' }}
       run: |
