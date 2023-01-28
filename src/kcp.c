@@ -2,8 +2,6 @@
 #include <Python.h>
 #include "ikcp.h"
 #include <stdint.h>
-#include <math.h>
-#include <stdio.h>
 
 static PyObject *KCPError;
 

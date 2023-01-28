@@ -48,6 +48,7 @@ jobs:
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
         pip install auditwheel
+        auditwheel show dist/*.whl
         auditwheel repair dist/*.whl
         rm dist/*.whl
         mv wheelhouse/*.whl dist/

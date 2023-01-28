@@ -192,9 +192,9 @@ static PyObject *method_fputs(PyObject *self, PyObject *args)
         return NULL;
     }
 
-    FILE *fp = fopen(filename, "w");
-    bytes_copied = fputs(str, fp);
-    fclose(fp);
+    // FILE *fp = fopen(filename, "w");
+    // bytes_copied = fputs(str, fp);
+    // fclose(fp);
 
     return PyLong_FromLong(bytes_copied);
 }

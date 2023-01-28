@@ -172,4 +172,14 @@ static inline double freq_2_double(Frequency f)
     return (double)f;
 }
 
+static inline Time one_over_freq(Frequency f)
+{
+    return s * Hz / f;
+}
+
+static inline Frequency one_over_time(Time t)
+{
+    return s * Hz / t;
+}
+
 #endif // WAVEFORM_H
