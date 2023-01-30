@@ -22,7 +22,6 @@ requirements = [
     'GitPython>=3.1.14',
     'numpy>=1.13.3',
     'ply>=3.11',
-    'portalocker>=1.4.0',
     'scipy>=1.0.0',
 ]
 
@@ -69,6 +68,7 @@ setup(
         'full': [
             'blinker>=1.4',
             'matplotlib>=3.4.1',
+            'portalocker>=1.4.0',
             'SQLAlchemy>=1.4.11',
             'scikit-learn>=0.24.1',
             'scikit-optimize>=0.8.1',

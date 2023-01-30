@@ -5,7 +5,27 @@ import pickle
 import time
 from typing import Any, Callable, Hashable, KeysView, Optional, Union
 
-import portalocker
+try:
+    from portalocker import Lock
+except:
+    import warnings
+
+    warnings.warn('portalocker not installed, cache will not be thread safe!')
+
+    class Lock():
+
+        def __init__(self, file, mode):
+            self.file = file
+            self.mode = mode
+            self.fh = None
+
+        def __enter__(self):
+            self.fh = open(self.file, self.mode)
+            return self.fh
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            self.fh.close()
+
 
 cache_dir = pathlib.Path.home() / '.waveforms' / 'cache'
 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -15,6 +35,7 @@ Decorator = Callable[[Callable], Callable]
 
 
 class Cache(dict):
+
     def __init__(self, name: str, path: pathlib.Path = cache_dir):
         name = name.split('.')
         self.path: pathlib.Path = path.joinpath(*name[:-1]) / (name[-1] +
@@ -34,10 +55,10 @@ class Cache(dict):
 
     def _syncIndex(self) -> None:
         if not self.index.exists() or self._mtime > self.index.stat().st_mtime:
-            with portalocker.Lock(self.index, 'wb') as fh:
+            with Lock(self.index, 'wb') as fh:
                 pickle.dump(self._index, fh)
         elif self._mtime < self.index.stat().st_mtime:
-            with portalocker.Lock(self.index, 'rb') as fh:
+            with Lock(self.index, 'rb') as fh:
                 self._index = pickle.load(fh)
         self._mtime = self.index.stat().st_mtime
 
@@ -46,11 +67,11 @@ class Cache(dict):
         return self.path / 'values' / hashedKey
 
     def _storeValue(self, k: Hashable, buf: bytes) -> None:
-        with portalocker.Lock(self._valuePath(k), 'wb') as fh:
+        with Lock(self._valuePath(k), 'wb') as fh:
             fh.write(buf)
 
     def _loadValue(self, k: Hashable) -> None:
-        with portalocker.Lock(self._valuePath(k), 'rb') as fh:
+        with Lock(self._valuePath(k), 'rb') as fh:
             buf = fh.read()
         hashstr = self._hash(buf)
         self._index[k] = self._valuePath(k).stat().st_mtime, None, hashstr
@@ -111,6 +132,7 @@ def _getCache(name: str) -> Cache:
 
 
 def cache(storage: Optional[Union[str, Cache]] = None) -> Decorator:
+
     def decorator(func: Callable,
                   storage: Optional[Union[str, Cache]] = storage) -> Callable:
         if storage is None:
