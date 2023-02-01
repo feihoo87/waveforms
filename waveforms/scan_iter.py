@@ -2,12 +2,11 @@ import bisect
 import inspect
 import warnings
 from abc import ABC, abstractclassmethod
-from collections import deque
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain, count
-from queue import Queue
+from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
 
 _NODEFAULT = object()
@@ -45,20 +44,20 @@ class FeedbackPipe():
 
     def __init__(self, keys):
         self.keys = keys
-        self._queue = deque()
+        self._queue = Queue()
 
     def __iter__(self):
         while True:
             try:
-                yield self._queue.popleft()
-            except:
+                yield self._queue.get_nowait()
+            except Empty:
                 break
 
     def __call__(self):
         return self.__iter__()
 
     def send(self, obj):
-        self._queue.append(obj)
+        self._queue.put(obj)
 
     def __repr__(self):
         if not isinstance(self.keys, tuple):
@@ -239,12 +238,12 @@ def _feedback(iters):
 
 
 def _args_generator(iters, kwds: dict, level: int, pos: tuple,
-                    filter: Optional[callable], additional_kwds: dict,
+                    filter: Optional[callable], functions: dict,
                     trackers: list[Tracker], pipes: dict):
     if len(iters) == level and level > 0:
         kwds.update(
             {k: _try_to_call(v, (), kwds)
-             for k, v in additional_kwds.items()})
+             for k, v in functions.items()})
         for tracker in trackers:
             kwds = tracker.update(kwds)
         if filter is None or _call_func_with_kwds(filter, (), kwds):
@@ -270,7 +269,7 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
                     _pipes=pipes,
                     _trackers=trackers)
         yield from _args_generator(iters, kwds | kw, level + 1, pos + (i, ),
-                                   filter, additional_kwds, trackers, pipes)
+                                   filter, functions, trackers, pipes)
         yield End(level=level,
                   pos=pos + (i, ),
                   kwds=kwds | kw,
@@ -289,9 +288,11 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
                            Union[Iterable, Callable, tuple[Iterable,
                                                            ...]]] = {},
                filter: Optional[Callable[..., bool]] = None,
-               additional_kwds: dict = {},
+               functions: dict = {},
+               consts: dict = {},
                trackers: list = [],
-               level_marker: bool = False) -> Iterable[StepStatus]:
+               level_marker: bool = False,
+               **kwds) -> Iterable[StepStatus]:
     """
     Scan the given iterable of iterables.
 
@@ -302,7 +303,9 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     filter : Callable[..., bool]
         A filter function that is called for each step.
         If it returns False, the step is skipped.
-    additional_kwds : dict
+    functions : dict
+        A map of functions that are called for each step.
+    consts : dict
         Additional keyword arguments that are passed to the iterables.
 
     Returns
@@ -333,6 +336,8 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
      StepStatus(iteration=1, pos=(0, 2), index=(0, 1), kwds={'a': 0, 'b': 2}),
      StepStatus(iteration=2, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
     """
+    if 'additional_kwds' in kwds:
+        functions.update(kwds['additional_kwds'])
 
     if len(iters) == 0:
         return
@@ -345,11 +350,11 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
     iteration = count()
 
     for step in _args_generator(list(iters.items()),
-                                kwds={},
+                                kwds=consts,
                                 level=0,
                                 pos=(),
                                 filter=filter,
-                                additional_kwds=additional_kwds,
+                                functions=functions,
                                 trackers=trackers,
                                 pipes={}):
         if isinstance(step, (Begin, End)):

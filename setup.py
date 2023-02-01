@@ -33,10 +33,10 @@ def get_extensions():
     extensions = [
         Extension('waveforms._waveform', ['src/waveform.c'],
                   include_dirs=['src']),
-        Extension('waveforms.math._prime', ['src/prime.c'],
-                  include_dirs=['src']),
-        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
-                  include_dirs=['src']),
+        # Extension('waveforms.math._prime', ['src/prime.c'],
+        #           include_dirs=['src']),
+        # Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
+        #           include_dirs=['src']),
         # Extension(
         #     'waveforms.math.npufunc',
         #     ['src/multi_type_logit.c'],
