@@ -31,9 +31,12 @@ def get_extensions():
     #from pathlib import Path
 
     extensions = [
-        Extension('waveforms._waveform', ['src/waveform.c']),
-        Extension('waveforms.math._prime', ['src/prime.c']),
-        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c']),
+        Extension('waveforms._waveform', ['src/waveform.c'],
+                  include_dirs=['src']),
+        Extension('waveforms.math._prime', ['src/prime.c'],
+                  include_dirs=['src']),
+        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
+                  include_dirs=['src']),
         # Extension(
         #     'waveforms.math.npufunc',
         #     ['src/multi_type_logit.c'],
@@ -93,8 +96,8 @@ setup(
         'Operating System :: MacOS :: MacOS X',
         'Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
     ],
     project_urls={  # Optional
         'Bug Reports': 'https://github.com/feihoo87/waveforms/issues',
