@@ -159,7 +159,11 @@ def _call_func_with_kwds(func, args, kwds):
         for k, v in kwds.items()
         if k in list(sig.parameters.keys())[len(args):]
     }
-    return func(*args, **kw)
+    try:
+        return func(*args, **kw)
+    except:
+        print(args, kw, kwds, sig.parameters.keys())
+        raise
 
 
 def _try_to_call(x, args, kwds):
@@ -237,10 +241,10 @@ def _feedback(iters):
             _send_feedback(generator, feedback)
 
 
-def _args_generator(iters, kwds: dict, level: int, pos: tuple,
+def _args_generator(loops, kwds: dict, level: int, pos: tuple,
                     filter: Optional[callable], functions: dict,
                     trackers: list[Tracker], pipes: dict):
-    if len(iters) == level and level > 0:
+    if len(loops) == level and level > 0:
         kwds.update(
             {k: _try_to_call(v, (), kwds)
              for k, v in functions.items()})
@@ -254,7 +258,7 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
         return
 
     keys, current_iters, pipes, limit = _get_current_iters(
-        iters, level, kwds, pipes)
+        loops, level, kwds, pipes)
 
     for i in count():
         if limit > 0 and i >= limit:
@@ -268,7 +272,7 @@ def _args_generator(iters, kwds: dict, level: int, pos: tuple,
                     kwds=kwds | kw,
                     _pipes=pipes,
                     _trackers=trackers)
-        yield from _args_generator(iters, kwds | kw, level + 1, pos + (i, ),
+        yield from _args_generator(loops, kwds | kw, level + 1, pos + (i, ),
                                    filter, functions, trackers, pipes)
         yield End(level=level,
                   pos=pos + (i, ),
@@ -284,7 +288,7 @@ def _find_diff_pos(a: tuple, b: tuple):
             return i
 
 
-def scan_iters(iters: dict[Union[str, tuple[str, ...]],
+def scan_iters(loops: dict[Union[str, tuple[str, ...]],
                            Union[Iterable, Callable, tuple[Iterable,
                                                            ...]]] = {},
                filter: Optional[Callable[..., bool]] = None,
@@ -298,8 +302,8 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
 
     Parameters
     ----------
-    iters : dict
-        The map of iterables.
+    loops : dict
+        A map of iterables that are scanned.
     filter : Callable[..., bool]
         A filter function that is called for each step.
         If it returns False, the step is skipped.
@@ -337,19 +341,21 @@ def scan_iters(iters: dict[Union[str, tuple[str, ...]],
      StepStatus(iteration=2, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
     """
     if 'additional_kwds' in kwds:
-        functions.update(kwds['additional_kwds'])
+        functions = functions | kwds['additional_kwds']
+    if 'iters' in kwds:
+        loops = loops | kwds['iters']
 
-    if len(iters) == 0:
+    if len(loops) == 0:
         return
 
     for tracker in trackers:
-        tracker.init(iters)
+        tracker.init(loops)
 
     last_step = None
     index = ()
     iteration = count()
 
-    for step in _args_generator(list(iters.items()),
+    for step in _args_generator(list(loops.items()),
                                 kwds=consts,
                                 level=0,
                                 pos=(),
