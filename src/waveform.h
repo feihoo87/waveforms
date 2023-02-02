@@ -7,8 +7,6 @@
 #define M_PI 3.14159265358979323846264338327950288 /* pi */
 #endif
 
-typedef uint8_t bool;
-
 #define True 1
 #define False 0
 
@@ -82,51 +80,39 @@ typedef struct
     Wave3 *waves;
 } Waveform;
 
-typedef double (*FuncPtr)(double, size_t, Number *);
+typedef double (*FuncPtr)(double, size_t, const Number *);
 
-static inline int32_t gcd(int32_t a, int32_t b)
+static inline int64_t mul_mod(int64_t a, int64_t b, int64_t m)
 {
-    if (a < 0)
+    int64_t r = 0;
+    while (b)
     {
-        a = -a;
+        if (b & 1)
+        {
+            r = (r + a) % m;
+        }
+        a = (a + a) % m;
+        b >>= 1;
     }
-    if (b < 0)
+    return r;
+}
+
+static inline uint64_t gcd(uint64_t a, uint64_t b)
+{
+    uint64_t c;
+    while (b)
     {
-        b = -b;
-    }
-    while (b != 0)
-    {
-        int32_t c = a % b;
+        c = a % b;
         a = b;
         b = c;
     }
     return a;
 }
 
-static inline size_t bisect_left(const void *array, const void *const value,
-                                 size_t lo, size_t hi,
-                                 size_t type_size, int (*cmp)(const void *, const void *))
-{
-    while (lo < hi)
-    {
-        size_t mid = (lo + hi) / 2;
-        void *p = (char *)array + mid * type_size;
-        if (cmp(p, value) < 0)
-        {
-            lo = mid + 1;
-        }
-        else
-        {
-            hi = mid;
-        }
-    }
-    return lo;
-}
-
 static inline Phase mul_freq_time(Frequency freq, Time time)
 {
-    Phase p = 2 * ((freq % s) * (time % s) % s);
-    p = p * 0x400000000000 / 30517578125 * 4 + p * 0x400000000000 % 30517578125 * 4 / 30517578125;
+    Phase p = (Phase)mul_mod(freq, time, Hz * s);
+    p = 9 * p + p / 0x5 + 2 * p / 0x7d + 4 * p / 0x271 + 3 * p / 0xc35 + 4 * p / 0x5f5e1 + 3 * p / 0x1dcd65 + 2 * p / 0x9502f9 + 2 * p / 0x2e90edd + 3 * p / 0xe8d4a51 + 3 * p / 0x48c27395 + 2 * p / 0x16bcc41e9 + 3 * p / 0x2386f26fc1 + p / 0xb1a2bc2ec5 + 2 * p / 0x3782dace9d9;
     return p;
 }
 

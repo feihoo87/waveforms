@@ -1,0 +1,82 @@
+[build-system]
+requires = [ "numpy>=1.13.3" ]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waveforms"
+license = {text = "MIT License"}
+authors = [{name = "feihoo87", email = "feihoo87@gmail.com"}]
+maintainers = [{name = "feihoo87", email = "feihoo87@gmail.com"}]
+description = "Edit waveforms used in experiment"
+keywords = [
+   "signal",
+   "waveform",
+   "experiment",
+   "laboratory"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+requires-python = ">= 3.9"
+dependencies = [
+    "antlr4-python3-runtime>=4.11.1",
+    "click>=7.1.2",
+    "cryptography>=3.4.7",
+    "GitPython>=3.1.14",
+    "numpy>=1.13.3",
+    "ply>=3.11",
+    "scipy>=1.0.0"
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+full = [
+    "blinker>=1.4",
+    "matplotlib>=3.4.1",
+    "portalocker>=1.4.0",
+    "SQLAlchemy>=1.4.11",
+    "scikit-learn>=0.24.1",
+    "scikit-optimize>=0.8.1"
+]
+test = [
+    "pytest>=4.4.0"
+]
+docs = [
+    "Sphinx",
+    "sphinxcontrib-napoleon",
+    "sphinxcontrib-zopeext",
+]
+
+[project.scripts]
+"wave_server" = "waveforms.server.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/feihoo87/waveforms"
+"Bug Reports" = "https://github.com/feihoo87/waveforms/issues"
+"Source" = "https://github.com/feihoo87/waveforms/"
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[tool.setuptools]
+license-files = ["LICENSE"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "waveforms.version.__version__"}
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["error"]
