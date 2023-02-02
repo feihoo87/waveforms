@@ -9,25 +9,6 @@
 static size_t wave_func_count = 0;
 FuncPtr wave_function_table[FUNC_TAB_SIZE];
 
-static inline int32_t gcd(int32_t a, int32_t b)
-{
-    if (a < 0)
-    {
-        a = -a;
-    }
-    if (b < 0)
-    {
-        b = -b;
-    }
-    while (b != 0)
-    {
-        int32_t c = a % b;
-        a = b;
-        b = c;
-    }
-    return a;
-}
-
 static inline size_t bisect_left(const void *array, const void *const value,
                                  size_t lo, size_t hi,
                                  size_t type_size, int (*cmp)(const void *, const void *))
@@ -50,7 +31,7 @@ static inline size_t bisect_left(const void *array, const void *const value,
 
 static int cmp_basic_fun(uint32_t func, const Wave1 *a, const Wave1 *b)
 {
-    return 1
+    return 1;
 }
 
 static int cmp_wav1(const void *a, const void *b)
