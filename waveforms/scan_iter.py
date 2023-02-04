@@ -8,7 +8,7 @@ from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import chain, count
 from queue import Empty, Queue
-from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
+from typing import Any, Callable, Iterable, Sequence, Type
 
 _NODEFAULT = object()
 
@@ -255,9 +255,11 @@ def _call_functions(functions, kwds, order):
     return order[i:]
 
 
-def _args_generator(loops: dict, kwds: dict, level: int, pos: tuple,
-                    filter: Optional[callable], functions: dict,
-                    trackers: list[Tracker], pipes: dict, order: list[str]):
+def _args_generator(loops: dict, kwds: dict[str, Any], level: int,
+                    pos: tuple[int, ...], filter: Callable[..., bool] | None,
+                    functions: dict[str, Callable], trackers: list[Tracker],
+                    pipes: dict[str | tuple[str, ...],
+                                FeedbackPipe], order: list[str]):
     order = _call_functions(functions, kwds, order)
     if len(loops) == level and level > 0:
         for tracker in trackers:
@@ -300,13 +302,14 @@ def _find_diff_pos(a: tuple, b: tuple):
             return i
 
 
-def scan_iters(loops: dict[Union[str, tuple[str, ...]],
-                           Union[Iterable, Callable, tuple[Iterable,
-                                                           ...]]] = {},
-               filter: Optional[Callable[..., bool]] = None,
-               functions: dict = {},
-               constants: dict = {},
-               trackers: list = [],
+def scan_iters(loops: dict[str | tuple[str, ...],
+                           Iterable | Callable | OptimizerConfig
+                           | tuple[Iterable | Callable | OptimizerConfig,
+                                   ...]] = {},
+               filter: Callable[..., bool] | None = None,
+               functions: dict[str, Callable] = {},
+               constants: dict[str, Any] = {},
+               trackers: list[Tracker] = [],
                level_marker: bool = False,
                **kwds) -> Iterable[StepStatus]:
     """
@@ -423,7 +426,7 @@ class Storage(Tracker):
     def __init__(self,
                  storage: dict = None,
                  shape: tuple = (),
-                 save_kwds: Union[bool, Sequence[str]] = True,
+                 save_kwds: bool | Sequence[str] = True,
                  frozen_keys: tuple = ()):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
