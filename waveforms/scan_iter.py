@@ -5,6 +5,7 @@ from abc import ABC, abstractclassmethod
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import datetime
+from graphlib import TopologicalSorter
 from itertools import chain, count
 from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Optional, Sequence, Type, Union
@@ -241,13 +242,24 @@ def _feedback(iters):
             _send_feedback(generator, feedback)
 
 
-def _args_generator(loops, kwds: dict, level: int, pos: tuple,
+def _call_functions(functions, kwds, order):
+    for i, k in enumerate(order):
+        if k in kwds:
+            continue
+        elif k in functions:
+            kwds[k] = _try_to_call(functions[k], (), kwds)
+        else:
+            break
+    else:
+        return []
+    return order[i:]
+
+
+def _args_generator(loops: dict, kwds: dict, level: int, pos: tuple,
                     filter: Optional[callable], functions: dict,
-                    trackers: list[Tracker], pipes: dict):
+                    trackers: list[Tracker], pipes: dict, order: list[str]):
+    order = _call_functions(functions, kwds, order)
     if len(loops) == level and level > 0:
-        kwds.update(
-            {k: _try_to_call(v, (), kwds)
-             for k, v in functions.items()})
         for tracker in trackers:
             kwds = tracker.update(kwds)
         if filter is None or _call_func_with_kwds(filter, (), kwds):
@@ -273,7 +285,7 @@ def _args_generator(loops, kwds: dict, level: int, pos: tuple,
                     _pipes=pipes,
                     _trackers=trackers)
         yield from _args_generator(loops, kwds | kw, level + 1, pos + (i, ),
-                                   filter, functions, trackers, pipes)
+                                   filter, functions, trackers, pipes, order)
         yield End(level=level,
                   pos=pos + (i, ),
                   kwds=kwds | kw,
@@ -293,7 +305,7 @@ def scan_iters(loops: dict[Union[str, tuple[str, ...]],
                                                            ...]]] = {},
                filter: Optional[Callable[..., bool]] = None,
                functions: dict = {},
-               consts: dict = {},
+               constants: dict = {},
                trackers: list = [],
                level_marker: bool = False,
                **kwds) -> Iterable[StepStatus]:
@@ -309,7 +321,7 @@ def scan_iters(loops: dict[Union[str, tuple[str, ...]],
         If it returns False, the step is skipped.
     functions : dict
         A map of functions that are called for each step.
-    consts : dict
+    constants : dict
         Additional keyword arguments that are passed to the iterables.
 
     Returns
@@ -351,18 +363,28 @@ def scan_iters(loops: dict[Union[str, tuple[str, ...]],
     for tracker in trackers:
         tracker.init(loops)
 
+    graph = {}
+    for key, value in chain(loops.items(), functions.items()):
+        if callable(value):
+            graph[key] = set()
+            for k, p in inspect.signature(value).parameters.items():
+                if p.kind in [p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD]:
+                    graph[key].add(k)
+    order = list(TopologicalSorter(graph).static_order())
+
     last_step = None
     index = ()
     iteration = count()
 
     for step in _args_generator(list(loops.items()),
-                                kwds=consts,
+                                kwds=constants,
                                 level=0,
                                 pos=(),
                                 filter=filter,
                                 functions=functions,
                                 trackers=trackers,
-                                pipes={}):
+                                pipes={},
+                                order=order):
         if isinstance(step, (Begin, End)):
             if level_marker:
                 if last_step is not None:

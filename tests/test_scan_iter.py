@@ -89,7 +89,7 @@ def test_scan_iter():
             (('e', ), ('g', 'h')): (f2, f3)
         },
         filter=lambda x: x < 8,
-        additional_kwds={
+        functions={
             'x': lambda a, b: a + b
         })
 
@@ -112,6 +112,38 @@ def test_scan_iter():
 
     for step, args in zip(steps, scan_iter2()):
         for k in ['a', 'b', 'c', 'd', 'e', 'g', 'h', 'x']:
+            assert k in step.kwds
+            assert step.kwds[k] == args[k]
+
+
+def test_scan_iter2():
+
+    def gen(a, b, x, y):
+        for i in range(a):
+            yield b + x + y
+
+    def scan_iter2():
+        for a in [1, 2, 3]:
+            x = a + 0.5
+            for b in x * np.arange(3):
+                y = x + a + b
+                for c in gen(a, b, x, y):
+                    yield {'a': a, 'b': b, 'c': c, 'x': x, 'y': y}
+
+    info = {
+        'loops': {
+            'a': [1, 2, 3],
+            'b': lambda x: x * np.arange(3),
+            'c': gen
+        },
+        'functions': {
+            'x': lambda a: a + 0.5,
+            'y': lambda a, b, x: x + a + b
+        }
+    }
+
+    for step, args in zip(scan_iters(**info), scan_iter2()):
+        for k in ['a', 'b', 'c', 'x', 'y']:
             assert k in step.kwds
             assert step.kwds[k] == args[k]
 
