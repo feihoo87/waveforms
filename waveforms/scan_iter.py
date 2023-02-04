@@ -140,7 +140,7 @@ class End(FeedbackProxy):
 
 class Tracker():
 
-    def init(self, iter_dict: dict):
+    def init(self, loops: dict):
         pass
 
     def update(self, kwds: dict):
@@ -441,18 +441,18 @@ class Storage(Tracker):
         self.queue = Queue()
         self._queue_buffer = None
 
-    def init(self, iter_dict: dict):
+    def init(self, loops: dict):
         """
         Initialize the tracker.
 
         Parameters
         ----------
-        iter_dict : dict
+        loops : dict
             The map of iterables.
         """
         from numpy import ndarray
 
-        for level, (keys, iters) in enumerate(iter_dict.items()):
+        for level, (keys, iters) in enumerate(loops.items()):
             self._key_levels = self._key_levels + ((keys, level), )
             if isinstance(keys, str):
                 keys = (keys, )
