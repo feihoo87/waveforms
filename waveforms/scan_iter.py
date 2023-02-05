@@ -255,13 +255,15 @@ def _call_functions(functions, kwds, order):
     return order[i:]
 
 
-def _args_generator(loops: dict, kwds: dict[str, Any], level: int,
+def _args_generator(loops: list, kwds: dict[str, Any], level: int,
                     pos: tuple[int, ...], filter: Callable[..., bool] | None,
                     functions: dict[str, Callable], trackers: list[Tracker],
                     pipes: dict[str | tuple[str, ...],
                                 FeedbackPipe], order: list[str]):
     order = _call_functions(functions, kwds, order)
     if len(loops) == level and level > 0:
+        if order:
+            raise TypeError(f'Unresolved functions: {order}')
         for tracker in trackers:
             kwds = tracker.update(kwds)
         if filter is None or _call_func_with_kwds(filter, (), kwds):
@@ -300,6 +302,47 @@ def _find_diff_pos(a: tuple, b: tuple):
     for i, (x, y) in enumerate(zip(a, b)):
         if x != y:
             return i
+
+
+def _build_dependence(loops, functions, constants):
+    loop_names = set()
+    var_names = set()
+    for keys in loops:
+        if isinstance(keys, str):
+            keys = (keys, )
+        for ks in keys:
+            if isinstance(ks, str):
+                ks = (ks, )
+            loop_names.update(ks)
+            var_names.update(ks)
+    var_names.update(functions.keys())
+    var_names.update(constants.keys())
+
+    graph = {}
+
+    def _add_dependence(keys, value):
+        if isinstance(keys, str):
+            keys = (keys, )
+        for key in keys:
+            graph[key] = set()
+            for k, p in inspect.signature(value).parameters.items():
+                if p.kind in [
+                        p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD,
+                        p.KEYWORD_ONLY
+                ] and k in var_names:
+                    graph[key].add(k)
+                if p.kind == p.VAR_KEYWORD and key not in loop_names:
+                    graph[key].update(loop_names)
+
+    for keys, values in chain(loops.items(), functions.items()):
+        if callable(values):
+            _add_dependence(keys, values)
+        elif isinstance(values, tuple):
+            for ks, v in zip(keys, values):
+                if callable(v):
+                    _add_dependence(ks, v)
+
+    return graph
 
 
 def scan_iters(loops: dict[str | tuple[str, ...],
@@ -355,6 +398,11 @@ def scan_iters(loops: dict[str | tuple[str, ...],
      StepStatus(iteration=1, pos=(0, 2), index=(0, 1), kwds={'a': 0, 'b': 2}),
      StepStatus(iteration=2, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
     """
+
+    # TODO: loops 里的 callable 值如果有 VAR_KEYWORD 参数会导致依赖关系错误
+    # TODO: functions 里的 callable 值如果有 VAR_KEYWORD 参数，则对这些参数
+    #       的依赖会被认为是对全体循环参数的依赖，并且这些函数本身不存在相互依赖
+
     if 'additional_kwds' in kwds:
         functions = functions | kwds['additional_kwds']
     if 'iters' in kwds:
@@ -366,13 +414,7 @@ def scan_iters(loops: dict[str | tuple[str, ...],
     for tracker in trackers:
         tracker.init(loops)
 
-    graph = {}
-    for key, value in chain(loops.items(), functions.items()):
-        if callable(value):
-            graph[key] = set()
-            for k, p in inspect.signature(value).parameters.items():
-                if p.kind in [p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD]:
-                    graph[key].add(k)
+    graph = _build_dependence(loops, functions, constants)
     order = list(TopologicalSorter(graph).static_order())
 
     last_step = None
