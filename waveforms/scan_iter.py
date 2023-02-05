@@ -399,7 +399,8 @@ def scan_iters(loops: dict[str | tuple[str, ...],
      StepStatus(iteration=2, pos=(1, 2), index=(1, 0), kwds={'a': 1, 'b': 2})]
     """
 
-    # TODO: loops 里的 callable 值如果有 VAR_KEYWORD 参数会导致依赖关系错误
+    # TODO: loops 里的 callable 值如果有 VAR_KEYWORD 参数，并且在运行时实际依
+    #       赖于 functions 里的某些值，则会导致依赖关系错误
     # TODO: functions 里的 callable 值如果有 VAR_KEYWORD 参数，则对这些参数
     #       的依赖会被认为是对全体循环参数的依赖，并且这些函数本身不存在相互依赖
 

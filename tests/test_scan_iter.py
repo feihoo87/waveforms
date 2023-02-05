@@ -148,6 +148,99 @@ def test_scan_iter2():
             assert step.kwds[k] == args[k]
 
 
+def test_scan_iter3():
+
+    N = 3
+
+    def scan_iter2():
+        for x0, x1, x2 in zip(*[np.arange(5) + 5 * i for i in range(N)]):
+            z0, z1, z2 = x0, x1, x2
+            for y0, y1, y2 in zip(*[
+                    x0 * np.array([-1, 1]), x1 * np.array([-1, 1]), x2 *
+                    np.array([-1, 1])
+            ]):
+                yield {
+                    'x0': x0,
+                    'x1': x1,
+                    'x2': x2,
+                    'y0': y0,
+                    'y1': y1,
+                    'y2': y2,
+                    'z0': z0,
+                    'z1': z1,
+                    'z2': z2
+                }
+
+    info = {
+        'loops': {
+            tuple([f"x{i}" for i in range(N)]):
+            tuple([np.arange(5) + 5 * i for i in range(N)]),
+            tuple([f"y{i}" for i in range(N)]):
+            tuple([
+                lambda i=i, **kw: kw[f"x{i}"] * np.array([-1, 1])
+                for i in range(N)
+            ]),
+        },
+        'functions':
+        {f"z{i}": lambda i=i, **kw: kw[f"x{i}"]
+         for i in range(N)}
+    }
+    for step, args in zip(scan_iters(**info), scan_iter2()):
+        for k in ['x0', 'x1', 'x2', 'y0', 'y1', 'y2', 'z0', 'z1', 'z2']:
+            assert k in step.kwds
+            assert step.kwds[k] == args[k]
+
+
+def test_scan_iter4():
+    return
+
+    def gen(a, b, x, y):
+        for i in range(a):
+            yield b + x + y
+
+    def scan_iter2():
+        for a0, a1 in zip([1, 2, 3], [4, 5, 6]):
+            x0 = a0 + 0.5
+            x1 = a1 + 0.5
+            for b0, b1 in zip(x0 * np.arange(3), x1 * np.arange(3)):
+                y0 = x0 + a0 + b0
+                y1 = x1 + a1 + b1
+                for c0, c1 in zip(gen(a0, b0, x0, y0), gen(a1, b1, x1, y1)):
+                    yield {
+                        'a0': a0,
+                        'b0': b0,
+                        'c0': c0,
+                        'x0': x0,
+                        'y0': y0,
+                        'a1': a1,
+                        'b1': b1,
+                        'c1': c1,
+                        'x1': x1,
+                        'y1': y1
+                    }
+
+    info = {
+        'loops': {
+            tuple([f'a{i}' for i in range(2)]): ([1, 2, 3], [4, 5, 6]),
+            tuple([f'b{i}' for i in range(2)]):
+            tuple([
+                lambda i=i, **kw: kw[f"x{i}"] * np.arange(3) for i in range(2)
+            ]),
+            tuple([f'c{i}' for i in range(2)]):
+            gen
+        },
+        'functions': {
+            tuple([f'x{i}' for i in range(2)]): lambda a: a + 0.5,
+            tuple([f'y{i}' for i in range(2)]): lambda a, b, x: x + a + b
+        }
+    }
+
+    for step, args in zip(scan_iters(**info), scan_iter2()):
+        for k in ['a', 'b', 'c', 'x', 'y']:
+            assert k in step.kwds
+            assert step.kwds[k] == args[k]
+
+
 def test_storage(spectrum_data):
     z = spectrum_data['z']
     iq = spectrum_data['iq']
