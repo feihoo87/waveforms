@@ -103,6 +103,7 @@ class StepStatus(FeedbackProxy):
     pos: tuple = ()
     index: tuple = ()
     kwds: dict = field(default_factory=dict)
+    vars: list[str] = field(default=list)
 
     _pipes: dict = field(default_factory=dict, repr=False)
     _trackers: list = field(default_factory=list, repr=False)
@@ -115,12 +116,13 @@ class Begin(FeedbackProxy):
     pos: tuple = ()
     index: tuple = ()
     kwds: dict = field(default_factory=dict)
+    vars: list[str] = field(default=list)
 
     _pipes: dict = field(default_factory=dict, repr=False)
     _trackers: list = field(default_factory=list, repr=False)
 
     def __repr__(self):
-        return f'Begin(level={self.level}, kwds={self.kwds})'
+        return f'Begin(level={self.level}, kwds={self.kwds}, vars={self.vars})'
 
 
 @dataclass
@@ -130,12 +132,13 @@ class End(FeedbackProxy):
     pos: tuple = ()
     index: tuple = ()
     kwds: dict = field(default_factory=dict)
+    vars: list[str] = field(default=list)
 
     _pipes: dict = field(default_factory=dict, repr=False)
     _trackers: list = field(default_factory=list, repr=False)
 
     def __repr__(self):
-        return f'End(level={self.level}, kwds={self.kwds})'
+        return f'End(level={self.level}, kwds={self.kwds}, vars={self.vars})'
 
 
 class Tracker():
@@ -243,34 +246,40 @@ def _feedback(iters):
 
 
 def _call_functions(functions, kwds, order):
+    vars = []
     for i, k in enumerate(order):
         if k in kwds:
             continue
         elif k in functions:
             kwds[k] = _try_to_call(functions[k], (), kwds)
+            vars.append(k)
         else:
             break
     else:
-        return []
-    return order[i:]
+        return [], vars
+    return order[i:], vars
 
 
-def _args_generator(loops: list, kwds: dict[str, Any], level: int,
-                    pos: tuple[int, ...], filter: Callable[..., bool] | None,
+def _args_generator(loops: list, kwds: dict[str,
+                                            Any], level: int, pos: tuple[int,
+                                                                         ...],
+                    vars: list[tuple[str]], filter: Callable[..., bool] | None,
                     functions: dict[str, Callable], trackers: list[Tracker],
                     pipes: dict[str | tuple[str, ...],
                                 FeedbackPipe], order: list[str]):
-    order = _call_functions(functions, kwds, order)
+    order, local_vars = _call_functions(functions, kwds, order)
     if len(loops) == level and level > 0:
         if order:
             raise TypeError(f'Unresolved functions: {order}')
         for tracker in trackers:
             kwds = tracker.update(kwds)
         if filter is None or _call_func_with_kwds(filter, (), kwds):
-            yield StepStatus(pos=pos,
-                             kwds=kwds,
-                             _pipes=pipes,
-                             _trackers=trackers)
+            yield StepStatus(
+                pos=pos,
+                kwds=kwds,
+                vars=[*vars[:-1], tuple([*vars[-1], *local_vars])],
+                _pipes=pipes,
+                _trackers=trackers)
         return
 
     keys, current_iters, pipes, limit = _get_current_iters(
@@ -286,13 +295,17 @@ def _args_generator(loops: list, kwds: dict[str, Any], level: int,
         yield Begin(level=level,
                     pos=pos + (i, ),
                     kwds=kwds | kw,
+                    vars=[*vars, tuple([*local_vars, *kw.keys()])],
                     _pipes=pipes,
                     _trackers=trackers)
-        yield from _args_generator(loops, kwds | kw, level + 1, pos + (i, ),
-                                   filter, functions, trackers, pipes, order)
+        yield from _args_generator(
+            loops, kwds | kw, level + 1, pos + (i, ),
+            [*vars, tuple([*local_vars, *kw.keys()])], filter, functions,
+            trackers, pipes, order)
         yield End(level=level,
                   pos=pos + (i, ),
                   kwds=kwds | kw,
+                  vars=[*vars, tuple([*local_vars, *kw.keys()])],
                   _pipes=pipes,
                   _trackers=trackers)
         _feedback(current_iters)
@@ -305,26 +318,29 @@ def _find_diff_pos(a: tuple, b: tuple):
 
 
 def _build_dependence(loops, functions, constants):
+    graph = {}
     loop_names = set()
     var_names = set()
     for keys in loops:
+        level_vars = set()
         if isinstance(keys, str):
             keys = (keys, )
         for ks in keys:
             if isinstance(ks, str):
                 ks = (ks, )
-            loop_names.update(ks)
-            var_names.update(ks)
+            level_vars.update(ks)
+            for k in ks:
+                graph.setdefault(k, set()).update(loop_names)
+        loop_names.update(level_vars)
+        var_names.update(level_vars)
     var_names.update(functions.keys())
     var_names.update(constants.keys())
-
-    graph = {}
 
     def _add_dependence(keys, value):
         if isinstance(keys, str):
             keys = (keys, )
         for key in keys:
-            graph[key] = set()
+            graph.setdefault(key, set())
             for k, p in inspect.signature(value).parameters.items():
                 if p.kind in [
                         p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD,
@@ -416,6 +432,16 @@ def scan_iters(loops: dict[str | tuple[str, ...],
         tracker.init(loops)
 
     graph = _build_dependence(loops, functions, constants)
+    ts = TopologicalSorter(graph)
+    order = []
+    ts.prepare()
+    while ts.is_active():
+        ready = ts.get_ready()
+        for k in ready:
+            ts.done(k)
+        order.append(ready)
+    print(order)
+
     order = list(TopologicalSorter(graph).static_order())
 
     last_step = None
@@ -426,6 +452,7 @@ def scan_iters(loops: dict[str | tuple[str, ...],
                                 kwds=constants,
                                 level=0,
                                 pos=(),
+                                vars=[],
                                 filter=filter,
                                 functions=functions,
                                 trackers=trackers,
