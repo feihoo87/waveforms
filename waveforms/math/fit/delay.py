@@ -52,7 +52,7 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
             new_channel(ch2)
         matrix.append([i, channels_map[ch1], 1])
         matrix.append([i, channels_map[ch2], -1])
-        if isinstance(delay, float):
+        if isinstance(delay, (int, float)):
             y.append(delay)
             weight.append(1)
             absolute_error = False

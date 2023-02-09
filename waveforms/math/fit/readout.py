@@ -426,12 +426,12 @@ def bayesian_correction(state, correction_matrices, subspace):
         >>> subspace = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1], [1, 1, 0, 0]])
         >>> result = bayesian_correction(state, correction_matrices, subspace)
         >>> result.shape
-        (101, 1024, 5)
+        (101, 5)
     """
     num_qubits = state.shape[-1]
     site_index = np.arange(num_qubits)
 
-    shape = state.shape
+    shape = tuple([*state.shape[:-1], len(subspace)])
     state = state.reshape(-1, num_qubits)
 
     if len(subspace) < len(state):
