@@ -8,6 +8,6 @@ from .readout import (bayesian_correction, cdf, classify, classify_data,
                       readout_distribution, uninstall_classify_method)
 from .simple import (complex_amp_to_real, find_cross_point, fit_circle,
                      fit_cosine, fit_cross_point, fit_pole, goodness_of_fit,
-                     lin_fit, poly_fit)
+                     inv_poly, lin_fit, poly_fit)
 from .spectrum import (fit_transmon_spectrum, transmon_spectrum,
                        transmon_spectrum_fast)

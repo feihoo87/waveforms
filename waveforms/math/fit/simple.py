@@ -2,6 +2,10 @@ import numpy as np
 
 
 def fit_k(x, y, e=None, axis=None):
+    """
+    Fit a line to data.
+    y = k * x
+    """
     if e is None:
         e = np.full_like(y, 1.0)
     weight = 1 / e**2
@@ -20,7 +24,54 @@ def lin_fit(x, y, axis=None):
     return np.array([a, b])
 
 
-def poly_fit(x_data, y_data, degree=20, data_filter=None):
+def poly_fit(x_data, y_data, degree=20, errors=None, selectors=[]):
+    """
+    Fit a polynomial to data.
+
+    Parameters
+    ----------
+    x_data : array_like
+        x data.
+    y_data : array_like
+        y data.
+    degree : int, optional
+        Degree of polynomial. The default is 20.
+    errors : float, optional
+        errors of y_data. The default is None.
+    selectors : list, optional
+        List of pairs of weights. Repeatedly fit the data
+        with the selected data.
+
+        err = (y_fit - y_data)**2
+        thr = np.mean(err) * a + np.median(err) * b
+        selector = err < thr
+    
+    Returns
+    -------
+    a : array_like
+        Coefficients of polynomial.
+    lim : list
+        Limit of x data.
+    mask : array_like
+        Mask of selected data.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from waveforms.math.fit import poly_fit
+    >>> x = np.linspace(0, 10, 30)
+    >>> f = np.poly1d([0.3, 0, 0, 0, 0, 0, 2, 1, 0])
+    >>> y = f(x) + np.random.normal(0, 0.1, 20)
+    >>> y[4] += 3
+    >>> y[16] -= 2
+    >>> a, lim, mask = poly_fit(x, y, 20, [(0.1, 1), (3, 0.8), (3, 0.9)])
+    >>> mask
+    array([ True,  True,  True,  True, False,  True,  True,  True,  True,
+            True,  True,  True,  True,  True,  True,  True, False,  True,
+            True,  True])
+    >>> lim
+    [0.0, 1.0]
+    """
     try:
         from sklearn.linear_model import Ridge
         from sklearn.pipeline import Pipeline
@@ -37,19 +88,26 @@ def poly_fit(x_data, y_data, degree=20, data_filter=None):
         ('ridge', Ridge(solver='cholesky')),
     ])
 
-    model.fit(x_train, y_data)
+    if errors is None:
+        weight = np.ones_like(y_data)
+    else:
+        weight = 1 / errors**2
+
+    model.fit(x_train, y_data, sample_weight=weight)
     y_fit = model.predict(x_train)
 
     # select data
-    for weight in [(0.01, 1), (30, 0.8), (30, 0.9)]:
+    for a, b in selectors:
         err = (y_fit - y_data)**2
-        thr = np.mean(err) * weight[0] + np.median(err) * weight[1]
+        thr = (np.mean(err) * a + np.median(err) * b) / weight
         mask = err < thr
-        model.fit(x_train[mask], np.array(y_data)[mask])
+        model.fit(x_train[mask],
+                  np.array(y_data)[mask],
+                  sample_weight=weight[mask])
         y_fit = model.predict(x_train)
 
     x, y = x_data[mask].reshape(-1), np.array(y_data)[mask]
-    xx = np.linspace(x[0], x[-1], 5001)
+    xx = np.linspace(x[0], x[-1], degree * 10)
     poly = PolynomialFeatures(degree=degree)
     poly.fit(xx.reshape((-1, 1)))
     xxx = poly.transform(xx.reshape((-1, 1)))
@@ -58,7 +116,45 @@ def poly_fit(x_data, y_data, degree=20, data_filter=None):
     return a, [np.min(x_data), np.max(x_data)], mask
 
 
+def inv_poly(x, a, lim=None):
+    """
+    Find the root of polynomial.
+
+    Parameters
+    ----------
+    x : float
+        Value of polynomial.
+    a : array_like
+        Coefficients of polynomial.
+    lim : list, optional
+        Limit of root. The default is None.
+
+    Returns
+    -------
+    float
+        Root of polynomial.
+
+    Raises
+    ------
+    ValueError
+        Can not find root in range lim.
+    """
+    a = list(a)
+    a[-1] = a[-1] - x
+    roots = np.poly1d(a).roots
+    y = roots[np.abs(roots.imag) <= 1e-12].real
+    if lim is None:
+        return y
+    for b in y:
+        if lim[0] <= b <= lim[1]:
+            return b
+    raise ValueError(f'Can not find root in range {lim}.')
+
+
 def fit_circle(x, y):
+    """
+    Fit a circle to data.
+    """
     u, v = x - x.mean(), y - y.mean()
     Suuu, Svvv = np.sum(u**3), np.sum(v**3)
     Suu, Svv = np.sum(u**2), np.sum(v**2)
