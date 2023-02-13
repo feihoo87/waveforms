@@ -32,6 +32,7 @@ dependencies = [
     "antlr4-python3-runtime>=4.11.1",
     "click>=7.1.2",
     "cryptography>=3.4.7",
+    "dill>=0.3.6",
     "GitPython>=3.1.14",
     "numpy>=1.13.3",
     "ply>=3.11",

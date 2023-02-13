@@ -4,6 +4,8 @@ from functools import wraps
 from inspect import signature
 from typing import Callable, Iterable, NamedTuple, Optional, Union
 
+import dill
+
 from .base import Context
 
 _NODEFAULT = object()
@@ -18,6 +20,7 @@ class Parameter(NamedTuple):
 
 
 def gate(qnum: int = 1, name: Optional[str] = None, scope: dict = None):
+
     def decorator(func: Callable[..., Iterable], name: str = name):
         if name is None:
             name = func.__name__
@@ -79,6 +82,7 @@ def opaque(name: str,
 
 
 class Library():
+
     def __init__(self):
         self.parents: tuple[Library, ...] = ()
         self.gates = {}
@@ -125,6 +129,17 @@ class Library():
                 if name is not None:
                     break
         return incfile
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state['gates'] = dill.dumps(state['gates'])
+        state['opaques'] = dill.dumps(state['opaques'])
+        return state
+
+    def __setstate__(self, state):
+        state['gates'] = dill.loads(state['gates'])
+        state['opaques'] = dill.loads(state['opaques'])
+        self.__dict__ = state
 
 
 def libraries(*libs: Library) -> Library:
