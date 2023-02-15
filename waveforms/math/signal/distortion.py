@@ -145,6 +145,22 @@ def exp_decay_filter(amp: float | Sequence[float],
 
 
 def reflection_filter(f, A, tau):
+    """
+    reflection filter
+
+    Infinite impulse response as reflection. When input signal
+    is in(t), the output signal is:
+    out(t) = in(t) + A * in(t - tau) + A^2 * in(t - 2 * tau) + ...
+
+    The transfer function of the filter is:
+                      1 - A
+    H(w) = ----------------------------
+            1 - A * exp(- i * w * tau)
+    Args:
+        f (float): frequency
+        A (float): amplitude of the reflection
+        tau (float): delay time
+    """
     return (1 - A) / (1 - A * np.exp(-2j * np.pi * f * tau))
 
 
@@ -153,14 +169,17 @@ def reflection(sig, A, tau, sample_rate):
     return np.fft.ifft(np.fft.fft(sig) * reflection_filter(freq, A, tau)).real
 
 
-def correct_reflection(sig, A, tau, sample_rate, fft=True):
-    if fft:
+def correct_reflection(sig, A, tau, sample_rate=None):
+    from ...waveform import Waveform
+
+    if isinstance(sig, Waveform):
+        return 1 / (1 - A) * sig - A / (1 - A) * (sig >> tau)
+    if sample_rate is not None:
         freq = np.fft.fftfreq(len(sig), 1 / sample_rate)
         return np.fft.ifft(np.fft.fft(sig) /
                            reflection_filter(freq, A, tau)).real
     else:
-        return 1 / (1 - A) * sig - A / (1 - A) * shift(sig, tau,
-                                                       1 / sample_rate)
+        raise ValueError('sample_rate is not given')
 
 
 def predistort(sig: np.ndarray,
