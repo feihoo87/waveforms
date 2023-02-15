@@ -1,5 +1,5 @@
 from itertools import repeat
-from typing import Optional, Sequence
+from typing import Sequence
 
 import numpy as np
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
@@ -58,7 +58,7 @@ def zDistortKernel(dt: float, params: Sequence[tuple]) -> np.ndarray:
     return ker
 
 
-def exp_decay_filter(amp, tau, sample_rate):
+def exp_decay_filter_old(amp, tau, sample_rate):
     """
     exp decay filter
 
@@ -85,6 +85,63 @@ def exp_decay_filter(amp, tau, sample_rate):
     a = [1, a[1] / a[0]]
 
     return b, a
+
+
+def exp_decay_filter(amp: float | Sequence[float],
+                     tau: float | Sequence[float],
+                     sample_rate: float) -> tuple[np.ndarray, np.ndarray]:
+    """
+    exp decay filter
+
+    Infinite impulse response as multiexponential decay. When input signal
+    is the Heaviside theta function u(t), the output signal is:
+    out(t) = u(t) * (1 - A_1 * exp(-t / tau_1) - A_2 * exp(-t / tau_2) ...)
+    where A_i and tau_i are the amplitude and decay time of the i-th
+    exponential decay.
+
+    The transfer function of the filter is:
+
+    H(w) = 1 - H_1(w) - H_2(w) - ... - H_n(w)
+
+    where
+                       A_i
+    H_i(w) = --------------------------
+              1 - 1 / (1j * w * tau_i)
+
+    Args:
+        amp (float): amplitude of the filter
+        tau (float): decay time
+        sample_rate (float): sampling rate
+
+    Returns:
+        tuple: (b, a) array like, numerator (b) and denominator (a)
+        polynomials of the IIR filter. See scipy.signal.lfilter for more.
+    """
+
+    if isinstance(amp, (int, float, complex)):
+        amp = [amp]
+        tau = [tau]
+    numerator, denominator = np.poly1d([0.0]), np.poly1d([1.0])
+    for i, (A, t) in enumerate(zip(amp, tau)):
+        denominator = denominator * np.poly1d([1, -1 / t])
+        n = np.poly1d([-A, 0.0])
+        for j, t_ in enumerate(tau):
+            if j != i:
+                n = n * np.poly1d([1, -1 / t_])
+        numerator = numerator + n
+    numerator = numerator + denominator
+    xi = numerator.roots
+    p = denominator.roots
+
+    b, a = np.poly1d([1.0]), np.poly1d([1.0])
+    for x in xi:
+        b = b * np.poly1d([1, -np.exp(-x / sample_rate)])
+    for p_ in p:
+        a = a * np.poly1d([1, -np.exp(-p_ / sample_rate)])
+
+    kd = numerator(0) * a(1) / denominator(0) / b(1)
+    b, a = b.coeffs.real * kd, a.coeffs.real
+    return b / a[0], a / a[0]
 
 
 def reflection_filter(f, A, tau):
@@ -128,7 +185,7 @@ def distort(points, params, sample_rate):
     filters = []
     for amp, tau in np.asarray(params).reshape(-1, 2):
         b, a = exp_decay_filter(amp, abs(tau), sample_rate)
-        filters.append((a, b))
+        filters.append((b, a))
     return predistort(points, filters)
 
 
