@@ -1,7 +1,6 @@
 import numpy as np
 
 from .fibheap import FibHeap, FibNode
-from .fit.readout import count_state
 
 
 def _generate_standrad_information(key, bayes_matrices):
@@ -82,6 +81,8 @@ def bayesian_correction_automatic_trimming(state,
                                            correction_matrices,
                                            size_lim=None,
                                            eps=None):
+    from .fit.readout import count_state
+
     counts = count_state(state)
     shots = len(state)
 
