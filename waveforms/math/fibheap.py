@@ -1,4 +1,5 @@
 class FibNode():
+    __slots__ = ('key', 'degree', 'left', 'right', 'child', 'parent', 'marked')
 
     def __init__(self,
                  key=None,
