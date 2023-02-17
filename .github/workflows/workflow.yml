@@ -50,7 +50,7 @@ jobs:
         pip install auditwheel
         wheel_file=dist/*.whl
         auditwheel show $wheel_file
-        auditwheel repair $wheel_file --plat manylinux_2_5_x86_64
+        auditwheel repair $wheel_file --plat manylinux_2_17_x86_64
         rm $wheel_file
         mv wheelhouse/*.whl dist/
         ls -lh dist/
