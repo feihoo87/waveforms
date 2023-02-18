@@ -48,8 +48,38 @@ def Fxeb(Pm_lst: Iterable[np.array],
     return (np.mean(Si) - np.mean(Sm)) / (np.mean(Si) - np.mean(Se))
 
 
-def specklePurity(Pm_lst: Iterable[np.array]) -> float:
-    D = Pm_lst[0].size
+def specklePurity(Pm_lst: Iterable[np.array], D: int = None) -> float:
+    """Speckle Purity
+
+    Speckle Purity Benchmarking (SPB) is the method of measuring the state purity
+    from raw XEB data. Assuming the depolarizing-channel model with polarization
+    parameter p, we can model the quantum state as
+
+    rho = p |psi> <psi| + (1 - p) I / D
+
+    where D is the Hilbert space dimension, and p is the probability of a pure state
+    |psi> (which is not necessarily known to us). The Speckle Purity is defined as
+
+    Purity = p^2
+
+    The variance of the experimental probabilities will be p^2 times the Porter-Thomas
+    variance, thus the Speckle Purity can be estimated from the variance of the
+    experimental measured probabilities Pm.
+
+    Purity = Var(Pm) / (D^2 * (D + 1) / (D - 1))
+
+    Ref:
+        https://doi.org/10.1038/s41586-019-1666-5
+
+    Args:
+        Pm_lst: list of measured distribution
+        D (int): Hilbert space dimension
+
+    Returns:
+        Speckle Purity: float
+    """
+    if D is None:
+        D = Pm_lst[0].size
     return np.asarray(Pm_lst).var() * D**2 * (D + 1) / (D - 1)
 
 
