@@ -1,12 +1,13 @@
 from pathlib import Path
 
 from numpy import mod, pi
+
 from waveforms.waveform import (cos, cosPulse, gaussian, mixing, sin, square,
                                 zero)
 from waveforms.waveform_parser import wave_eval
 
-from ..library import Library, Parameter
 from ..base import MeasurementTask
+from ..library import Library
 
 EPS = 1e-9
 
@@ -38,6 +39,10 @@ def H(qubit):
 
 @std.gate()
 def U(q, theta, phi, lambda_):
+    # yield (('rfUnitary', pi / 2, -lambda_), qubit)
+    # yield (('rfUnitary', pi / 2, -pi - theta - lambda_), qubit)
+    # yield (('P', theta + phi + lambda_), qubit)
+
     if abs(theta) < EPS:
         yield (('P', phi + lambda_), q)
     else:
@@ -173,14 +178,22 @@ def delay(ctx, qubits, time):
 
 @std.opaque('P')
 def P(ctx, qubits, phi):
+    # (('rfUnitary', pi / 2, arb_phase), qubit)
+    # (('rfUnitary', pi / 2, arb_phase), qubit)
+    # (('rfUnitary', pi / 2, phi / 2 + arb_phase + k * pi), qubit)
+    # (('rfUnitary', pi / 2, phi / 2 + arb_phase + k * pi), qubit)
+    import numpy as np
     from ..compiler import call_opaque
 
     phi += ctx.phases[qubits[0]]
     yield ('!set', 'phase', 0), qubits[0]
+    x = 2 * np.pi * np.random.random()
+    y = np.pi * np.random.randint(0, 2) + x
 
-    call_opaque((('rfUnitary', pi / 2, pi / 2), *qubits), ctx, std)
-    call_opaque((('rfUnitary', phi, 0), *qubits), ctx, std)
-    call_opaque((('rfUnitary', pi / 2, -pi / 2), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, x), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, x), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, phi / 2 + y), *qubits), ctx, std)
+    call_opaque((('rfUnitary', pi / 2, phi / 2 + y), *qubits), ctx, std)
 
 
 @std.opaque('Barrier')
@@ -304,35 +317,12 @@ def _rfUnitary(ctx, qubits, theta, phi, level1=0, level2=1):
             yield ('!add', 'time', duration + buffer), qubit
 
 
-@std.opaque('rfUnitary',
-            params=[
-                Parameter('shape', str, 'cosPulse'),
-                Parameter('amp', list, [[0, 1], [0, 0.653]]),
-                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
-                Parameter('phase', list, [[-1, 1], [-1, 1]]),
-                Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('alpha', float, 1, 'Hz'),
-                Parameter('beta', float, 0, 'Hz'),
-                Parameter('delta', float, 0, 'Hz'),
-                Parameter('buffer', float, 0, 's'),
-            ])
+@std.opaque('rfUnitary')
 def rfUnitary(ctx, qubits, theta, phi):
     yield from _rfUnitary(ctx, qubits, theta, phi)
 
 
-@std.opaque('rfUnitary',
-            type='BB1',
-            params=[
-                Parameter('shape', str, 'cosPulse'),
-                Parameter('amp', list, [[0, 1], [0, 0.653]]),
-                Parameter('duration', list, [[0, 1], [10e-9, 10e-9]]),
-                Parameter('phase', list, [[-1, 1], [-1, 1]]),
-                Parameter('frequency', float, 5e9, 'Hz'),
-                Parameter('alpha', float, 1, 'Hz'),
-                Parameter('beta', float, 0, 'Hz'),
-                Parameter('delta', float, 0, 'Hz'),
-                Parameter('buffer', float, 0, 's'),
-            ])
+@std.opaque('rfUnitary', type='BB1')
 def rfUnitary_BB1(ctx, qubits, theta, phi):
     import numpy as np
 
@@ -347,19 +337,7 @@ def rfUnitary_BB1(ctx, qubits, theta, phi):
     yield from _rfUnitary(ctx, qubits, theta, phi)
 
 
-@std.opaque('Measure',
-            params=[
-                Parameter('duration', float, 1e-6, 's'),
-                Parameter('amp', float, 0.1, 'a.u.'),
-                Parameter('frequency', float, 6.5e9, 'Hz'),
-                Parameter('bias', float, 0, 'a.u.'),
-                Parameter('signal', str, 'state'),
-                Parameter('weight', str, 'const(1)'),
-                Parameter('phi', float, 0),
-                Parameter('threshold', float, 0),
-                Parameter('ring_up_amp', float, 0.1, 'a.u.'),
-                Parameter('ring_up_time', float, 50e-9, 's')
-            ])
+@std.opaque('Measure')
 def measure(ctx, qubits, cbit=None):
     from waveforms import cos, exp, pi, step
 
@@ -436,13 +414,7 @@ def parametric(ctx, qubits):
     yield ('!add', 'phase', ctx.params['phi2']), qubits[1]
 
 
-@std.opaque('CZ',
-            params=[
-                Parameter('duration', float, 50e-9, 's'),
-                Parameter('amp', float, 0.8, 'a.u.'),
-                Parameter('phi1', float, 0),
-                Parameter('phi2', float, 0)
-            ])
+@std.opaque('CZ')
 def CZ(ctx, qubits):
     t = max(ctx.time[q] for q in qubits)
 
@@ -460,29 +432,11 @@ def CZ(ctx, qubits):
     yield ('!add', 'phase', ctx.params['phi2']), qubits[1]
 
 
-@std.opaque('CZ',
-            type='parametric',
-            params=[
-                Parameter('duration', float, 50e-9, 's'),
-                Parameter('amp', float, 0.8, 'a.u.'),
-                Parameter('offset', float, 0, 'a.u.'),
-                Parameter('frequency', float, 0, 'Hz'),
-                Parameter('phi1', float, 0),
-                Parameter('phi2', float, 0)
-            ])
+@std.opaque('CZ', type='parametric')
 def CZ(ctx, qubits):
     yield from parametric(ctx, qubits)
 
 
-@std.opaque('iSWAP',
-            type='parametric',
-            params={
-                Parameter('duration', float, 50e-9, 's'),
-                Parameter('amp', float, 0.8, 'a.u.'),
-                Parameter('offset', float, 0, 'a.u.'),
-                Parameter('frequency', float, 0, 'Hz'),
-                Parameter('phi1', float, 0),
-                Parameter('phi2', float, 0)
-            })
+@std.opaque('iSWAP', type='parametric')
 def iSWAP(ctx, qubits):
     yield from parametric(ctx, qubits)

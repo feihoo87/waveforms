@@ -54,16 +54,16 @@ def U(theta, phi, lambda_, delta=0):
     
     Any general unitary could be implemented in 2 pi/2-pulses on hardware
 
-    U(theta, phi, lambda_, delta) = \
-        np.exp(1j * delta) * \
-        U(0, 0, theta + phi + lambda_) @ \
-        U(np.pi / 2, p2, -p2) @ \
+    U(theta, phi, lambda_, delta) = \\
+        np.exp(1j * delta) * \\
+        U(0, 0, theta + phi + lambda_) @ \\
+        U(np.pi / 2, p2, -p2) @ \\
         U(np.pi / 2, p1, -p1))
 
-    or  = \
-        np.exp(1j * delta) * \
-        U(0, 0, theta + phi + lambda_) @ \
-        rfUnitary(np.pi / 2, p2 + pi / 2) @ \
+    or  = \\
+        np.exp(1j * delta) * \\
+        U(0, 0, theta + phi + lambda_) @ \\
+        rfUnitary(np.pi / 2, p2 + pi / 2) @ \\
         rfUnitary(np.pi / 2, p1 + pi / 2)
     
     where p1 = -lambda_ - pi / 2
@@ -99,10 +99,12 @@ def rfUnitary(theta, phi):
     phi gives the rotation axis on the plane of the bloch sphere (RF drive phase)
     theta is the rotation angle of the gate (pulse area)
 
-    rfUnitary(theta, phi) := expm(-1j * theta / 2 * \
+    rfUnitary(theta, phi) := expm(-1j * theta / 2 * \\
         (sigmaX() * cos(phi) + sigmaY() * sin(phi)))
 
     rfUnitary(theta, phi + pi/2) == U(theta, phi, -phi)
+    or
+    rfUnitary(theta, phi) == U(theta, phi - pi/2, pi/2 - phi)
     """
     c, s = np.cos(theta / 2), np.sin(theta / 2)
     return np.array([[c, -1j * s * np.exp(-1j * phi)],
