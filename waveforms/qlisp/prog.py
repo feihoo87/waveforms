@@ -4,9 +4,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Optional
 
-from waveforms.quantum.circuit.qlisp.arch.base import (COMMAND, DataMap,
-                                                       QLispCode)
-from waveforms.quantum.circuit.qlisp.qlisp import Signal
+from waveforms.qlisp.base import QLispCode, Signal
+from waveforms.qlisp.commands import COMMAND, DataMap
 from waveforms.scan_iter import StepStatus
 
 
