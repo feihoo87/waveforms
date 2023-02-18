@@ -36,7 +36,7 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
     channels = []
     channels_map = {}
 
-    def new_channel(ch):
+    def note_channel(ch):
         if ch not in channels:
             channels_map[ch] = len(channels)
             channels.append(ch)
@@ -46,10 +46,8 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
     absolute_error = True
     y = []
     for i, ((ch1, ch2), delay) in enumerate(relative_delays.items()):
-        if ch1 not in channels:
-            new_channel(ch1)
-        if ch2 not in channels:
-            new_channel(ch2)
+        note_channel(ch1)
+        note_channel(ch2)
         matrix.append([i, channels_map[ch1], 1])
         matrix.append([i, channels_map[ch2], -1])
         if isinstance(delay, (int, float)):
@@ -62,7 +60,7 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
 
     if reference_channel is None:
         reference_channel = channels[0]
-    new_channel(reference_channel)
+    note_channel(reference_channel)
     matrix.append([i + 1, channels_map[reference_channel], 1])
     y.append(0)
     weight.append(np.max(weight))
@@ -79,9 +77,16 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
 
     if full:
         if absolute_error:
-            pass
+            cov = linalg.inv(X.T @ W @ X)
         else:
-            r = X @ beta - y
+            r = y - X @ beta
             chi_square = r.T @ W @ r
-
-    return {ch: v + offset for ch, v in zip(channels, beta)}
+            dof = len(y) - len(channels)
+            cov = chi_square / dof * cov
+        errors = np.sqrt(cov.diagonal())
+        return {
+            ch: (v + offset, e)
+            for ch, v, e in zip(channels, beta, errors)
+        }
+    else:
+        return {ch: v + offset for ch, v in zip(channels, beta)}
