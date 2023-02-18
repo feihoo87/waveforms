@@ -4,7 +4,8 @@ from typing import Callable, Iterable, Optional, Union
 
 import numpy as np
 from numpy import pi
-from waveforms.quantum.rb import replace_qubit
+
+from ..qlisp import mapping_qubits
 
 
 def uncorrelatedEntropy(D: int) -> float:
@@ -109,7 +110,9 @@ def generateXEBCircuit(qubits: Union[int, str, tuple],
         list: The XEB circuit.
     """
     if isinstance(qubits, (str, int)):
-        qubits = (qubits, )
+        qubits = {0: qubits}
+    else:
+        qubits = {i: q for i, q in enumerate(qubits)}
 
     interleaves = itertools.cycle(interleaves)
 
@@ -121,7 +124,7 @@ def generateXEBCircuit(qubits: Union[int, str, tuple],
             int_seq = next(interleaves)
         except StopIteration:
             int_seq = []
-        ret.extend(replace_qubit(int_seq, qubits))
+        ret.extend(mapping_qubits(int_seq, qubits))
         for q in qubits:
             ret.append((rng.choice(base), q))
 

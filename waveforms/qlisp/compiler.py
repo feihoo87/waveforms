@@ -2,12 +2,22 @@ from typing import Literal, Optional, Sequence, Union
 
 from .arch import get_arch
 from .assembly import assembly_align_left, assembly_align_right, call_opaque
+from .base import Context, create_context, getConfig
 from .config import Config
 from .library import Library, libraries
+from .libs import std
 from .macro import extend_macro, reduceVirtualZ
 from .qasm import qasm_eval
-from .base import Context, create_context, getConfig
-from .libs import std
+
+
+def mapping_qubits(circuit, mapping):
+    ret = []
+    for gate, target in circuit:
+        if isinstance(target, tuple):
+            ret.append((gate, tuple(mapping.get(i, i) for i in target)))
+        else:
+            ret.append((gate, mapping.get(target, target)))
+    return ret
 
 
 def assembly(qlisp,

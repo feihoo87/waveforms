@@ -10,15 +10,7 @@ from .clifford.seq2mat import seq2qlisp
 
 _index2seq = [[seq] for seq in generateTwoQubitCliffordSequence()]
 
-
-def replace_qubit(circuit, qubits):
-    ret = []
-    for gate, target in circuit:
-        if isinstance(target, int):
-            ret.append((gate, qubits[target]))
-        else:
-            ret.append((gate, tuple(qubits[i] for i in target)))
-    return ret
+from ..qlisp import mapping_qubits
 
 
 def circuit_to_index(circuit: list) -> int:
@@ -57,7 +49,9 @@ def generateRBCircuit(qubits, cycle, seed=None, interleaves=[], base=None):
         list: The RB circuit.
     """
     if isinstance(qubits, (str, int)):
-        qubits = (qubits, )
+        qubits = {0: qubits}
+    else:
+        qubits = {i: q for i, q in enumerate(qubits)}
 
     MAX = cliffordOrder(len(qubits))
 
@@ -76,4 +70,4 @@ def generateRBCircuit(qubits, cycle, seed=None, interleaves=[], base=None):
 
     ret.extend(index_to_circuit(inv(index), qubits, base, rng))
 
-    return replace_qubit(ret, qubits)
+    return mapping_qubits(ret, qubits)
