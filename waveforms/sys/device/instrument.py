@@ -73,7 +73,7 @@ class InstrumentMeta(type):
         return new_class
 
 
-class Instrument(metaclass=InstrumentMeta):
+class BaseInstrument(metaclass=InstrumentMeta):
     __log__ = None
 
     def __init__(self):
@@ -92,14 +92,14 @@ class Instrument(metaclass=InstrumentMeta):
         else:
             return self.__log__
 
-    def open(self, *args, **kwds) -> None:
+    def open(self) -> None:
         pass
 
     def close(self) -> None:
         pass
 
     def reset(self) -> None:
-        pass
+        self.__status.clear()
 
     def get(self, key: str, default: Any = None) -> Any:
         self.log.info(f'Get {key!r}')
@@ -116,12 +116,16 @@ class Instrument(metaclass=InstrumentMeta):
         self.__status[key] = value
 
 
-class VisaInstrument(Instrument):
+class VisaInstrument(BaseInstrument):
 
-    def open(self, resource_name) -> None:
+    def __init__(self, resource_name):
+        super().__init__()
+        self.resource_name = resource_name
+
+    def open(self) -> None:
         import pyvisa
         rm = pyvisa.ResourceManager()
-        self.resource = rm.open_resource(resource_name)
+        self.resource = rm.open_resource(self.resource_name)
 
     def close(self) -> None:
         self.resource.close()
@@ -133,3 +137,13 @@ class VisaInstrument(Instrument):
     def get_idn(self) -> str:
         """Get instrument identification."""
         return self.resource.query('*IDN?')
+
+    @set('timeout')
+    def set_timeout(self, value: float) -> None:
+        """Set timeout in seconds."""
+        self.resource.timeout = round(value * 1000)
+
+    @get('timeout')
+    def get_timeout(self) -> float:
+        """Get timeout in seconds."""
+        return self.resource.timeout / 1000
