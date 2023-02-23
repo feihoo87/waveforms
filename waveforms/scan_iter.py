@@ -429,8 +429,14 @@ def scan_iters(loops: dict[str | tuple[str, ...],
 
     if 'additional_kwds' in kwds:
         functions = functions | kwds['additional_kwds']
+        warnings.warn(
+            "The argument 'additional_kwds' is deprecated, "
+            "use 'functions' instead.", DeprecationWarning)
     if 'iters' in kwds:
         loops = loops | kwds['iters']
+        warnings.warn(
+            "The argument 'iters' is deprecated, "
+            "use 'loops' instead.", DeprecationWarning)
 
     if len(loops) == 0:
         return
