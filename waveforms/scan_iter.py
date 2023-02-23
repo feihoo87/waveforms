@@ -247,17 +247,24 @@ def _feedback(iters):
 
 def _call_functions(functions, kwds, order):
     vars = []
-    for i, k in enumerate(order):
-        if k in kwds:
-            continue
-        elif k in functions:
-            kwds[k] = _try_to_call(functions[k], (), kwds)
-            vars.append(k)
-        else:
+    for i, ready in enumerate(order):
+        rest = []
+        for k in ready:
+            if k in kwds:
+                continue
+            elif k in functions:
+                kwds[k] = _try_to_call(functions[k], (), kwds)
+                vars.append(k)
+            else:
+                rest.append(k)
+        if rest:
             break
     else:
         return [], vars
-    return order[i:], vars
+    if rest:
+        return [rest] + order[i:], vars
+    else:
+        return order[i:], vars
 
 
 def _args_generator(loops: list, kwds: dict[str,
@@ -440,9 +447,6 @@ def scan_iters(loops: dict[str | tuple[str, ...],
         for k in ready:
             ts.done(k)
         order.append(ready)
-    print(order)
-
-    order = list(TopologicalSorter(graph).static_order())
 
     last_step = None
     index = ()
