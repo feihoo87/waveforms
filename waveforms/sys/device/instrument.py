@@ -2,32 +2,45 @@ import itertools
 import logging
 import re
 from functools import partial
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, NamedTuple
 
 log = logging.getLogger(__name__)
 
 Decorator = Callable[[Callable], Callable]
 
 
-def action(key: str, method: Literal['get', 'set'] = 'get') -> Decorator:
+def action(key: str,
+           method: Literal['get', 'set'] = 'get',
+           **kwds) -> Decorator:
+
+    if any(c in key for c in ",()[]{}<>"):
+        raise ValueError('Invalid key: ' + key)
 
     def decorator(func):
-        func.__action__ = key, method
+        func.__action__ = key, method, kwds
         return func
 
     return decorator
 
 
-def get(key: str) -> Decorator:
-    return action(key, 'get')
+def get(key: str, **kwds) -> Decorator:
+    return action(key, 'get', **kwds)
 
 
-def set(key: str) -> Decorator:
-    return action(key, 'set')
+def set(key: str, **kwds) -> Decorator:
+    return action(key, 'set', **kwds)
 
 
-def _add_action(attrs: dict, key: str, method: str, func: Callable,
-                doc: dict) -> None:
+class _Exclusion(NamedTuple):
+    keys: list
+
+
+def exclude(sections: list):
+    return _Exclusion(sections)
+
+
+def _add_action(attrs: dict, key: str, method: str, func: Callable, doc: dict,
+                sections: dict) -> None:
     if method == 'get':
         mapping = attrs['__get_actions__']
     elif method == 'set':
@@ -36,11 +49,24 @@ def _add_action(attrs: dict, key: str, method: str, func: Callable,
         raise ValueError('Invalid method: ' + method)
     arguments = re.findall(r'\{(\w+)\}', key)
     doc[method][key] = func.__doc__
+    matrix = {}
     for arg in arguments:
-        if arg not in attrs:
+        if arg in attrs or arg in sections and not isinstance(
+                sections[arg],
+                _Exclusion) or arg in attrs and arg in sections and isinstance(
+                    sections[arg], _Exclusion):
             raise ValueError(
                 f'Undefined section: {arg!r} in @action({key!r}, {method!r})')
-    for values in itertools.product(*[attrs[arg] for arg in arguments]):
+        if arg in sections and not isinstance(sections[arg], _Exclusion):
+            matrix[arg] = sections[arg]
+        else:
+            if arg in sections:
+                matrix[arg] = [
+                    k for k in attrs[arg] if k not in sections[arg].keys
+                ]
+            else:
+                matrix[arg] = attrs[arg]
+    for values in itertools.product(*[matrix[arg] for arg in arguments]):
         kwds = dict(zip(arguments, values))
         mapping[key.format(**kwds)] = partial(func, **kwds)
 
@@ -65,8 +91,8 @@ class InstrumentMeta(type):
         doc = {'get': {}, 'set': {}}
         for attr in attrs.values():
             if hasattr(attr, '__action__'):
-                key, method = attr.__action__
-                _add_action(attrs, key, method, attr, doc)
+                key, method, kwds = attr.__action__
+                _add_action(attrs, key, method, attr, doc, kwds)
         new_class = super().__new__(cls, name, bases, attrs)
         new_class.get.__doc__ = "Get\n\n" + _build_docs(doc['get'], attrs)
         new_class.set.__doc__ = "Set\n\n" + _build_docs(doc['set'], attrs)
@@ -77,7 +103,7 @@ class BaseInstrument(metaclass=InstrumentMeta):
     __log__ = None
 
     def __init__(self):
-        self.__status = {}
+        self._status = {}
 
     def __del__(self):
         try:
@@ -99,21 +125,21 @@ class BaseInstrument(metaclass=InstrumentMeta):
         pass
 
     def reset(self) -> None:
-        self.__status.clear()
+        self._status.clear()
 
     def get(self, key: str, default: Any = None) -> Any:
         self.log.info(f'Get {key!r}')
         if key in self.__get_actions__:
             result = self.__get_actions__[key](self)
-            self.__status[key] = result
+            self._status[key] = result
             return result
         else:
-            return self.__status.get(key, default)
+            return self._status.get(key, default)
 
     def set(self, key: str, value: Any = None) -> None:
         self.log.info(f'Set {key!r} = {value!r}')
         self.__set_actions__[key](self, value)
-        self.__status[key] = value
+        self._status[key] = value
 
 
 class VisaInstrument(BaseInstrument):

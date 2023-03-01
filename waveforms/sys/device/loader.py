@@ -24,7 +24,7 @@ def create_instrument(driver_name: str, *args, **kwds):
             return driver(*args, **kwds)
     try:
         module = importlib.import_module(
-            f"waveforms.device.drivers.{driver_name}")
+            f"waveforms.sys.device.drivers.{driver_name}")
         return module.Instrument(*args, **kwds)
     except:
         raise RuntimeError(f"Can not find driver {driver_name!r}")
