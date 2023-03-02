@@ -126,10 +126,10 @@ class ProgressBar():
         self.progress.updated.connect(self.update)
         self.progress.finished.connect(self.finish)
 
-    def update(self, sender):
+    def update(self, sender: Progress):
         raise NotImplementedError()
 
-    def finish(self, sender, success):
+    def finish(self, sender: Progress, success: bool):
         self.progress.updated.disconnect(self.update)
         self.progress.finished.disconnect(self.finish)
 
@@ -167,7 +167,7 @@ class JupyterProgressBar(ProgressBar):
             pass
         asyncio.get_running_loop().call_later(frequency, self.update_regularly)
 
-    def update(self, sender):
+    def update(self, sender: Progress):
         if self.hiden:
             return
         self.progress_ui.value = sender.percent
@@ -179,7 +179,7 @@ class JupyterProgressBar(ProgressBar):
         else:
             self.eta_ui.value = f'Remaining time: {timedelta(seconds=round(sender.eta))}'
 
-    def finish(self, sender, success=True):
+    def finish(self, sender: Progress, success: bool = True):
         if self.hiden:
             return
         if success:
