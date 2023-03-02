@@ -157,12 +157,30 @@ class VisaInstrument(BaseInstrument):
         self.resource.close()
 
     def reset(self) -> None:
+        super().reset()
         self.resource.write('*RST')
 
-    @get('IDN')
+    @get('idn')
     def get_idn(self) -> str:
         """Get instrument identification."""
         return self.resource.query('*IDN?')
+
+    @get('opc')
+    def get_opc(self) -> bool:
+        """Get operation complete."""
+        return bool(int(self.resource.query('*OPC?')))
+
+    @get('errors')
+    def get_errors(self) -> list[str]:
+        """Get error queue."""
+        errors = []
+        while True:
+            error = self.resource.query('SYST:ERR?')
+            error_code = int(error.split(',')[0])
+            if error_code == 0:
+                break
+            errors.append(error)
+        return errors
 
     @set('timeout')
     def set_timeout(self, value: float) -> None:
