@@ -102,8 +102,10 @@ class InstrumentMeta(type):
 class BaseInstrument(metaclass=InstrumentMeta):
     __log__ = None
 
-    def __init__(self):
+    def __init__(self, address: str = None, **options):
         self._status = {}
+        self.address = address
+        self.options = options
 
     def __del__(self):
         try:
@@ -141,17 +143,20 @@ class BaseInstrument(metaclass=InstrumentMeta):
         self.__set_actions__[key](self, value)
         self._status[key] = value
 
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.address!r})'
+
 
 class VisaInstrument(BaseInstrument):
 
-    def __init__(self, resource_name):
-        super().__init__()
-        self.resource_name = resource_name
-
     def open(self) -> None:
         import pyvisa
-        rm = pyvisa.ResourceManager()
-        self.resource = rm.open_resource(self.resource_name)
+        kwds = self.options.copy()
+        if 'backend' in kwds:
+            rm = pyvisa.ResourceManager(kwds.pop('backend'))
+        else:
+            rm = pyvisa.ResourceManager()
+        self.resource = rm.open_resource(self.address, **kwds)
 
     def close(self) -> None:
         self.resource.close()
