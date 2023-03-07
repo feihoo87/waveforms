@@ -8,12 +8,14 @@ log = logging.getLogger(__name__)
 
 Decorator = Callable[[Callable], Callable]
 
+_buildin_set = set
+
 
 def action(key: str,
            method: Literal['get', 'set'] = 'get',
            **kwds) -> Decorator:
 
-    if any(c in key for c in ",()[]{}<>"):
+    if any(c in key for c in ",()[]<>"):
         raise ValueError('Invalid key: ' + key)
 
     def decorator(func):
@@ -51,10 +53,12 @@ def _add_action(attrs: dict, key: str, method: str, func: Callable, doc: dict,
     doc[method][key] = func.__doc__
     matrix = {}
     for arg in arguments:
-        if arg in attrs or arg in sections and not isinstance(
-                sections[arg],
-                _Exclusion) or arg in attrs and arg in sections and isinstance(
-                    sections[arg], _Exclusion):
+        if (arg not in attrs and arg not in sections or arg in sections
+                and arg not in attrs and isinstance(sections[arg], _Exclusion)
+                or arg in sections and arg in attrs
+                and isinstance(sections[arg], _Exclusion) and len(
+                    _buildin_set(attrs[arg]) -
+                    _buildin_set(sections[arg].keys)) == 0):
             raise ValueError(
                 f'Undefined section: {arg!r} in @action({key!r}, {method!r})')
         if arg in sections and not isinstance(sections[arg], _Exclusion):

@@ -1,4 +1,4 @@
-from waveforms.sys.device.instrument import BaseInstrument, set, get
+from waveforms.sys.device.instrument import BaseInstrument, set, get, exclude
 
 
 class Instrument(BaseInstrument):
@@ -11,15 +11,15 @@ class Instrument(BaseInstrument):
     def get_idn(self) -> str:
         return 'Fake Instrument'
 
-    @set('{channel}.Vpp')
+    @set('{channel}.Vpp', channel=exclude(['M1', 'M2']))
     def set_voltage(self, value: float, channel: str) -> None:
         self.log.info(f'Set {channel} Vpp to {value}')
 
-    @get('{channel}.Vpp')
+    @get('{channel}.Vpp', channel=exclude(['M1', 'M2']))
     def get_voltage(self, channel: str, default=0.0) -> float:
         return self._status.get(f'{channel}.Vpp', default)
 
-    @set('{channel}.Offset')
+    @set('{channel}.Offset', channel=exclude(['M1', 'M2']))
     def set_frequency(
         self,
         value: float,
@@ -27,15 +27,15 @@ class Instrument(BaseInstrument):
     ) -> None:
         self.log.info(f'Set {channel} offset to {value}')
 
-    @get('{channel}.Offset')
+    @get('{channel}.Offset', channel=exclude(['M1', 'M2']))
     def get_frequency(self, channel: str, default=0.0) -> float:
         return self._status.get(f'{channel}.Offset', default)
 
-    @set('{channel}.Waveform')
+    @set('{channel}.Waveform', channel=exclude(['M1', 'M2']))
     def set_waveform(self, value, channel: str) -> None:
         self.log.info(f'Set {channel} waveform to {value!r}')
 
-    @get('{channel}.Waveform')
+    @get('{channel}.Waveform', channel=exclude(['M1', 'M2']))
     def get_waveform(self, channel: str, default=None) -> str:
         return self._status.get(f'{channel}.Waveform', default)
 

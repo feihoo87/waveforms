@@ -13,6 +13,7 @@ def load_driver_from_file(filepath: str | Path,
     module_name = f"{package_name}.{filepath.stem}"
     spec = importlib.util.spec_from_file_location(module_name, filepath)
     module = importlib.util.module_from_spec(spec)
+    importlib.reload(module)
     return module.Instrument
 
 
@@ -25,6 +26,7 @@ def create_instrument(driver_name: str, *args, **kwds):
     try:
         module = importlib.import_module(
             f"waveforms.sys.device.drivers.{driver_name}")
+        importlib.reload(module)
         return module.Instrument(*args, **kwds)
     except:
         raise RuntimeError(f"Can not find driver {driver_name!r}")
