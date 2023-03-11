@@ -18,12 +18,13 @@ def load_driver_from_file(filepath: str | Path,
 
 
 def create_instrument(driver_name: str, *args, **kwds):
-    for package_name, p in path.items():
-        driver = load_driver_from_file(
-            Path(p) / f"{driver_name}.py", package_name)
-        if driver is not None:
-            return driver(*args, **kwds)
     try:
+        for package_name, p in path.items():
+            driver = load_driver_from_file(
+                Path(p) / f"{driver_name}.py", package_name)
+            if driver is not None:
+                return driver(*args, **kwds)
+
         module = importlib.import_module(
             f"waveforms.sys.device.drivers.{driver_name}")
         importlib.reload(module)
