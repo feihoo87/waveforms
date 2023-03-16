@@ -19,6 +19,7 @@ class Signal(Flag):
     _avg_iq = auto()
     _avg_state = auto()
     _count = auto()
+    _remote = auto()
 
     trace_avg = trace | _avg_trace
 
@@ -27,6 +28,12 @@ class Signal(Flag):
     population = state | _avg_state
     count = state | _count
     diag = state | _count | _avg_state
+
+    remote_trace_avg = trace_avg | _remote
+    remote_iq_avg = iq_avg | _remote
+    remote_state = state | _remote
+    remote_population = population | _remote
+    remote_count = count | _remote
 
 
 def gateName(st):
