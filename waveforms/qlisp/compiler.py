@@ -43,6 +43,7 @@ def assembly(qlisp,
 def compile(prog,
             cfg: Optional[Config] = None,
             lib: Union[Library, Sequence[Library]] = std,
+            context: Optional[dict] = None,
             **options):
     """
     options: 
@@ -79,4 +80,6 @@ def compile(prog,
         code.signal = options['signal']
     if code.arch == 'general' or 'no_assembly' in options:
         return code
-    return get_arch(code.arch).assembly_code(code)
+    if context is None:
+        context = {}
+    return get_arch(code.arch).assembly_code(code, context)

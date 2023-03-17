@@ -1,5 +1,5 @@
 """Multiple architecture support"""
-from typing import Callable, NamedTuple
+from typing import Callable, NamedTuple, Optional
 
 from waveforms.dicttree import flattenDict
 
@@ -10,20 +10,21 @@ from ..commands import CommandList, DataMap, RawData, Result
 class Architecture(NamedTuple):
     name: str
     description: str
-    assembly_code: Callable[[QLispCode], tuple[CommandList, DataMap]]
+    assembly_code: Callable[[QLispCode, Optional[dict]], tuple[CommandList,
+                                                               DataMap]]
     assembly_data: Callable[[RawData, DataMap], Result]
 
 
 general_architecture = Architecture(
     name='general',
     description='General architecture',
-    assembly_code=lambda code: (
+    assembly_code=lambda code, context: (
         [],
         {
             'arch': 'general'
         },
     ),
-    assembly_data=lambda data, _: flattenDict(data),
+    assembly_data=lambda data, data_map: flattenDict(data),
 )
 
 __regested_architectures = {}
