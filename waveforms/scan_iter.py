@@ -104,6 +104,7 @@ class StepStatus(FeedbackProxy):
     index: tuple = ()
     kwds: dict = field(default_factory=dict)
     vars: list[str] = field(default=list)
+    unchanged: int = 0
 
     _pipes: dict = field(default_factory=dict, repr=False)
     _trackers: list = field(default_factory=list, repr=False)
@@ -318,10 +319,11 @@ def _args_generator(loops: list, kwds: dict[str,
         _feedback(current_iters)
 
 
-def _find_diff_pos(a: tuple, b: tuple):
+def _find_common_prefix(a: tuple, b: tuple):
     for i, (x, y) in enumerate(zip(a, b)):
         if x != y:
             return i
+    return i
 
 
 def _build_dependence(loops, functions, constants):
@@ -479,10 +481,11 @@ def scan_iters(loops: dict[str | tuple[str, ...],
             i = 0
             index = (0, ) * len(step.pos)
         else:
-            i = _find_diff_pos(last_step.pos, step.pos)
+            i = _find_common_prefix(last_step.pos, step.pos)
             index = tuple((j <= i) * n + (j == i) for j, n in enumerate(index))
         step.iteration = next(iteration)
         step.index = index
+        step.unchanged = i
         yield step
         last_step = step
 
