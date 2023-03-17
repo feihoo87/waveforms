@@ -87,7 +87,7 @@ def _build_docs(mapping: dict, attrs: dict) -> str:
     return '\n'.join(docs)
 
 
-class InstrumentMeta(type):
+class DeviceMeta(type):
 
     def __new__(cls, name, bases, attrs):
         attrs.setdefault('__get_actions__', {})
@@ -103,7 +103,7 @@ class InstrumentMeta(type):
         return new_class
 
 
-class BaseInstrument(metaclass=InstrumentMeta):
+class BaseDevice(metaclass=DeviceMeta):
     __log__ = None
 
     def __init__(self, address: str = None, **options):
@@ -120,9 +120,9 @@ class BaseInstrument(metaclass=InstrumentMeta):
     @property
     def log(self):
         if self.__log__ is None:
-            return log
-        else:
-            return self.__log__
+            self.__log__ = logging.getLogger(
+                f"{self.__class__.__module__}.{self.__class__.__name__}")
+        return self.__log__
 
     def open(self) -> None:
         pass
@@ -151,7 +151,7 @@ class BaseInstrument(metaclass=InstrumentMeta):
         return f'{self.__class__.__name__}({self.address!r})'
 
 
-class VisaInstrument(BaseInstrument):
+class VisaDevice(BaseDevice):
 
     def open(self) -> None:
         import pyvisa

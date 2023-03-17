@@ -1,7 +1,8 @@
-from waveforms.sys.device.instrument import BaseInstrument, set, get, exclude
+from waveforms.sys.device import BaseDevice, exclude, get, set
 
 
-class Instrument(BaseInstrument):
+class Device(BaseDevice):
+
     channel = [
         'X1', 'X2', 'X3', 'X4', 'Y1', 'Y2', 'Y3', 'Y4', 'Z1', 'Z2', 'Z3', 'Z4',
         'M1', 'M2'
