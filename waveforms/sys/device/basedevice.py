@@ -1,6 +1,7 @@
 import itertools
 import logging
 import re
+from collections import defaultdict
 from functools import partial
 from typing import Any, Callable, Literal, NamedTuple
 
@@ -12,7 +13,7 @@ _buildin_set = set
 
 
 def action(key: str,
-           method: Literal['get', 'set'] = 'get',
+           method: Literal['get', 'set', 'post', 'delete'] = 'get',
            **kwds) -> Decorator:
 
     if any(c in key for c in ",()[]<>"):
@@ -33,6 +34,14 @@ def set(key: str, **kwds) -> Decorator:
     return action(key, 'set', **kwds)
 
 
+def post(key: str, **kwds) -> Decorator:
+    return action(key, 'post', **kwds)
+
+
+def delete(key: str, **kwds) -> Decorator:
+    return action(key, 'delete', **kwds)
+
+
 class _Exclusion(NamedTuple):
     keys: list
 
@@ -43,11 +52,9 @@ def exclude(sections: list):
 
 def _add_action(attrs: dict, key: str, method: str, func: Callable, doc: dict,
                 sections: dict) -> None:
-    if method == 'get':
-        mapping = attrs['__get_actions__']
-    elif method == 'set':
-        mapping = attrs['__set_actions__']
-    else:
+    try:
+        mapping = attrs[f'__{method}_actions__']
+    except KeyError:
         raise ValueError('Invalid method: ' + method)
     arguments = re.findall(r'\{(\w+)\}', key)
     doc[method][key] = func.__doc__
@@ -90,16 +97,19 @@ def _build_docs(mapping: dict, attrs: dict) -> str:
 class DeviceMeta(type):
 
     def __new__(cls, name, bases, attrs):
-        attrs.setdefault('__get_actions__', {})
-        attrs.setdefault('__set_actions__', {})
-        doc = {'get': {}, 'set': {}}
+        doc = defaultdict(dict)
+        for method in ['get', 'set', 'post', 'delete']:
+            attrs.setdefault(f'__{method}_actions__', {})
         for attr in attrs.values():
             if hasattr(attr, '__action__'):
                 key, method, kwds = attr.__action__
                 _add_action(attrs, key, method, attr, doc, kwds)
         new_class = super().__new__(cls, name, bases, attrs)
-        new_class.get.__doc__ = "Get\n\n" + _build_docs(doc['get'], attrs)
-        new_class.set.__doc__ = "Set\n\n" + _build_docs(doc['set'], attrs)
+
+        for method in ['get', 'set', 'post', 'delete']:
+            getattr(new_class,
+                    method).__doc__ = f"{method.upper()}\n\n" + _build_docs(
+                        doc[method], attrs)
         return new_class
 
 
@@ -146,6 +156,15 @@ class BaseDevice(metaclass=DeviceMeta):
         self.log.info(f'Set {key!r} = {value!r}')
         self.__set_actions__[key](self, value)
         self._status[key] = value
+
+    def post(self, key: str, value: Any = None) -> Any:
+        self.log.info(f'Post {key!r} = {value!r}')
+        return self.__post_actions__[key](self, value)
+
+    def delete(self, key: str) -> None:
+        self.log.info(f'Delete {key!r}')
+        self.__delete_actions__[key](self)
+        del self._status[key]
 
     def __repr__(self) -> str:
         return f'{self.__class__.__name__}({self.address!r})'
