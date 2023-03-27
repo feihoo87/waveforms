@@ -599,6 +599,8 @@ class Storage(Tracker):
         for k, v in chain(kwds.items(), dataframe.items()):
             if k in self._frozen_keys:
                 continue
+            if k.startswith('__'):
+                continue
             self.count += 1
             if k not in self.storage:
                 self.storage[k] = [v]
@@ -637,9 +639,14 @@ class Storage(Tracker):
         data, data_shape, data_count = self.cache.get(key, (None, (), 0))
         if (data_shape, data_count) == (shape, count):
             return data
-        tmp = np.asarray(self.storage[key])
-        if data_shape != shape:
-            data = np.full(shape + tmp.shape[1:], np.nan, dtype=tmp.dtype)
+        try:
+            tmp = np.asarray(self.storage[key])
+            if data_shape != shape:
+                data = np.full(shape + tmp.shape[1:], np.nan, dtype=tmp.dtype)
+        except:
+            tmp = self.storage[key]
+            if data_shape != shape:
+                data = np.full(shape, np.nan, dtype=object)
         data[self.pos[key]] = tmp
         self.cache[key] = (data, shape, count)
         return data
