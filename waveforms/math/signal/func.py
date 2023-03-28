@@ -199,7 +199,7 @@ def complexPeaks(x, peaks, background=0):
     peaks: list of (center, width, amp)
     background: a float, complex or ndarray with the same shape of `x`
     """
-    ret = np.zeros_like(x, dtype=np.complex)
+    ret = np.zeros_like(x, dtype=complex)
     for x0, gamma, A, *_ in peaks:
         ret += A * lorentzian(x, x0, gamma)
     return ret + background
@@ -218,7 +218,7 @@ def oscillation(t, spec=((1, 1), ), amplitude=1, offset=0):
     """
     oscillation
     """
-    ret = np.zeros_like(t, dtype=np.complex)
+    ret = np.zeros_like(t, dtype=complex)
     for A, f in spec:
         ret += A * np.exp(2j * np.pi * f * t)
     return amplitude * np.real(ret) + offset
