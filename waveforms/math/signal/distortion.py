@@ -58,6 +58,16 @@ def zDistortKernel(dt: float, params: Sequence[tuple]) -> np.ndarray:
     return ker
 
 
+def high_pass_filter(tau, sample_rate):
+    """
+    high pass filter
+    """
+    k = 2.0 * tau * sample_rate
+    a = [1.0, (1 - k) / (1 + k)]
+    b = [k / (1 + k), -k / (1 + k)]
+    return b, a
+
+
 def exp_decay_filter_old(amp, tau, sample_rate):
     """
     exp decay filter
