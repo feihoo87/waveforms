@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.optimize import leastsq
+from scipy.optimize import leastsq, minimize
 
 from waveforms.math.fit.simple import fit_circle
 from waveforms.math.signal.func import complexPeaks
@@ -59,12 +59,58 @@ def invS21(freq, f0, Qc, Qi, phi):
     return complexPeaks(freq, [(f0, width, amp)], 1)
 
 
+def S21_many(freq, f0_lst, QL_lst, Qc_lst, phi_lst):
+    peaks = []
+    for f0, QL, Qc, phi in zip(f0_lst, QL_lst, Qc_lst, phi_lst):
+        width = f0 / (2 * QL)
+        amp = -QL / np.abs(Qc) * np.exp(1j * phi)
+        peaks.append((f0, width, amp))
+    return complexPeaks(freq, peaks, 1)
+
+
+def invS21_many(freq, f0_lst, Qc_lst, Qi_lst, phi_lst):
+    peaks = []
+    for f0, Qc, Qi, phi in zip(f0_lst, Qc_lst, Qi_lst, phi_lst):
+        width = f0 / (2 * Qi)
+        amp = Qi / np.abs(Qc) * np.exp(1j * phi)
+        peaks.append((f0, width, amp))
+    return complexPeaks(freq, peaks, 1)
+
+
 def getBackground(x, s):
+
+    def select(x, S):
+        mean = S.mean()
+        for _ in range(10):
+            r = np.abs(S - mean)
+            s = S[r <= np.median(r)]
+            x = x[r <= np.median(r)]
+            if s.mean() == mean:
+                break
+            mean = s.mean()
+        return x, s
+
+    def loss(delay, S, freq):
+        S = S * np.exp(1j * freq * delay)
+        _, s = select(freq, S)
+        return np.std(s)
+
     phi = np.unwrap(np.angle(s), 0.9 * np.pi)
     delay = (phi[-1] - phi[0]) / (2 * np.pi * (x[-1] - x[0]))
-    A = np.abs(s).max()
+    # A = np.abs(s).max()
 
-    return delay, A
+    t = np.linspace(0, 1000, 1001) * 1e-9
+    y = []
+    for t_ in t:
+        y.append(loss(t_, s, x))
+
+    ret = minimize(loss, [x[np.argmin(y)]], args=(s, x), method='Nelder-Mead')
+    delay = ret.x[0]
+
+    S = s * np.exp(1j * x * delay)
+    _, s = select(x, S)
+
+    return delay, s.mean()
 
 
 def guessParams(x, s, inverse=True):
@@ -193,9 +239,10 @@ def plotFit(fig, f, s, params):
 
     y = s / (A * np.exp(1j * (delay * (f - f[0]) + Aphi)))
     invY = 1 / y
-    
+
     invs21 = invS21(f, f0, Qe, Qi, phi)
-    s21 = 1 / invs21
+    # s21 = 1 / invs21
+    s21 = S21(f, f0, QL, Qe, phi)
 
     gs = GridSpec(4, 4, figure=fig)
 
