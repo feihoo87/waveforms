@@ -225,6 +225,18 @@ def oscillation(t, spec=((1, 1), ), amplitude=1, offset=0):
 
 
 def correlation(in1, in2, sample_rate=1, sample_rate2=None):
+    """
+    cross-correlation of two signals
+
+    Args:
+        in1, in2: input signals
+        sample_rate: sample rate of in1
+        sample_rate2: sample rate of in2, if None, use sample_rate
+
+    Returns:
+        x: time lags
+        y: cross-correlation
+    """
     from math import lcm
 
     from scipy.signal import correlate, correlation_lags, resample
