@@ -104,7 +104,7 @@ def getBackground(x, s):
     for t_ in t:
         y.append(loss(t_, s, x))
 
-    ret = minimize(loss, [x[np.argmin(y)]], args=(s, x), method='Nelder-Mead')
+    ret = minimize(loss, [t[np.argmin(y)]], args=(s, x), method='Nelder-Mead')
     delay = ret.x[0]
 
     S = s * np.exp(1j * x * delay)
