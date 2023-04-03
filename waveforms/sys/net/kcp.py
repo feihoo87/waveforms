@@ -7,15 +7,16 @@ from . import _kcp
 class KCPConnection():
 
     def __init__(self,
-                 address,
-                 transport,
-                 conv: int = 1234,
+                 address: tuple[str, int],
+                 transport: asyncio.DatagramTransport,
+                 conv: int,
                  nodelay: bool = True,
                  interval: int = 20,
                  resend: int = 2,
                  nc: bool = True):
         self._kcp = _kcp.kcp_create(conv, self)
         _kcp.kcp_nodelay(self._kcp, int(nodelay), interval, resend, int(nc))
+        self.interval = interval
         self.address = address
         self.transport = transport
         self.last_active = time.time()
@@ -74,7 +75,7 @@ class KCPConnection():
 
     async def sync(self):
         while True:
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(self.interval / 1000)
             self.flush()
 
     async def run(self):
@@ -101,8 +102,8 @@ class KCPConnection():
 class KCPProtocol(asyncio.DatagramProtocol):
 
     def __init__(self,
+                 conv: int,
                  ttl: int = 3600,
-                 conv: int = 1234,
                  nodelay: bool = True,
                  interval: int = 20,
                  resend: int = 2,
@@ -115,6 +116,13 @@ class KCPProtocol(asyncio.DatagramProtocol):
         self.nc = nc
         self.transport = None
         self.connections = {}
+        self.autoclean_loop: asyncio.Future = None
+        self.clean()
+
+    def connection_lost(self, exc):
+        self.autoclean_loop.cancel()
+        for address in self.connections:
+            del self.connections[address]
 
     def connection_made(self, transport):
         self.transport = transport
@@ -148,11 +156,13 @@ class KCPProtocol(asyncio.DatagramProtocol):
                 dead.append(address)
         for address in dead:
             del self.connections[address]
+        loop = asyncio.get_running_loop()
+        self.autoclean_loop = loop.call_later(10, self.clean)
 
 
 async def listen(address: tuple[str, int],
-                 ttl: int = 3600,
                  conv: int = 1234,
+                 ttl: int = 3600,
                  nodelay: bool = True,
                  interval: int = 20,
                  resend: int = 2,
@@ -174,7 +184,7 @@ async def listen(address: tuple[str, int],
     """
 
     def protocol_factory():
-        return KCPProtocol(ttl, conv, nodelay, interval, resend, nc)
+        return KCPProtocol(conv, ttl, nodelay, interval, resend, nc)
 
     loop = asyncio.get_running_loop()
     transport, protocol = await loop.create_datagram_endpoint(
