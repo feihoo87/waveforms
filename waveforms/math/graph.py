@@ -1,6 +1,26 @@
 from typing import Hashable
 
 
+class _Graph():
+
+    def __init__(self):
+        self._edges = []
+        self._nodes = set()
+
+    def add_edge(self, a, b):
+        self._edges.append((a, b))
+        self._nodes.add(a)
+        self._nodes.add(b)
+
+    def __or__(self, other):
+        self._edges.extend(other._edges)
+        self._nodes.update(other._nodes)
+        return self
+
+    def __contains__(self, item):
+        return item in self._nodes
+
+
 def graphs(
     edges: list[tuple[Hashable, Hashable]]
 ) -> list[list[tuple[Hashable, Hashable]]]:
@@ -13,43 +33,26 @@ def graphs(
     Returns:
         list of graphs
     """
-    groups = []
-    ret = []
-
+    graphs: list[_Graph] = []
     for a, b in edges:
-
-        group_a_index, group_b_index = None, None
-        for i, group in enumerate(groups):
-            if a in group and b in group:
+        extended = []
+        for i, g in enumerate(graphs):
+            if a in g and b in g:
+                g.add_edge(a, b)
                 break
-            elif a in group:
-                group_a_index = i
-            elif b in group:
-                group_b_index = i
-            else:
-                continue
-            if group_a_index is not None and group_b_index is not None:
-                group_a_index, group_b_index = sorted(
-                    [group_a_index, group_b_index])
-                group_b = groups.pop(group_b_index)
-                group_a = groups.pop(group_a_index)
-                groups.append(group_a | group_b)
-                x = ret.pop(group_b_index)
-                y = ret.pop(group_a_index)
-                ret.append([*x, *y, (a, b)])
-                break
+            elif a in g or b in g:
+                g.add_edge(a, b)
+                extended.append(i)
         else:
-            if group_a_index is None and group_b_index is None:
-                groups.append({a, b})
-                ret.append([(a, b)])
-            elif group_a_index is None:
-                groups[group_b_index].add(a)
-                ret.append([(a, b)])
-            elif group_b_index is None:
-                groups[group_a_index].add(b)
-                ret.append([(a, b)])
+            if len(extended) == 0:
+                g = _Graph()
+                g.add_edge(a, b)
+                graphs.append(g)
+        if len(extended) == 2:
+            graphs[extended[0]] = graphs[extended[0]] | graphs[extended[1]]
+            del graphs[extended[1]]
 
-    return ret
+    return [[tuple(e) for e in g._edges] for g in graphs]
 
 
 def minimum_spanning_tree(

@@ -1,9 +1,11 @@
-from typing import Hashable, Optional
+from typing import Literal, Optional
 
 import numpy as np
 from scipy.optimize import minimize
 from scipy.signal import correlate
 from scipy.sparse import coo_matrix, diags, linalg
+
+from ..graph import graphs, minimum_spanning_tree
 
 
 def fit_relative_delay(waveform, data, sample_rate, fit=True):
@@ -60,6 +62,7 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
 
     if reference_channel is None:
         reference_channel = channels[0]
+        reference = None
     note_channel(reference_channel)
     matrix.append([i + 1, channels_map[reference_channel], 1])
     y.append(0)
@@ -73,7 +76,10 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
     M = linalg.inv(X.T @ W @ X)
 
     beta = M @ X.T @ W @ y
-    offset = reference - beta[channels_map[reference_channel]]
+    if reference is None:
+        offset = -np.min(beta)
+    else:
+        offset = reference - beta[channels_map[reference_channel]]
 
     if full:
         if absolute_error:
@@ -90,3 +96,29 @@ def calc_delays(relative_delays: dict[tuple[str, str], float],
         }
     else:
         return {ch: v + offset for ch, v in zip(channels, beta)}
+
+
+def relative_delay_to_absolute(relative_delays: dict[tuple[str, str], float],
+                               reference: float = 0,
+                               reference_channel: Optional[str] = None,
+                               method: Literal['mst', 'lsq'] = 'mst',
+                               full: bool = False) -> dict[str, float]:
+    groups = graphs(relative_delays.keys())
+    graph_list = []
+    if method == 'mst':
+        for group in groups:
+            edges = []
+            for k in group:
+                if isinstance(relative_delays[k], tuple):
+                    edges.append((*k, relative_delays[k][1]))
+                else:
+                    edges.append((*k, 1))
+            edges = minimum_spanning_tree(edges)
+            graph_list.append({k: relative_delays[k] for k in edges})
+    else:
+        for group in groups:
+            graph_list.append({k: relative_delays[k] for k in group})
+    ret = {}
+    for graph in graph_list:
+        ret.update(calc_delays(graph, reference, reference_channel, full))
+    return ret
