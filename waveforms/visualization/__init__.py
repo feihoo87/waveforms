@@ -138,7 +138,7 @@ def plotDistribution(s0,
     ax3.plot(x, c, 'k--', alpha=0.5, lw=1)
     ax3.set_ylim(0, 1.1)
     ax3.vlines(thr, 0, 1.1, 'k', alpha=0.5)
-    ax3.set_ylabel('Probility')
+    ax3.set_ylabel('Integral Probability')
 
     return info
 
