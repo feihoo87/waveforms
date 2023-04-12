@@ -238,11 +238,15 @@ def readout_distribution(s, p, c0, c1, cov0, cov1):
                                                               cov1) * (1 - p)
 
 
+def median_complex(c, axis=None):
+    return np.median(c.real, axis=axis) + 1j * np.median(c.imag, axis=axis)
+
+
 def fit_readout_distribution(s0, s1):
-    center = 0.5 * (s0.mean() + s1.mean())
+    center = 0.5 * (median_complex(s0) + median_complex(s1))
     s0, s1 = s0 - center, s1 - center
 
-    scale = np.max([np.abs(s0.mean()), np.abs(s1.mean()), s0.std(), s1.std()])
+    scale = np.max([np.abs(median_complex(s0)), np.abs(median_complex(s1)), s0.std(), s1.std()])
 
     s0, s1 = s0 / scale, s1 / scale
 
@@ -280,12 +284,12 @@ def fit_readout_distribution(s0, s1):
                    eps).sum())
 
     res = minimize(loss, [
-        s0.real.mean(),
-        s1.real.mean(),
+        np.median(s0.real),
+        np.median(s1.real),
         s0.real.std(),
         s1.real.std(),
-        s0.imag.mean(),
-        s1.imag.mean(),
+        np.median(s0.imag),
+        np.median(s1.imag),
         s0.imag.std(),
         s1.imag.std(), 1, 0, 0, 0
     ],
