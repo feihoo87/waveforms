@@ -19,7 +19,7 @@ def fit(func,
         func (function): fitting function
         xdata (np.ndarray): x data
         ydata (np.ndarray): y data
-        p0 (np.ndarray | dict): initial parameters
+        p0 (dict): initial parameters
         sigma (np.ndarray): standard deviation of ydata
         bounds (tuple): lower and upper bounds of parameters
         guess (function): function to guess initial parameters
@@ -50,8 +50,11 @@ def fit(func,
     if guess is None and p0 is None:
         raise ValueError('Initial parameters are not specified!')
 
+    if p0 is None:
+        p0 = {}
+
     if guess is not None:
-        p0 = guess(xdata, ydata, static_params)
+        p0 = p0 | guess(xdata, ydata, p0 | static_params)
 
     if isinstance(p0, dict):
         p0 = [p0[arg_name] for arg_name in arg_names]
