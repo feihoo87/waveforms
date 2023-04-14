@@ -243,12 +243,20 @@ def median_complex(c, axis=None):
 
 
 def fit_readout_distribution(s0, s1):
-    center = 0.5 * (median_complex(s0) + median_complex(s1))
+    centers = [median_complex(s0), median_complex(s1)]
+    center = np.mean(centers)
+    m0 = classify_nearest(s0, {'centers': centers}) == 1
+    m1 = classify_nearest(s1, {'centets': centers}) == 2
     s0, s1 = s0 - center, s1 - center
 
-    scale = np.max([np.abs(median_complex(s0)), np.abs(median_complex(s1)), s0.std(), s1.std()])
-
+    scale = np.max([
+        np.abs(median_complex(s0)),
+        np.abs(median_complex(s1)),
+        s0.std(),
+        s1.std()
+    ])
     s0, s1 = s0 / scale, s1 / scale
+    r0, r1 = np.std(s0[m0]), np.std(s1[m1])
 
     def a_b_phi_2_cov(a, b, phi):
         m = np.array([[np.cos(phi) * a, -np.sin(phi) * b],
@@ -285,13 +293,9 @@ def fit_readout_distribution(s0, s1):
 
     res = minimize(loss, [
         np.median(s0.real),
-        np.median(s1.real),
-        s0.real.std(),
-        s1.real.std(),
+        np.median(s1.real), r0, r1,
         np.median(s0.imag),
-        np.median(s1.imag),
-        s0.imag.std(),
-        s1.imag.std(), 1, 0, 0, 0
+        np.median(s1.imag), r0, r1, 1, 0, 0, 0
     ],
                    args=(s0, s1),
                    bounds=[(None, None), (None, None), (1e-6, None),
