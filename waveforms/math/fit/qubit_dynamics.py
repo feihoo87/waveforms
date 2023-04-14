@@ -17,14 +17,18 @@ def guess_rabi(t, y, static_params, freq):
         B = np.median(y)
 
     if freq is None:
-        freq = np.fft.fftfreq(t.shape[0], t[1] - t[0])[1:(t.shape[0] // 3)]
-        amp = np.abs(np.fft.fft(y))[1:(t.shape[0] // 3)]
-        index, peak_height = find_peaks(amp / np.max(amp),
-                                        height=0.01,
-                                        distance=(t.shape[0] // 3))
-        index = index[np.argsort(peak_height)[-1]]
-        freq = freq[index]
-        spec = np.max(amp) * 2 / len(t)
+        try:
+            freq = np.fft.fftfreq(t.shape[0], t[1] - t[0])[1:(t.shape[0] // 3)]
+            amp = np.abs(np.fft.fft(y))[1:(t.shape[0] // 3)]
+            index, peak_height = find_peaks(amp / np.max(amp),
+                                            height=0.01,
+                                            distance=(t.shape[0] // 3))
+            index = index[np.argsort(peak_height)[-1]]
+            freq = freq[index]
+            spec = np.max(amp) * 2 / len(t)
+        except:
+            freq = 0.25 / (t[-1] - t[0])
+            spec = 0.0
     else:
         spec = 0.0
 
@@ -50,26 +54,35 @@ def guess_rabi(t, y, static_params, freq):
     return {'A': A0, 'B': B, 'Tr': Tr, 'freq': freq, 'phi': np.pi}
 
 
-def fit_rabi(t, y, freq=None, static_params=None):
+def fit_rabi(t,
+             ydata,
+             sigma=None,
+             freq=None,
+             static_params=None,
+             init_params=None):
     """
     Fit Rabi oscillation data to a cosine function.
 
     Args:
         t (np.ndarray): time array
-        y (np.ndarray): data array
+        ydata (np.ndarray): data array
+        sigma (np.ndarray): standard deviation of ydata
         Tr (float): Rabi oscillation decay time
         phi (float): phase
         freq (float): Rabi frequency
         static_params (dict): static parameters for fitting
+        init_params (dict): initial parameters
 
     Returns:
         popt (np.ndarray): optimized parameters
         pcov (np.ndarray): covariance matrix
         fitted (np.ndarray): fitted data
-    """
+    """ + "\nfunc_rabi\n" + func_rabi.__doc__
 
     return fit(func_rabi,
                t,
-               y,
+               ydata,
+               init_params,
+               sigma=sigma,
                guess=functools.partial(guess_rabi, freq=freq),
                static_params=static_params)
