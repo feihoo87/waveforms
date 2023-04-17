@@ -75,7 +75,7 @@ def chat(line, cell):
     if line:
         current_completion.save()
         current_completion = Completion()
-    if line in ['end']:
+    if line in ['end', 'save']:
         return
     content = current_completion.say(cell)
     display(Markdown(content))
