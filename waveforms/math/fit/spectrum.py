@@ -1,8 +1,7 @@
 import numpy as np
 from scipy.optimize import curve_fit
 
-from waveforms.quantum.transmon import Transmon
-
+from ..transmon import Transmon
 from ._fit import fit
 
 
