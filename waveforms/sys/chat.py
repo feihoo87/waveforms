@@ -13,14 +13,17 @@ DEFAULT_MODEL = "gpt-3.5-turbo"
 
 class Completion():
 
-    def __init__(self):
-        self.messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}]
+    def __init__(self,
+                 system_prompt=DEFAULT_SYSTEM_PROMPT,
+                 model=DEFAULT_MODEL):
+        self.messages = [{"role": "system", "content": system_prompt}]
         self.title = 'untitled'
         self.last_time = datetime.now()
         self.completion = None
         self.total_tokens = 0
         self.prompt_tokens = 0
         self.completion_tokens = 0
+        self.model = model
 
     def make_title(self):
 
@@ -38,7 +41,7 @@ class Completion():
             'content': ("总结以下对话的内容并为其取个标题以概括对话的内容，标题长度不超过100个字符。"
                         "返回的结果除了标题本身，不要包含额外的内容，省略结尾的句号。\n" + '\n\n'.join(text))
         }]
-        completion = openai.ChatCompletion.create(model=DEFAULT_MODEL,
+        completion = openai.ChatCompletion.create(model=self.model,
                                                   messages=messages)
         content = completion.choices[0].message['content']
         return f"{content} {time.asctime()}"
@@ -46,14 +49,17 @@ class Completion():
     def say(self, msg):
         self.last_time = datetime.now()
         self.messages.append({"role": "user", "content": msg})
-        self.completion = openai.ChatCompletion.create(model=DEFAULT_MODEL,
+        self.completion = openai.ChatCompletion.create(model=self.model,
                                                        messages=self.messages)
         self.total_tokens += self.completion.usage.total_tokens
         self.completion_tokens += self.completion.usage.completion_tokens
         self.prompt_tokens += self.completion.usage.prompt_tokens
-        content = self.completion.choices[0].message['content']
-        self.messages.append({"role": "assistant", "content": content})
-        return content
+        message = self.completion.choices[0].message
+        self.messages.append({
+            "role": message['role'],
+            "content": message['content']
+        })
+        return message['content']
 
     def save(self):
         if self.title == 'untitled':
@@ -62,7 +68,7 @@ class Completion():
         filepath = Path.home() / 'chatGPT' / f"{self.title}.completion"
         filepath.parent.mkdir(parents=True, exist_ok=True)
         with open(filepath, 'wb') as f:
-            pickle.dump(self.messages, f)
+            pickle.dump(self, f)
 
 
 ipy = get_ipython()
