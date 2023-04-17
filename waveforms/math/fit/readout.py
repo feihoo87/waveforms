@@ -61,7 +61,7 @@ def default_classify(data, params):
     """
     thr = params.get('threshold', 0)
     phi = params.get('phi', 0)
-    return (data * np.exp(-1j * phi)).real > thr
+    return 1 + ((data * np.exp(-1j * phi)).real > thr)
 
 
 def classify_svm(data, params):
@@ -244,18 +244,16 @@ def median_complex(c, axis=None):
 
 def fit_readout_distribution(s0, s1):
     centers = [median_complex(s0), median_complex(s1)]
-    center = np.mean(centers)
-    m0 = classify_nearest(s0, {'centers': centers}) == 1
-    m1 = classify_nearest(s1, {'centets': centers}) == 2
-    s0, s1 = s0 - center, s1 - center
+    for _ in range(3):
+        m0 = classify_nearest(s0, {'centers': centers}) == 1
+        m1 = classify_nearest(s1, {'centets': centers}) == 2
+        centers = [median_complex(s0[m0]), median_complex(s1[m1])]
 
-    scale = np.max([
-        np.abs(median_complex(s0)),
-        np.abs(median_complex(s1)),
-        s0.std(),
-        s1.std()
-    ])
+    center = np.mean(centers)
+    s0, s1 = s0 - center, s1 - center
+    scale = np.max([np.abs(centers), s0[m0].std(), s1[m1].std()])
     s0, s1 = s0 / scale, s1 / scale
+    centers = [median_complex(s0[m0]), median_complex(s1[m1])]
     r0, r1 = np.std(s0[m0]), np.std(s1[m1])
 
     def a_b_phi_2_cov(a, b, phi):
@@ -292,10 +290,8 @@ def fit_readout_distribution(s0, s1):
                    eps).sum())
 
     res = minimize(loss, [
-        np.median(s0.real),
-        np.median(s1.real), r0, r1,
-        np.median(s0.imag),
-        np.median(s1.imag), r0, r1, 1, 0, 0, 0
+        centers[0].real, centers[1].real, r0, r1, centers[0].imag,
+        centers[1].imag, r0, r1, 1.0, 0.0, 0, 0
     ],
                    args=(s0, s1),
                    bounds=[(None, None), (None, None), (1e-6, None),
