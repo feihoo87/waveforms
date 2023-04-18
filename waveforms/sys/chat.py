@@ -39,12 +39,13 @@ class Completion():
             'role':
             "user",
             'content': ("总结以下对话的内容并为其取个标题以概括对话的内容，标题长度不超过100个字符。"
+                        "不得包含`?:*,<>\\/` 等不能用于文件路径的字符。"
                         "返回的结果除了标题本身，不要包含额外的内容，省略结尾的句号。\n" + '\n\n'.join(text))
         }]
         completion = openai.ChatCompletion.create(model=self.model,
                                                   messages=messages)
         content = completion.choices[0].message['content']
-        return f"{content} {time.asctime()}"
+        return f"{time.strftime('%Y%m%d%H%M')} {content}"
 
     def say(self, msg):
         self.last_time = datetime.now()
