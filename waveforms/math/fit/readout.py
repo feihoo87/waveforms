@@ -246,7 +246,7 @@ def fit_readout_distribution(s0, s1):
     centers = [median_complex(s0), median_complex(s1)]
     for _ in range(3):
         m0 = classify_nearest(s0, {'centers': centers}) == 1
-        m1 = classify_nearest(s1, {'centets': centers}) == 2
+        m1 = classify_nearest(s1, {'centers': centers}) == 2
         centers = [median_complex(s0[m0]), median_complex(s1[m1])]
 
     center = np.mean(centers)
