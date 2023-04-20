@@ -7,6 +7,20 @@ from ._fit import fit
 
 
 def func_rabi(t, A, Tr, freq, phi, B):
+    """
+    Rabi oscillation function.
+
+    Args:
+        t (np.ndarray): time array
+        A (float): amplitude
+        Tr (float): Rabi oscillation decay time
+        freq (float): Rabi frequency
+        phi (float): phase
+        B (float): offset
+
+    Returns:
+        np.ndarray: Rabi oscillation function
+    """
     return A * np.exp(-t / Tr) * np.cos(2 * np.pi * freq * t + phi) + B
 
 
