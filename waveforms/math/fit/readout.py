@@ -251,7 +251,7 @@ def fit_readout_distribution(s0, s1):
 
     center = np.mean(centers)
     s0, s1 = s0 - center, s1 - center
-    scale = np.max([np.abs(centers), s0[m0].std(), s1[m1].std()])
+    scale = np.max([*np.abs(centers), s0[m0].std(), s1[m1].std()])
     s0, s1 = s0 / scale, s1 / scale
     centers = [median_complex(s0[m0]), median_complex(s1[m1])]
     r0, r1 = np.std(s0[m0]), np.std(s1[m1])
