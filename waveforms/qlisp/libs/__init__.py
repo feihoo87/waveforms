@@ -236,6 +236,8 @@ def Pulse(ctx, qubits, channel, waveform):
 
 @std.opaque('setBias')
 def setBias(ctx, qubits, channel, bias, edge=0, buffer=0):
+    if channel.startswith('coupler.') and len(qubits) == 2:
+        qubits = sorted(qubits)
     yield ('!set', 'bias', (bias, edge, buffer)), (channel, *qubits)
     time = max(ctx.time[qubit] for qubit in qubits)
     for qubit in qubits:
