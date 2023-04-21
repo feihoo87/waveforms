@@ -183,6 +183,7 @@ def P(ctx, qubits, phi):
     # (('rfUnitary', pi / 2, phi / 2 + arb_phase + k * pi), qubit)
     # (('rfUnitary', pi / 2, phi / 2 + arb_phase + k * pi), qubit)
     import numpy as np
+
     from ..compiler import call_opaque
 
     phi += ctx.phases[qubits[0]]
@@ -278,6 +279,8 @@ def _rfUnitary(ctx, qubits, theta, phi, level1=0, level2=1):
     alpha = ctx.params.get('alpha', 1)
     beta = ctx.params.get('beta', 0)
     delta = ctx.params.get('delta', 0)
+    edge = ctx.params.get('edge', 0)
+    edge_type = ctx.params.get('edge_type', 'cos')
 
     phase = pi * interp(phi / pi, *ctx.params['phase'])
 
@@ -301,7 +304,10 @@ def _rfUnitary(ctx, qubits, theta, phi, level1=0, level2=1):
 
         duration = interp(theta1 / pi, *ctx.params['duration'])
         amp = interp(theta1 / pi, *ctx.params['amp'])
-        pulse = pulseLib[shape](duration)
+        if shape == 'square':
+            pulse = square(duration, type=edge_type, edge=edge)
+        else:
+            pulse = pulseLib[shape](duration)
 
         if duration > 0 and amp > 0:
             I, Q = mixing(amp * alpha * pulse,
