@@ -370,6 +370,16 @@ def _build_dependence(loops, functions, constants):
     return graph
 
 
+def _get_all_dependence(key, graph):
+    ret = set()
+    if key not in graph:
+        return ret
+    for k in graph[key]:
+        ret.add(k)
+        ret.update(_get_all_dependence(k, graph))
+    return ret
+
+
 def scan_iters(loops: dict[str | tuple[str, ...],
                            Iterable | Callable | OptimizerConfig
                            | tuple[Iterable | Callable | OptimizerConfig,
@@ -443,9 +453,6 @@ def scan_iters(loops: dict[str | tuple[str, ...],
     if len(loops) == 0:
         return
 
-    for tracker in trackers:
-        tracker.init(loops)
-
     graph = _build_dependence(loops, functions, constants)
     ts = TopologicalSorter(graph)
     order = []
@@ -455,6 +462,9 @@ def scan_iters(loops: dict[str | tuple[str, ...],
         for k in ready:
             ts.done(k)
         order.append(ready)
+
+    for tracker in trackers:
+        tracker.init(loops, functions, constants, graph, order)
 
     last_step = None
     index = ()
@@ -521,13 +531,16 @@ class Storage(Tracker):
         self._init_keys = list(self.storage.keys())
         self._frozen_keys = frozen_keys
         self._key_levels = ()
+        self._vars_dims = {}
+        self.depends = {}
         self.shape = shape
         self.count = 0
         self.save_kwds = save_kwds
         self.queue = Queue()
         self._queue_buffer = None
 
-    def init(self, loops: dict):
+    def init(self, loops: dict, functions: dict, constants: dict, graph: dict,
+             order: list):
         """
         Initialize the tracker.
 
@@ -535,8 +548,18 @@ class Storage(Tracker):
         ----------
         loops : dict
             The map of iterables.
+        functions : dict
+            The map of functions.
+        constants : dict
+            The map of constants.
+        graph : dict
+            The dependence graph.
+        order : list
+            The order of the dependence graph.
         """
         from numpy import ndarray
+
+        self.depends = graph
 
         for level, (keys, iters) in enumerate(loops.items()):
             self._key_levels = self._key_levels + ((keys, level), )
@@ -555,11 +578,26 @@ class Storage(Tracker):
             if not isinstance(iters, tuple) or len(keys) != len(iters):
                 continue
             for key, iter in zip(keys, iters):
+                self._vars_dims[key] = (level, )
                 if key not in self.storage and isinstance(
                         iter, (list, range, ndarray)):
                     self.storage[key] = iter
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
+
+        for key, value in constants.items():
+            self.storage[key] = value
+            self._init_keys.append(key)
+            self._vars_dims[key] = ()
+
+        for ready in order:
+            for key in ready:
+                if key in functions:
+                    deps = _get_all_dependence(key, graph)
+                    dims = set()
+                    for k in deps:
+                        dims.update(set(self._vars_dims.get(k, ())))
+                    self._vars_dims[key] = tuple(sorted(dims))
 
     def feed(self, step: StepStatus, dataframe: dict, store=False, **options):
         """
@@ -707,11 +745,13 @@ class Storage(Tracker):
             'pos': self.pos,
             'timestamps': self.timestamps,
             'iteration': self.iteration,
+            'depends': self.depends,
             'shape': self.shape,
             'ctime': self.ctime,
             'mtime': self.mtime,
             '_init_keys': self._init_keys,
             '_frozen_keys': self._frozen_keys,
             '_key_levels': self._key_levels,
+            '_vars_dims': self._vars_dims,
             'save_kwds': self.save_kwds,
         }
