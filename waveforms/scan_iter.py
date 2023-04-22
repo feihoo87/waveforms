@@ -326,46 +326,59 @@ def _find_common_prefix(a: tuple, b: tuple):
     return i
 
 
-def _build_dependence(loops, functions, constants):
+def _add_dependence(graph, keys, function, loop_names, var_names):
+    if isinstance(keys, str):
+        keys = (keys, )
+    for key in keys:
+        graph.setdefault(key, set())
+        for k, p in inspect.signature(function).parameters.items():
+            if p.kind in [
+                    p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY
+            ] and k in var_names:
+                graph[key].add(k)
+            if p.kind == p.VAR_KEYWORD and key not in loop_names:
+                graph[key].update(loop_names)
+
+
+def _build_dependence(loops, functions, constants, loop_deps=True):
     graph = {}
     loop_names = set()
     var_names = set()
-    for keys in loops:
+    for keys, iters in loops.items():
         level_vars = set()
         if isinstance(keys, str):
             keys = (keys, )
-        for ks in keys:
+        for ks, iter_vars in zip(keys, iters):
             if isinstance(ks, str):
                 ks = (ks, )
             level_vars.update(ks)
-            for k in ks:
-                graph.setdefault(k, set()).update(loop_names)
+            for i, k in enumerate(ks):
+                d = graph.setdefault(k, set())
+                if loop_deps:
+                    d.update(loop_names)
+                else:
+                    if isinstance(iter_vars, tuple):
+                        iter_var = iter_vars[i]
+                    else:
+                        iter_var = iter_vars
+                    if callable(iter_var):
+                        d.update(
+                            set(
+                                inspect.signature(iter_vars).parameters.keys())
+                            & loop_names)
+
         loop_names.update(level_vars)
         var_names.update(level_vars)
     var_names.update(functions.keys())
     var_names.update(constants.keys())
 
-    def _add_dependence(keys, value):
-        if isinstance(keys, str):
-            keys = (keys, )
-        for key in keys:
-            graph.setdefault(key, set())
-            for k, p in inspect.signature(value).parameters.items():
-                if p.kind in [
-                        p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD,
-                        p.KEYWORD_ONLY
-                ] and k in var_names:
-                    graph[key].add(k)
-                if p.kind == p.VAR_KEYWORD and key not in loop_names:
-                    graph[key].update(loop_names)
-
     for keys, values in chain(loops.items(), functions.items()):
         if callable(values):
-            _add_dependence(keys, values)
+            _add_dependence(graph, keys, values, loop_names, var_names)
         elif isinstance(values, tuple):
             for ks, v in zip(keys, values):
                 if callable(v):
-                    _add_dependence(ks, v)
+                    _add_dependence(graph, ks, v, loop_names, var_names)
 
     return graph
 
@@ -462,6 +475,7 @@ def scan_iters(loops: dict[str | tuple[str, ...],
         for k in ready:
             ts.done(k)
         order.append(ready)
+    graph = _build_dependence(loops, functions, constants, False)
 
     for tracker in trackers:
         tracker.init(loops, functions, constants, graph, order)
@@ -533,6 +547,7 @@ class Storage(Tracker):
         self._key_levels = ()
         self._vars_dims = {}
         self.depends = {}
+        self.dims = {}
         self.shape = shape
         self.count = 0
         self.save_kwds = save_kwds
@@ -578,7 +593,18 @@ class Storage(Tracker):
             if not isinstance(iters, tuple) or len(keys) != len(iters):
                 continue
             for key, iter in zip(keys, iters):
-                self._vars_dims[key] = (level, )
+                if self.depends.get(key, set()):
+                    dims = set()
+                    for dep in self.depends[key]:
+                        if dep in self._vars_dims:
+                            dims.update(set(self._vars_dims[dep]))
+                    dims.add(level)
+                    self._vars_dims[key] = tuple(sorted(dims))
+                else:
+                    self._vars_dims[key] = (level, )
+                if level not in self.dims:
+                    self.dims[level] = ()
+                self.dims[level] = self.dims[level] + (key, )
                 if key not in self.storage and isinstance(
                         iter, (list, range, ndarray)):
                     self.storage[key] = iter
@@ -598,6 +624,13 @@ class Storage(Tracker):
                     for k in deps:
                         dims.update(set(self._vars_dims.get(k, ())))
                     self._vars_dims[key] = tuple(sorted(dims))
+
+        for k, v in self._vars_dims.items():
+            if len(v) == 1:
+                if v[0] in self.dims and k not in self.dims[v[0]]:
+                    self.dims[v[0]] = self.dims[v[0]] + (k, )
+                elif v[0] not in self.dims:
+                    self.dims[v[0]] = (k, )
 
     def feed(self, step: StepStatus, dataframe: dict, store=False, **options):
         """
@@ -639,18 +672,30 @@ class Storage(Tracker):
                 continue
             if k.startswith('__'):
                 continue
+            if self._vars_dims.get(k, ()) == ():
+                continue
             self.count += 1
             if k not in self.storage:
                 self.storage[k] = [v]
-                self.pos[k] = tuple([i] for i in pos)
+                if k in self._vars_dims:
+                    self.pos[k] = tuple([pos[i]] for i in self._vars_dims[k])
+                else:
+                    self.pos[k] = tuple([i] for i in pos)
                 self.timestamps[k] = [now.timestamp()]
                 self.iteration[k] = [iteration]
             else:
-                self.storage[k].append(v)
-                for i, l in zip(pos, self.pos[k]):
-                    l.append(i)
+                if k in self._vars_dims:
+                    pos_k = tuple(pos[i] for i in self._vars_dims[k])
+                    if pos_k in zip(*self.pos[k]):
+                        continue
+                    for i, l in zip(pos_k, self.pos[k]):
+                        l.append(i)
+                else:
+                    for i, l in zip(pos, self.pos[k]):
+                        l.append(i)
                 self.timestamps[k].append(now.timestamp())
                 self.iteration[k].append(iteration)
+                self.storage[k].append(v)
 
     def _flush(self, block=False):
         if self._queue_buffer is not None:
@@ -674,6 +719,9 @@ class Storage(Tracker):
     def _get_array(self, key, shape, count):
         import numpy as np
 
+        if key in self._vars_dims:
+            shape = tuple([shape[i] for i in self._vars_dims[key]])
+
         data, data_shape, data_count = self.cache.get(key, (None, (), 0))
         if (data_shape, data_count) == (shape, count):
             return data
@@ -685,7 +733,11 @@ class Storage(Tracker):
             tmp = self.storage[key]
             if data_shape != shape:
                 data = np.full(shape, np.nan, dtype=object)
-        data[self.pos[key]] = tmp
+        try:
+            data[self.pos[key]] = tmp
+        except:
+            print(data.shape, self.pos[key], tmp)
+            raise
         self.cache[key] = (data, shape, count)
         return data
 
@@ -747,6 +799,7 @@ class Storage(Tracker):
             'iteration': self.iteration,
             'depends': self.depends,
             'shape': self.shape,
+            'dims': self.dims,
             'ctime': self.ctime,
             'mtime': self.mtime,
             '_init_keys': self._init_keys,
