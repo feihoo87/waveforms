@@ -39,7 +39,7 @@ def gate2mat(gate):
             )
     elif gate_name(gate) == 'C':
         U, N = gate2mat(gate[1])
-        ret = np.eye(2 * U.shape[0], dtype=np.complex)
+        ret = np.eye(2 * U.shape[0], dtype=complex)
         ret[U.shape[0]:, U.shape[0]:] = U
         return ret, N + 1
     else:
@@ -117,8 +117,10 @@ def _measure_process(rho):
     return np.array([[rho[0, 0], 0], [0, rho[1, 1]]])
 
 
-def _reset_process(rho):
-    return np.array([[rho[0, 0] + rho[1, 1], 0], [0, 0]])
+def _reset_process(rho, p1):
+    s0 = np.array([[rho[0, 0] + rho[1, 1], 0], [0, 0]])
+    s1 = np.array([[0, 0], [0, rho[0, 0] + rho[1, 1]]])
+    return (1 - p1) * s0 + p1 * s1
 
 
 def _decohherence_process(rho, Gamma_t, gamma_t):
@@ -169,13 +171,18 @@ def applySeq(seq, psi0=None):
                     _, t, T1, Tphi = gate
                     Gamma_t = t / T1
                     gamma_t = t / Tphi
+        if gate_name(gate) in ['Reset']:
+            if isinstance(gate, tuple) and len(gate) == 2:
+                _, p1 = gate
+            else:
+                p1 = 0.0
         if gate_name(gate) in ['Measure', 'Reset', 'Delay'] and psi.ndim == 1:
             psi, unitary_process, psi0 = _set_vector_to_rho(psi)
 
         if gate_name(gate) == 'Measure':
             reduceSubspace(qubits, N, psi, _measure_process, ())
         elif gate_name(gate) == 'Reset':
-            reduceSubspace(qubits, N, psi, _reset_process, ())
+            reduceSubspace(qubits, N, psi, _reset_process, (p1, ))
         elif gate_name(gate) == 'Delay':
             reduceSubspace(qubits, N, psi, _decohherence_process,
                            (Gamma_t, gamma_t))
@@ -186,9 +193,9 @@ def applySeq(seq, psi0=None):
 
 
 def seq2mat(seq, U=None):
-    I = np.eye(2, dtype=np.complex)
+    I = np.eye(2, dtype=complex)
     if U is None:
-        U = np.eye(2, dtype=np.complex)
+        U = np.eye(2, dtype=complex)
         N = 1
     else:
         N = round(np.log2(U.shape[0]))
