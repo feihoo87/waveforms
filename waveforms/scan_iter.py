@@ -672,7 +672,7 @@ class Storage(Tracker):
                 continue
             if k.startswith('__'):
                 continue
-            if self._vars_dims.get(k, ()) == ():
+            if self._vars_dims.get(k, ()) == () and k not in dataframe:
                 continue
             self.count += 1
             if k not in self.storage:
@@ -686,7 +686,7 @@ class Storage(Tracker):
             else:
                 if k in self._vars_dims:
                     pos_k = tuple(pos[i] for i in self._vars_dims[k])
-                    if pos_k in zip(*self.pos[k]):
+                    if k not in dataframe and pos_k in zip(*self.pos[k]):
                         continue
                     for i, l in zip(pos_k, self.pos[k]):
                         l.append(i)
