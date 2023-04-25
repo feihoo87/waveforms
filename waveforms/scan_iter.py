@@ -545,9 +545,9 @@ class Storage(Tracker):
         self._init_keys = list(self.storage.keys())
         self._frozen_keys = frozen_keys
         self._key_levels = ()
-        self._vars_dims = {}
         self.depends = {}
         self.dims = {}
+        self.vars_dims = {}
         self.shape = shape
         self.count = 0
         self.save_kwds = save_kwds
@@ -596,12 +596,12 @@ class Storage(Tracker):
                 if self.depends.get(key, set()):
                     dims = set()
                     for dep in self.depends[key]:
-                        if dep in self._vars_dims:
-                            dims.update(set(self._vars_dims[dep]))
+                        if dep in self.vars_dims:
+                            dims.update(set(self.vars_dims[dep]))
                     dims.add(level)
-                    self._vars_dims[key] = tuple(sorted(dims))
+                    self.vars_dims[key] = tuple(sorted(dims))
                 else:
-                    self._vars_dims[key] = (level, )
+                    self.vars_dims[key] = (level, )
                 if level not in self.dims:
                     self.dims[level] = ()
                 self.dims[level] = self.dims[level] + (key, )
@@ -614,7 +614,7 @@ class Storage(Tracker):
         for key, value in constants.items():
             self.storage[key] = value
             self._init_keys.append(key)
-            self._vars_dims[key] = ()
+            self.vars_dims[key] = ()
 
         for ready in order:
             for key in ready:
@@ -622,10 +622,10 @@ class Storage(Tracker):
                     deps = _get_all_dependence(key, graph)
                     dims = set()
                     for k in deps:
-                        dims.update(set(self._vars_dims.get(k, ())))
-                    self._vars_dims[key] = tuple(sorted(dims))
+                        dims.update(set(self.vars_dims.get(k, ())))
+                    self.vars_dims[key] = tuple(sorted(dims))
 
-        for k, v in self._vars_dims.items():
+        for k, v in self.vars_dims.items():
             if len(v) == 1:
                 if v[0] in self.dims and k not in self.dims[v[0]]:
                     self.dims[v[0]] = self.dims[v[0]] + (k, )
@@ -672,20 +672,20 @@ class Storage(Tracker):
                 continue
             if k.startswith('__'):
                 continue
-            if self._vars_dims.get(k, ()) == () and k not in dataframe:
+            if self.vars_dims.get(k, ()) == () and k not in dataframe:
                 continue
             self.count += 1
             if k not in self.storage:
                 self.storage[k] = [v]
-                if k in self._vars_dims:
-                    self.pos[k] = tuple([pos[i]] for i in self._vars_dims[k])
+                if k in self.vars_dims:
+                    self.pos[k] = tuple([pos[i]] for i in self.vars_dims[k])
                 else:
                     self.pos[k] = tuple([i] for i in pos)
                 self.timestamps[k] = [now.timestamp()]
                 self.iteration[k] = [iteration]
             else:
-                if k in self._vars_dims:
-                    pos_k = tuple(pos[i] for i in self._vars_dims[k])
+                if k in self.vars_dims:
+                    pos_k = tuple(pos[i] for i in self.vars_dims[k])
                     if k not in dataframe and pos_k in zip(*self.pos[k]):
                         continue
                     for i, l in zip(pos_k, self.pos[k]):
@@ -697,7 +697,7 @@ class Storage(Tracker):
                 self.iteration[k].append(iteration)
                 self.storage[k].append(v)
 
-    def _flush(self, block=False):
+    def flush(self, block=False):
         if self._queue_buffer is not None:
             iteration, pos, fut, kwds, now = self._queue_buffer
             if fut.done() or block:
@@ -719,8 +719,8 @@ class Storage(Tracker):
     def _get_array(self, key, shape, count):
         import numpy as np
 
-        if key in self._vars_dims:
-            shape = tuple([shape[i] for i in self._vars_dims[key]])
+        if key in self.vars_dims:
+            shape = tuple([shape[i] for i in self.vars_dims[key]])
 
         data, data_shape, data_count = self.cache.get(key, (None, (), 0))
         if (data_shape, data_count) == (shape, count):
@@ -752,28 +752,28 @@ class Storage(Tracker):
         """
         Get the keys of the storage.
         """
-        self._flush()
+        self.flush()
         return self.storage.keys()
 
     def values(self):
         """
         Get the values of the storage.
         """
-        self._flush()
+        self.flush()
         return [self[k] for k in self.storage]
 
     def items(self):
         """
         Get the items of the storage.
         """
-        self._flush()
+        self.flush()
         return list(zip(self.keys(), self.values()))
 
     def get(self, key, default=_NODEFAULT, skip=None, block=False):
         """
         Get the value of the storage.
         """
-        self._flush(block)
+        self.flush(block)
         if key in self._init_keys:
             return self.storage[key]
         elif key in self.storage:
@@ -790,7 +790,7 @@ class Storage(Tracker):
         return self.get(key)
 
     def __getstate__(self):
-        self._flush()
+        self.flush()
         storage = dict(self.items())
         return {
             'storage': storage,
@@ -800,11 +800,11 @@ class Storage(Tracker):
             'depends': self.depends,
             'shape': self.shape,
             'dims': self.dims,
+            'vars_dims': self.vars_dims,
             'ctime': self.ctime,
             'mtime': self.mtime,
             '_init_keys': self._init_keys,
             '_frozen_keys': self._frozen_keys,
             '_key_levels': self._key_levels,
-            '_vars_dims': self._vars_dims,
             'save_kwds': self.save_kwds,
         }
