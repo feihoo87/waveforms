@@ -808,6 +808,20 @@ def _format_ERF(shift, *args):
         return '\\mathrm{erf}(\\frac{t}{' + f'{args[0]:g}' + '})'
 
 
+def _format_COSH(shift, *args):
+    if shift != 0:
+        return '\\cosh(\\frac{t-' + f"{shift:g}" + '}{' + f'{1/args[0]:g}' + '})'
+    else:
+        return '\\cosh(\\frac{t}{' + f'{1/args[0]:g}' + '})'
+
+
+def _format_SINH(shift, *args):
+    if shift != 0:
+        return '\\sinh(\\frac{t-' + f"{shift:g}" + '}{' + f'{args[0]:g}' + '})'
+    else:
+        return '\\sinh(\\frac{t}{' + f'{args[0]:g}' + '})'
+
+
 def _format_EXP(shift, *args):
     if shift != 0:
         return '\\exp(-' + f'{args[0]:g}' + '(t-' + f"{shift:g}" + '))'
@@ -831,6 +845,8 @@ EXPONENTIALCHIRP = registerBaseFunc(lambda t, f0, alpha, phi0: np.sin(
     phi0 + 2 * pi * f0 * (np.exp(alpha * t) - 1) / alpha))
 HYPERBOLICCHIRP = registerBaseFunc(lambda t, f0, k, phi0: np.sin(
     phi0 + 2 * np.pi * f0 / k * np.log(1 + k * t)))
+COSH = registerBaseFunc(lambda t, w: np.cosh(w * t), _format_COSH)
+SINH = registerBaseFunc(lambda t, w: np.sinh(w * t), _format_SINH)
 
 # register derivative
 registerDerivative(LINEAR, lambda shift, *args: _one)
@@ -862,6 +878,14 @@ registerDerivative(
     INTERP, lambda shift, start, stop, points:
     (((((INTERP, start, stop, tuple(np.gradient(np.asarray(points))), shift),
         ), (1, )), ), ((len(points) - 1) / (stop - start), )))
+
+registerDerivative(
+    COSH, lambda shift, *args: (((((SINH, *args, shift), ), (1, )), ),
+                                (args[0], )))
+
+registerDerivative(
+    SINH, lambda shift, *args: (((((COSH, *args, shift), ), (1, )), ),
+                                (args[0], )))
 
 
 def _d_LINEARCHIRP(shift, f0, f1, T, phi0):
@@ -1039,6 +1063,49 @@ def hanning(width):
     return cosPulse(width)
 
 
+def cosh(w):
+    return Waveform(seq=(_basic_wave(COSH, w), ))
+
+
+def sinh(w):
+    return Waveform(seq=(_basic_wave(SINH, w), ))
+
+
+def coshPulse(width, steepness=1.0, plateau=0.0):
+    """
+    pulse edge shape:
+            cosh(w * T / 2) - cosh(w * t)
+    f(t) = -------------------------------
+                cosh(w * T / 2) - 1
+    where T is the pulse width and w = steepness / width
+    plateau is the fraction of the pulse width where the pulse is flat.
+    """
+    if width <= 0 and plateau <= 0:
+        return zero()
+    w = steepness / width
+    A = np.cosh(steepness / 2)
+
+    if plateau == 0.0 or round(-0.5 * plateau, NDIGITS) == round(
+            0.5 * plateau, NDIGITS):
+        pulse = ((((), ()), (((COSH, w, 0), ), (1, ))), (A / (A - 1),
+                                                         -1 / (A - 1)))
+        return Waveform(bounds=(round(-0.5 * width,
+                                      NDIGITS), round(0.5 * width,
+                                                      NDIGITS), +inf),
+                        seq=(_zero, pulse, _zero))
+    else:
+        raising = ((((), ()), (((COSH, w, -0.5 * plateau), ), (1, ))),
+                   (A / (A - 1), -1 / (A - 1)))
+        falling = ((((), ()), (((COSH, w, 0.5 * plateau), ), (1, ))),
+                   (A / (A - 1), -1 / (A - 1)))
+        return Waveform(bounds=(round(-0.5 * width - 0.5 * plateau,
+                                      NDIGITS), round(-0.5 * plateau, NDIGITS),
+                                round(0.5 * plateau, NDIGITS),
+                                round(0.5 * width + 0.5 * plateau,
+                                      NDIGITS), +inf),
+                        seq=(_zero, raising, _one, falling, _zero))
+
+
 def general_cosine(duration, *arg):
     wav = zero()
     arg = np.asarray(arg)
@@ -1208,8 +1275,9 @@ def mixing(I,
 
 
 __all__ = [
-    'D', 'Waveform', 'chirp', 'const', 'cos', 'cosPulse', 'cut', 'exp',
-    'function', 'gaussian', 'general_cosine', 'hanning', 'interp', 'mixing',
-    'one', 'poly', 'registerBaseFunc', 'registerDerivative', 'samplingPoints',
-    'sign', 'sin', 'sinc', 'square', 'step', 'zero'
+    'D', 'Waveform', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
+    'cut', 'exp', 'function', 'gaussian', 'general_cosine', 'hanning',
+    'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
+    'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
+    'square', 'step', 'zero'
 ]
