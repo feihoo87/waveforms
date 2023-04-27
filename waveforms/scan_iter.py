@@ -144,7 +144,8 @@ class End(FeedbackProxy):
 
 class Tracker():
 
-    def init(self, loops: dict):
+    def init(self, loops: dict, functions: dict, constants: dict, graph: dict,
+             order: list):
         pass
 
     def update(self, kwds: dict):
