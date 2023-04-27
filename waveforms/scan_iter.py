@@ -349,9 +349,13 @@ def _build_dependence(loops, functions, constants, loop_deps=True):
         level_vars = set()
         if isinstance(keys, str):
             keys = (keys, )
+        if callable(iters):
+            iters = tuple([iters for _ in keys])
         for ks, iter_vars in zip(keys, iters):
             if isinstance(ks, str):
                 ks = (ks, )
+            if callable(iters):
+                iter_vars = tuple([iter_vars for _ in ks])
             level_vars.update(ks)
             for i, k in enumerate(ks):
                 d = graph.setdefault(k, set())

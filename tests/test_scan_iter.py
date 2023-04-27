@@ -283,7 +283,7 @@ def test_storage(spectrum_data):
     assert set(data1.keys()) == {'bias', 'freq', 'z', 'iq', 'obj'}
 
     assert set(data2.keys()) == {'bias', 'freq', 'z', 'iq', 'obj', 'center'}
-    assert data2['center'].shape == (101, 121)
+    assert data2['center'].shape == (101, )
 
     for key in ['z', 'iq', 'obj']:
         assert np.allclose(data1.timestamps[key], data2.timestamps[key])
