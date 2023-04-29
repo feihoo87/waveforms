@@ -4,33 +4,6 @@ import sys
 from typing import Any, Generator
 
 
-def flattenDictIter(d: dict,
-                    prefix: list = []
-                    ) -> Generator[tuple[str, Any], None, None]:
-    for k in d:
-        if isinstance(d[k], dict):
-            yield from flattenDictIter(d[k], prefix=[*prefix, k])
-        else:
-            yield '.'.join(prefix + [k]), d[k]
-
-
-def flattenDict(d: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in flattenDictIter(d)}
-
-
-def foldDict(d: dict[str, Any]) -> dict[str, Any]:
-    ret = {}
-    for k, v in d.items():
-        keys = k.split('.')
-        d = ret
-        for key in keys[:-1]:
-            if key not in d:
-                d[key] = dict()
-            d = d[key]
-        d[keys[-1]] = v
-    return ret
-
-
 class Singleton(type):
     _instances = {}
 
@@ -39,6 +12,13 @@ class Singleton(type):
             cls._instances[cls] = super(Singleton,
                                         cls).__call__(*args, **kwargs)
         return cls._instances[cls]
+
+
+class _SELF(metaclass=Singleton):
+    __slots__ = ()
+
+    def __repr__(self):
+        return "self"
 
 
 class _NOTSET(metaclass=Singleton):
@@ -55,18 +35,57 @@ class _UNKNOW(metaclass=Singleton):
         return "Unknow"
 
 
-NOTSET = _NOTSET()
-UNKNOW = _UNKNOW()
-
-
-class Delete(metaclass=Singleton):
+class _DELETE(metaclass=Singleton):
     __slots__ = ()
 
     def __repr__(self):
         return 'Delete'
 
 
-DELETE = Delete()
+SELF = _SELF()
+NOTSET = _NOTSET()
+UNKNOW = _UNKNOW()
+DELETE = _DELETE()
+
+
+def flattenDictIter(d: dict,
+                    prefix: list = []
+                    ) -> Generator[tuple[str, Any], None, None]:
+    for k in d:
+        if isinstance(d[k], dict):
+            yield from flattenDictIter(d[k], prefix=[*prefix, k])
+        else:
+            yield '.'.join(prefix + [k]), d[k]
+
+
+def flattenDict(d: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in flattenDictIter(d)}
+
+
+def foldDict(d: dict[str, Any]) -> dict[str, Any]:
+    ret = {}
+
+    for k, v in d.items():
+        keys = k.split('.')
+        d = ret
+        parent = None
+
+        for key in keys[:-1]:
+            if not isinstance(d, dict):
+                parent[0][parent[1]] = {SELF: d}
+                d = parent[0][parent[1]]
+            if key not in d:
+                d[key] = dict()
+            parent = d, key
+            d = d[key]
+        if not isinstance(d, dict):
+            parent[0][parent[1]] = {SELF: d}
+            d = parent[0][parent[1]]
+        if keys[-1] in d and isinstance(d[keys[-1]], dict):
+            d[keys[-1]][SELF] = v
+        else:
+            d[keys[-1]] = v
+    return ret
 
 
 class Update():
