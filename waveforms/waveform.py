@@ -996,18 +996,32 @@ def square(width, edge=0, type='erf'):
                 (step(edge, type=type) >> width / 2))
 
 
-def gaussian(width):
-    if width <= 0:
+def gaussian(width, plateau=0.0):
+    if width <= 0 and plateau <= 0.0:
         return zero()
     # width is two times FWHM
     # std_sq2 = width / (4 * np.sqrt(np.log(2)))
     std_sq2 = width / 3.3302184446307908
     # std is set to give total pulse area same as a square
     #std_sq2 = width/np.sqrt(np.pi)
-    return Waveform(bounds=(round(-0.75 * width,
-                                  NDIGITS), round(0.75 * width,
-                                                  NDIGITS), +inf),
-                    seq=(_zero, _basic_wave(GAUSSIAN, std_sq2), _zero))
+    if round(0.5 * plateau, NDIGITS) <= 0.0:
+        return Waveform(bounds=(round(-0.75 * width,
+                                      NDIGITS), round(0.75 * width,
+                                                      NDIGITS), +inf),
+                        seq=(_zero, _basic_wave(GAUSSIAN, std_sq2), _zero))
+    else:
+        return Waveform(bounds=(round(-0.75 * width - 0.5 * plateau,
+                                      NDIGITS), round(-0.5 * plateau, NDIGITS),
+                                round(0.5 * plateau, NDIGITS),
+                                round(0.75 * width + 0.5 * plateau,
+                                      NDIGITS), +inf),
+                        seq=(_zero,
+                             _basic_wave(GAUSSIAN,
+                                         std_sq2,
+                                         shift=-0.5 * plateau), _one,
+                             _basic_wave(GAUSSIAN,
+                                         std_sq2,
+                                         shift=0.5 * plateau), _zero))
 
 
 def cos(w, phi=0):
@@ -1047,9 +1061,11 @@ def sinc(bw):
                     seq=(_zero, _basic_wave(SINC, bw), _zero))
 
 
-def cosPulse(width):
+def cosPulse(width, plateau=0.0):
     # cos = _basic_wave(COS, 2*np.pi/width)
     # pulse = _mul(_add(cos, _one), _half)
+    if round(0.5 * plateau, NDIGITS) > 0:
+        return square(plateau + 0.5 * width, edge=0.5 * width, type='cos')
     if width <= 0:
         return zero()
     pulse = ((((), ()), (((COS, 6.283185307179586 / width, 0), ), (1, ))),
@@ -1059,8 +1075,8 @@ def cosPulse(width):
                     seq=(_zero, pulse, _zero))
 
 
-def hanning(width):
-    return cosPulse(width)
+def hanning(width, plateau=0.0):
+    return cosPulse(width, plateau=plateau)
 
 
 def cosh(w):
@@ -1071,19 +1087,34 @@ def sinh(w):
     return Waveform(seq=(_basic_wave(SINH, w), ))
 
 
-def coshPulse(width, steepness=1.0, plateau=0.0):
-    """
+def coshPulse(width, eps=1.0, plateau=0.0):
+    """Cosine hyperbolic pulse with the following im
+
     pulse edge shape:
-            cosh(w * T / 2) - cosh(w * t)
-    f(t) = -------------------------------
-                cosh(w * T / 2) - 1
-    where T is the pulse width and w = steepness / width
-    plateau is the fraction of the pulse width where the pulse is flat.
+            cosh(eps / 2) - cosh(eps * t / T)
+    f(t) = -----------------------------------
+                  cosh(eps / 2) - 1
+    where T is the pulse width and eps is the pulse edge steepness.
+    The pulse is defined for t in [-T/2, T/2].
+
+    In case of plateau > 0, the pulse is defined as:
+           | f(t + plateau/2)   if t in [-T/2 - plateau/2, - plateau/2]
+    g(t) = | 1                  if t in [-plateau/2, plateau/2]
+           | f(t - plateau/2)   if t in [plateau/2, T/2 + plateau/2]
+
+    Parameters
+    ----------
+    width : float
+        Pulse width.
+    eps : float
+        Pulse edge steepness.
+    plateau : float
+        Pulse plateau.
     """
     if width <= 0 and plateau <= 0:
         return zero()
-    w = steepness / width
-    A = np.cosh(steepness / 2)
+    w = eps / width
+    A = np.cosh(eps / 2)
 
     if plateau == 0.0 or round(-0.5 * plateau, NDIGITS) == round(
             0.5 * plateau, NDIGITS):
