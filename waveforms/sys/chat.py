@@ -530,8 +530,11 @@ class Conversation():
         self.last_time = datetime.now()
         self.model = model
         self._pool = ThreadPoolExecutor()
+        self._save_future = None
 
     def __del__(self):
+        if self._save_future is not None:
+            self._save_future.result()
         self._pool.shutdown()
 
     def _completion(self,
@@ -594,7 +597,8 @@ class Conversation():
         self.last_time = datetime.now()
 
         reply = chat_with_ai(self.system_prompt, query, self.history,
-                             self.memory, self.model, token_limits(self.model))
+                             self.memory, self.summary, self.model,
+                             token_limits(self.model))
         return reply
 
     def _save(self):
@@ -610,16 +614,19 @@ class Conversation():
             pickle.dump(self, f)
 
     def save(self):
-        return self._pool.submit(self._save)
+        self._save_future = self._pool.submit(self._save)
+        return self._save_future
 
-    def __get_state__(self):
+    def __getstate__(self):
         state = self.__dict__.copy()
         del state['_pool']
+        del state['_save_future']
         return state
 
-    def __set_state__(self, state):
+    def __setstate__(self, state):
         self.__dict__.update(state)
         self._pool = ThreadPoolExecutor(max_workers=1)
+        self._save_future = None
 
 
 ipy = get_ipython()
