@@ -24,7 +24,7 @@ def lin_fit(x, y, axis=None):
     return np.array([a, b])
 
 
-def poly_fit(x_data, y_data, degree=20, errors=None, selectors=[]):
+def poly_fit(x_data, y_data, degree=20, selectors=[]):
     """
     Fit a polynomial to data.
 
@@ -36,8 +36,6 @@ def poly_fit(x_data, y_data, degree=20, errors=None, selectors=[]):
         y data.
     degree : int, optional
         Degree of polynomial. The default is 20.
-    errors : float, optional
-        errors of y_data. The default is None.
     selectors : list, optional
         List of pairs of weights. Repeatedly fit the data
         with the selected data.
@@ -88,25 +86,23 @@ def poly_fit(x_data, y_data, degree=20, errors=None, selectors=[]):
         ('ridge', Ridge(solver='cholesky')),
     ])
 
-    if errors is None:
-        weight = np.ones_like(y_data)
-    else:
-        weight = 1 / errors**2
-
-    model.fit(x_train, y_data, sample_weight=weight)
+    model.fit(x_train, y_data)
     y_fit = model.predict(x_train)
 
     # select data
+    mask = None
     for a, b in selectors:
         err = (y_fit - y_data)**2
-        thr = (np.mean(err) * a + np.median(err) * b) / weight
+        thr = np.mean(err) * a + np.median(err) * b
         mask = err < thr
         model.fit(x_train[mask],
-                  np.array(y_data)[mask],
-                  sample_weight=weight[mask])
+                  np.array(y_data)[mask])
         y_fit = model.predict(x_train)
 
-    x, y = x_data[mask].reshape(-1), np.array(y_data)[mask]
+    try:
+        x = x_data[mask].reshape(-1)
+    except:
+        x = x_data.reshape(-1)
     xx = np.linspace(x[0], x[-1], degree * 10)
     poly = PolynomialFeatures(degree=degree)
     poly.fit(xx.reshape((-1, 1)))
