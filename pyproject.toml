@@ -44,10 +44,13 @@ dynamic = ["version"]
 full = [
     "blinker>=1.4",
     "matplotlib>=3.4.1",
+    "openai>=0.27.0",
     "portalocker>=1.4.0",
     "SQLAlchemy>=1.4.11",
     "scikit-learn>=0.24.1",
-    "scikit-optimize>=0.8.1"
+    "scikit-optimize>=0.8.1",
+    "tenacity>=8.2.2",
+    "tiktoken>=0.3.3"
 ]
 test = [
     "pytest>=4.4.0"
