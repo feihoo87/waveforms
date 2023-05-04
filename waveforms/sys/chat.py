@@ -1,6 +1,7 @@
 import dataclasses
 import logging
 import pickle
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -10,10 +11,11 @@ from typing import Any, List, Optional, TypedDict
 
 import numpy as np
 import openai
+import tenacity
 import tiktoken
 from IPython import get_ipython
 from IPython.display import Markdown, display
-from openai.error import APIError, RateLimitError, Timeout
+from openai.error import APIError, RateLimitError, Timeout, ServiceUnavailableError, APIConnectionError
 from scipy import spatial
 
 logger = logging.getLogger(__name__)
@@ -155,6 +157,11 @@ def generate_context(prompt,
     )
 
 
+@tenacity.retry(wait=tenacity.wait_exponential(multiplier=1, min=4, max=10),
+                stop=tenacity.stop_after_attempt(5),
+                retry=tenacity.retry_if_exception_type(
+                    (RateLimitError, APIError, Timeout,
+                     ServiceUnavailableError, APIConnectionError)))
 def create_chat_completion(
     messages: List[Message],  # type: ignore
     model: Optional[str] = None,
@@ -172,39 +179,21 @@ def create_chat_completion(
     Returns:
         str: The response from the chat completion
     """
-
-    num_retries = 10
-    warned_user = False
-    response = None
-    for attempt in range(num_retries):
-        backoff = 2**(attempt + 2)
-        try:
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            break
-        except RateLimitError:
-            if not warned_user:
-                logger.warn(
-                    f"Please double check that you have setup a PAID OpenAI API Account. "
-                )
-                warned_user = True
-        except (APIError, Timeout) as e:
-            if e.http_status != 502:
-                raise
-            if attempt == num_retries - 1:
-                raise
-        time.sleep(backoff)
-    if response is None:
-        logger.error("FAILED TO GET RESPONSE FROM OPENAI")
-        quit(1)
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
     resp = response.choices[0].message["content"]
     return resp
 
 
+@tenacity.retry(wait=tenacity.wait_exponential(multiplier=1, min=4, max=10),
+                stop=tenacity.stop_after_attempt(5),
+                retry=tenacity.retry_if_exception_type(
+                    (RateLimitError, APIError, Timeout,
+                     ServiceUnavailableError, APIConnectionError)))
 def get_embedding(
     text: str,
     *_,
@@ -251,98 +240,90 @@ def chat_with_ai(prompt,
     Returns:
         str: The AI's response.
     """
-    while True:
-        try:
-            # Reserve 1000 tokens for the response
 
-            if token_limit is None:
-                token_limit = token_limits(model)
+    # Reserve 1000 tokens for the response
 
-            logger.debug(f"Token limit: {token_limit}")
-            send_token_limit = token_limit - 1000
-            if len(full_message_history) == 0:
-                relevant_memory = ""
-            else:
-                recent_history = full_message_history[-5:]
-                shuffle(recent_history)
-                relevant_memories = permanent_memory.get_relevant(
-                    str(recent_history), 5)
-                if relevant_memories:
-                    shuffle(relevant_memories)
-                relevant_memory = str(relevant_memories)
+    if token_limit is None:
+        token_limit = token_limits(model)
 
-            logger.debug(f"Memory Stats: {permanent_memory.get_stats()}")
+    logger.debug(f"Token limit: {token_limit}")
+    send_token_limit = token_limit - 1000
+    if len(full_message_history) == 0:
+        relevant_memory = ""
+    else:
+        recent_history = full_message_history[-5:]
+        shuffle(recent_history)
+        relevant_memories = permanent_memory.get_relevant(
+            str(recent_history), 5)
+        if relevant_memories:
+            shuffle(relevant_memories)
+        relevant_memory = str(relevant_memories)
 
-            (
-                next_message_to_add_index,
-                current_tokens_used,
-                insertion_index,
-                current_context,
-            ) = generate_context(prompt, relevant_memory, full_message_history,
-                                 model, summary)
+    logger.debug(f"Memory Stats: {permanent_memory.get_stats()}")
 
-            while current_tokens_used > 2500:
-                # remove memories until we are under 2500 tokens
-                relevant_memory = relevant_memory[:-1]
-                (
-                    next_message_to_add_index,
-                    current_tokens_used,
-                    insertion_index,
-                    current_context,
-                ) = generate_context(prompt, relevant_memory,
-                                     full_message_history, model, summary)
+    (
+        next_message_to_add_index,
+        current_tokens_used,
+        insertion_index,
+        current_context,
+    ) = generate_context(prompt, relevant_memory, full_message_history, model,
+                         summary)
 
-            current_tokens_used += count_message_tokens(
-                [create_chat_message("user", user_input)],
-                model)  # Account for user input (appended later)
+    while current_tokens_used > 2500:
+        # remove memories until we are under 2500 tokens
+        relevant_memory = relevant_memory[:-1]
+        (
+            next_message_to_add_index,
+            current_tokens_used,
+            insertion_index,
+            current_context,
+        ) = generate_context(prompt, relevant_memory, full_message_history,
+                             model, summary)
 
-            while next_message_to_add_index >= 0:
-                # print (f"CURRENT TOKENS USED: {current_tokens_used}")
-                message_to_add = full_message_history[
-                    next_message_to_add_index]
+    current_tokens_used += count_message_tokens(
+        [create_chat_message("user", user_input)],
+        model)  # Account for user input (appended later)
 
-                tokens_to_add = count_message_tokens([message_to_add], model)
-                if current_tokens_used + tokens_to_add > send_token_limit:
-                    break
+    while next_message_to_add_index >= 0:
+        # print (f"CURRENT TOKENS USED: {current_tokens_used}")
+        message_to_add = full_message_history[next_message_to_add_index]
 
-                # Add the most recent message to the start of the current context,
-                #  after the two system prompts.
-                current_context.insert(
-                    insertion_index,
-                    full_message_history[next_message_to_add_index])
+        tokens_to_add = count_message_tokens([message_to_add], model)
+        if current_tokens_used + tokens_to_add > send_token_limit:
+            break
 
-                # Count the currently used tokens
-                current_tokens_used += tokens_to_add
+        # Add the most recent message to the start of the current context,
+        #  after the two system prompts.
+        current_context.insert(insertion_index,
+                               full_message_history[next_message_to_add_index])
 
-                # Move to the next most recent message in the full message history
-                next_message_to_add_index -= 1
+        # Count the currently used tokens
+        current_tokens_used += tokens_to_add
 
-            # Append user input, the length of this is accounted for above
-            current_context.extend([create_chat_message("user", user_input)])
+        # Move to the next most recent message in the full message history
+        next_message_to_add_index -= 1
 
-            # Calculate remaining tokens
-            tokens_remaining = token_limit - current_tokens_used
-            # assert tokens_remaining >= 0, "Tokens remaining is negative.
+    # Append user input, the length of this is accounted for above
+    current_context.extend([create_chat_message("user", user_input)])
 
-            # TODO: use a model defined elsewhere, so that model can contain
-            # temperature and other settings we care about
-            assistant_reply = create_chat_completion(
-                model=model,
-                messages=current_context,
-                max_tokens=tokens_remaining,
-            )
+    # Calculate remaining tokens
+    tokens_remaining = token_limit - current_tokens_used
+    # assert tokens_remaining >= 0, "Tokens remaining is negative.
 
-            # Update full message history
-            full_message_history.append(create_chat_message(
-                "user", user_input))
-            full_message_history.append(
-                create_chat_message("assistant", assistant_reply))
+    # TODO: use a model defined elsewhere, so that model can contain
+    # temperature and other settings we care about
+    assistant_reply = create_chat_completion(
+        model=model,
+        messages=current_context,
+        max_tokens=tokens_remaining,
+    )
 
-            return assistant_reply
-        except RateLimitError:
-            # TODO: When we switch to langchain, this is built in
-            print("Error: ", "API Rate Limit Reached. Waiting 10 seconds...")
-            time.sleep(10)
+    # Update full message history
+    full_message_history.append(create_chat_message("user", user_input))
+    full_message_history.append(
+        create_chat_message("assistant", assistant_reply))
+
+    return assistant_reply
 
 
 def create_default_embeddings():
@@ -537,31 +518,15 @@ class Conversation():
             self._save_future.result()
         self._pool.shutdown()
 
-    def _completion(self,
-                    messages,
-                    model=None,
-                    temperature=1.0,
-                    top_p=1.0,
-                    n=1):
-        if model is None:
-            model = self.model
-        completion = openai.ChatCompletion.create(model=model,
-                                                  messages=messages,
-                                                  temperature=temperature,
-                                                  top_p=top_p,
-                                                  n=n)
-        self.last_time = datetime.now()
-        return completion.choices[0].message
-
-    def _completion_stream(self, messages, temperature=1.0, top_p=1.0, n=1):
-        completion = openai.ChatCompletion.create(model=self.model,
-                                                  messages=messages,
-                                                  temperature=temperature,
-                                                  top_p=top_p,
-                                                  n=n,
-                                                  stream=True)
-        for choice in completion.choices:
-            yield choice.message
+    def _validate_title(self, title: str) -> str:
+        rstr = f"[\\/:*?\"<>|\n\r\t]+"
+        title = re.sub(rstr, " ", title)
+        title = title.strip()
+        if len(title) > 100:
+            title = title[:100]
+        while title[-1] in ' .。,，-_':
+            title = title[:-1]
+        return title
 
     def make_title(self):
         messages = [{
@@ -572,7 +537,7 @@ class Conversation():
         tokens = count_string_tokens(messages[0]['content'], self.model)
 
         query = ("请根据以下对话内容，总结出中文标题，长度不超过100个字符。"
-                 "请注意，标题中不得包含任何不能用于文件路径的字符，并且不包含额外内容和结尾的句号。\n"
+                 "请注意，标题必须是合法的文件名，省略结尾的句号。返回结果不得包含额外的解释和格式。\n"
                  "对话内容：\n")
 
         text = []
@@ -585,11 +550,10 @@ class Conversation():
         messages.append({"role": "user", "content": query + '\n'.join(text)})
 
         try:
-            message = self._completion(messages)
-            content = message['content']
-            if len(content) > 100:
-                content = content[:100]
-            return f"{time.strftime('%Y%m%d%H%M%S')} {content}"
+            self.last_time = datetime.now()
+            content = create_chat_completion(messages, self.model)
+            title = self._validate_title(content)
+            return f"{time.strftime('%Y%m%d%H%M%S')} {title}"
         except:
             return f"{time.strftime('%Y%m%d%H%M%S')} untitled"
 
