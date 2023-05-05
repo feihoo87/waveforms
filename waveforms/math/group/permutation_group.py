@@ -57,10 +57,12 @@ def to_matrix(a: tuple):
 
 def inv_cycles(cycles: tuple[tuple]) -> tuple[tuple]:
     ret = []
-    for cycle in reversed(cycles):
-        cycle = tuple(reversed(cycle))
-        i = cycle.index(min(cycle))
-        ret.append(tuple(cycle[i:] + cycle[:i]))
+    for cycle in cycles:
+        if len(cycle) == 2:
+            ret.append(cycle)
+        else:
+            cycle = (cycle[0], ) + tuple(reversed(cycle[1:]))
+            ret.append(cycle)
     return tuple(ret)
 
 
