@@ -6,6 +6,7 @@ from scipy.optimize import minimize
 
 CAP_UNIT = 1e-15
 FREQ_UNIT = 1e9
+RESISTANCE_UNIT = 1.0
 """
 常见超导材料及其对应的超导能隙：
 
@@ -177,9 +178,10 @@ def Rn_to_EJ(Rn, gap=200e-6, T=0.01):
     from scipy.constants import e, h, hbar, k, pi
 
     Delta = gap * e
-    Ic = pi * Delta / (2 * e * Rn) * np.tanh(Delta / (2 * k * T))
+    Ic = pi * Delta / (2 * e * Rn * RESISTANCE_UNIT) * np.tanh(Delta /
+                                                               (2 * k * T))
     EJ = Ic * hbar / (2 * e)
-    return EJ / h / 1e9
+    return EJ / h / FREQ_UNIT
 
 
 def flux_to_EJ(flux, EJS, d=0):
