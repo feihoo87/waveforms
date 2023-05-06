@@ -1,123 +1,38 @@
 from __future__ import annotations
 
-from itertools import chain, product
 import functools
+from itertools import chain, product
+
 import numpy as np
-
-
-@functools.total_ordering
-class Permutation():
-
-    __slots__ = ('_perm', '_max')
-
-    def __init__(self, *perm):
-        self._perm = tuple(perm)
-        self._max = max(perm)
-        assert len(set(perm)) == self._max + 1
-
-    def __hash__(self):
-        return hash(self._perm)
-
-    def __eq__(self, value: Permutation) -> bool:
-        return self._perm == value._perm
-
-    def __lt__(self, value: Permutation) -> bool:
-        return self._perm < value._perm
-
-    def __getitem__(self, i: int) -> int:
-        try:
-            return self._perm[i]
-        except:
-            return i
-
-    def __repr__(self):
-        return f'Permutation{tuple(self._perm)!r}'
-
-    def __mul__(self,
-                other: Permutation | Cycles | tuple | list) -> Permutation:
-        """Returns the product of two permutation.
-
-        The product of permutations a, b is understood to be the permutation
-        resulting from applying a, then b.
-        """
-        if isinstance(other, Permutation):
-            pass
-        elif isinstance(other, Cycles):
-            other = other.to_permutation()
-        else:
-            other = Permutation(*other)
-        N = max(self._max, other._max) + 1
-        return Permutation(*[other[self[i]] for i in range(N)])
-
-    def __pow__(self, n: int) -> Permutation:
-        if n == 0:
-            return Permutation(0)
-        elif n > 0:
-            n = n % self.order
-            ret = Permutation(0)
-            while n > 0:
-                if n % 2 == 1:
-                    ret *= self
-                self *= self
-                n //= 2
-            return ret
-        else:
-            return self.inv()**(-n)
-
-    def inv(self) -> Permutation:
-        return Permutation(v for _, v in sorted([(v, i)
-                                                 for i, v in enumerate(self)]))
-
-    @functools.cached_property
-    def order(self):
-        return self.to_cycles().order
-
-    def to_cycles(self) -> Cycles:
-        cycles = []
-        rest = list(self._perm)
-        while len(rest) > 0:
-            cycle = [rest.pop(0)]
-            el = self._perm[cycle[-1]]
-            while cycle[0] != el:
-                cycle.append(el)
-                rest.remove(el)
-                el = self._perm[cycle[-1]]
-            if len(cycle) > 1:
-                cycles.append(tuple(cycle))
-        return Cycles(*cycles)
-
-    def to_matrix(self) -> np.ndarray:
-        N = self._max + 1
-        ret = np.zeros((N, N), dtype=np.int8)
-        for i in range(N):
-            ret[i, self[i]] = 1
-        return ret
-
-    def replace(self, expr) -> Permutation:
-        """replaces each part in expr by its image under the permutation."""
-        if isinstance(expr, (tuple, list)):
-            return type(expr)(self.replace(e) for e in expr)
-        else:
-            return self[expr]
 
 
 @functools.total_ordering
 class Cycles():
 
-    __slots__ = ('_cycles', '_support', '_max', '_min')
+    __slots__ = ('_cycles', '_support', '_max', '_min', '_mapping')
 
-    def __init__(self, *cycles, _simplify: bool = True):
+    def __init__(self, *cycles):
+        self._mapping = {}
+        if len(cycles) == 0:
+            self._cycles = ()
+            self._support = ()
+            self._max = 0
+            self._min = 0
+            return
+
         self._support = set()
-        if _simplify:
-            ret = []
-            for cycle in cycles:
-                self._support.update(cycle)
-                i = cycle.index(min(cycle))
-                cycle = cycle[i:] + cycle[:i]
-                ret.append(tuple(cycle))
-            self._cycles = tuple(sorted(ret))
-        else:
-            self._cycles = tuple(cycles)
+        ret = []
+        for cycle in cycles:
+            if len(cycle) <= 1:
+                continue
+            self._support.update(cycle)
+            i = cycle.index(min(cycle))
+            cycle = cycle[i:] + cycle[:i]
+            ret.append(tuple(cycle))
+            for i in range(len(cycle) - 1):
+                self._mapping[cycle[i]] = cycle[i + 1]
+            self._mapping[cycle[-1]] = cycle[0]
+        self._cycles = tuple(sorted(ret))
         self._support = tuple(sorted(self._support))
         if self._support:
             self._max = max(self._support)
@@ -135,13 +50,42 @@ class Cycles():
     def __lt__(self, value: Cycles) -> bool:
         return self._cycles < value._cycles
 
-    def __mul__(self, other: Cycles | Permutation) -> Cycles:
+    def __mul__(self, other: Cycles) -> Cycles:
         """Returns the product of two cycles.
 
         The product of permutations a, b is understood to be the permutation
         resulting from applying a, then b.
         """
-        return (self.to_permutation() * other).to_cycles()
+        support = sorted(set(self.support + other.support), reverse=True)
+        mapping = {
+            a: b
+            for a, b in zip(support, other.replace(self.replace(support)))
+            if a != b
+        }
+        return Cycles._from_sorted_mapping(mapping)
+
+    @staticmethod
+    def _from_sorted_mapping(mapping: dict[int, int]) -> Cycles:
+        c = Cycles()
+        if not mapping:
+            return c
+
+        c._support = tuple(reversed(mapping.keys()))
+        c._max = max(c._support)
+        c._min = min(c._support)
+        c._mapping = mapping.copy()
+
+        cycles = []
+        while len(mapping) > 0:
+            k, el = mapping.popitem()
+            cycle = [k]
+            while k != el:
+                cycle.append(el)
+                el = mapping.pop(el)
+            cycles.append(tuple(cycle))
+        c._cycles = tuple(cycles)
+
+        return c
 
     def __pow__(self, n: int) -> Cycles:
         if n == 0:
@@ -160,11 +104,12 @@ class Cycles():
 
     def inv(self):
         c = Cycles(*[(cycle[0], ) + tuple(reversed(cycle[1:]))
-                     for cycle in self],
+                     for cycle in self._cycles],
                    _simplify=False)
         c._max = self._max
         c._min = self._min
         c._support = self._support
+        c._mapping = {v: k for k, v in self._mapping.items()}
         return c
 
     @functools.cached_property
@@ -189,17 +134,76 @@ class Cycles():
     def __repr__(self):
         return f'Cycles{tuple(self._cycles)!r}'
 
-    def to_permutation(self) -> Permutation:
-        if len(self._support) == 0:
-            return Permutation(0)
-        ret = list(range(self._max + 1))
-        for cycle in self._cycles:
-            for i in range(len(cycle)):
-                ret[cycle[i]] = cycle[(i + 1) % len(cycle)]
-        return Permutation(*ret)
-
     def to_matrix(self) -> np.ndarray:
-        return self.to_permutation().to_matrix()
+        return self(np.eye(self._max + 1, dtype=np.int8))
+
+    def replace(self, expr):
+        """replaces each part in expr by its image under the permutation."""
+        if isinstance(expr, (tuple, list)):
+            return type(expr)(self.replace(e) for e in expr)
+        elif isinstance(expr, Cycles):
+            return Cycles(*[self.replace(cycle) for cycle in expr._cycles])
+        else:
+            return self._mapping.get(expr, expr)
+
+    def _replace(self, x: int) -> int:
+        for cycle in self._cycles:
+            if x in cycle:
+                return cycle[(cycle.index(x) + 1) % len(cycle)]
+
+    def __call__(self, expr: list | tuple | str | bytes | np.ndarray):
+        return permute(expr, self)
+
+
+def permute(expr: list | tuple | str | bytes | np.ndarray, perm: Cycles):
+    """replaces each part in expr by its image under the permutation."""
+    ret = list(expr)
+    for cycle in perm._cycles:
+        i = cycle[0]
+        for j in cycle[1:]:
+            ret[i], ret[j] = ret[j], ret[i]
+    if isinstance(expr, list):
+        return ret
+    elif isinstance(expr, tuple):
+        return tuple(ret)
+    elif isinstance(expr, str):
+        return ''.join(ret)
+    elif isinstance(expr, bytes):
+        return b''.join(ret)
+    elif isinstance(expr, np.ndarray):
+        return np.array(ret)
+    else:
+        return ret
+
+
+def find_permute(expr1: list, expr2: list) -> Cycles:
+    """find the permutation that transform expr1 to expr2"""
+    if len(expr1) != len(expr2):
+        raise ValueError("expr1 and expr2 must have the same length")
+    perm = []
+    support = []
+    for i, (a, b) in enumerate(zip(expr1, expr2)):
+        if type(a) != type(b) or a != b:
+            perm.append((i, a, b))
+            support.append(i)
+    return Cycles(*perm)
+
+
+def random_permution(n: int) -> Cycles:
+    """return a random permutation of n elements"""
+    cycles = []
+    perm = np.random.permutation(n)
+    rest = list(perm)
+    while len(rest) > 0:
+        cycle = [rest.pop(0)]
+        el = perm[cycle[-1]]
+        while cycle[0] != el:
+            cycle.append(el)
+            rest.remove(el)
+            el = perm[cycle[-1]]
+        if len(cycle) > 1:
+            cycles.append(tuple(cycle))
+    return Cycles(*cycles)
 
 
 class PermutationGroup():
@@ -263,7 +267,7 @@ class CyclicGroup(PermutationGroup):
         self.N = N
 
     def __len__(self):
-        return self.N
+        return max(self.N, 1)
 
 
 class DihedralGroup(PermutationGroup):
@@ -282,7 +286,11 @@ class DihedralGroup(PermutationGroup):
         self.N = N
 
     def __len__(self):
-        return 2 * self.N
+        if self.N == 1:
+            return 1
+        elif self.N == 2:
+            return 2
+        return max(2 * self.N, 1)
 
 
 class AbelianGroup(PermutationGroup):
@@ -298,7 +306,7 @@ class AbelianGroup(PermutationGroup):
         super().__init__(generators)
 
     def __len__(self):
-        return np.multiply.reduce(self.n)
+        return max(np.multiply.reduce(self.n), 1)
 
 
 class AlternatingGroup(PermutationGroup):
@@ -318,4 +326,4 @@ class AlternatingGroup(PermutationGroup):
         self.N = N
 
     def __len__(self):
-        return np.math.factorial(self.N) // 2
+        return max(np.math.factorial(self.N) // 2, 1)
