@@ -176,17 +176,42 @@ def permute(expr: list | tuple | str | bytes | np.ndarray, perm: Cycles):
         return ret
 
 
+def _ne(a, b):
+    if isinstance(a, np.ndarray):
+        return not np.allclose(a, b)
+    else:
+        return a != b
+
+
+def _encode(perm: list, codes: dict) -> list:
+    """encode the permutation"""
+    ret = []
+    for x in perm:
+        for k, v in codes.items():
+            if _ne(x, v):
+                continue
+            ret.append(k)
+            break
+        codes.pop(k)
+    return ret
+
+
 def find_permutation(expr1: list, expr2: list) -> Cycles:
     """find the permutation that transform expr1 to expr2"""
     if len(expr1) != len(expr2):
         raise ValueError("expr1 and expr2 must have the same length")
-    perm = []
+    codes = {}
     support = []
+    perm = []
     for i, (a, b) in enumerate(zip(expr1, expr2)):
-        if type(a) != type(b) or a != b:
-            perm.append((i, a, b))
+        if type(a) != type(b) or _ne(a, b):
+            perm.append(b)
             support.append(i)
-    return Cycles(*perm)
+            codes[i] = a
+    if not support:
+        return Cycles()
+    mapping = dict(reversed(zip(support, _encode(perm, codes))))
+    return Cycles._from_sorted_mapping(mapping)
 
 
 def random_permutation(n: int) -> Cycles:
