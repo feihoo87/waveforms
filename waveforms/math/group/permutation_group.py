@@ -176,7 +176,7 @@ def permute(expr: list | tuple | str | bytes | np.ndarray, perm: Cycles):
         return ret
 
 
-def find_permute(expr1: list, expr2: list) -> Cycles:
+def find_permutation(expr1: list, expr2: list) -> Cycles:
     """find the permutation that transform expr1 to expr2"""
     if len(expr1) != len(expr2):
         raise ValueError("expr1 and expr2 must have the same length")
@@ -189,7 +189,7 @@ def find_permute(expr1: list, expr2: list) -> Cycles:
     return Cycles(*perm)
 
 
-def random_permution(n: int) -> Cycles:
+def random_permutation(n: int) -> Cycles:
     """return a random permutation of n elements"""
     cycles = []
     perm = np.random.permutation(n)
