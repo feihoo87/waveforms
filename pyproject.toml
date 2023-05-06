@@ -62,8 +62,7 @@ docs = [
 ]
 
 [project.scripts]
-"wave_server" = "waveforms.server.__main__:main"
-"wave_plot" = "waveforms.visualization.__main__:main"
+"wave" = "waveforms.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/feihoo87/waveforms"

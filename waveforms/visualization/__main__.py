@@ -11,13 +11,19 @@ default_draw_methods = {
 }
 
 
+def load_data(fname):
+    with open(fname, 'rb') as f:
+        data = pickle.load(f)
+    return data
+
+
 def draw(data):
     script = data['meta']['plot_script']
     global_namespace = {'plt': plt, 'np': np, 'result': data}
     exec(script, global_namespace)
 
 
-def draw_error(data, text="No plot script found"):
+def draw_error(data, text="No validate plot script found"):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     ax.text(0.5, 0.5, text, ha='center', va='center')
@@ -26,12 +32,12 @@ def draw_error(data, text="No plot script found"):
 
 
 @click.command()
-@click.argument('fname')
-def main(fname):
-    fname = pathlib.Path(fname)
+@click.argument('fname', default='')
+def plot(fname):
+    """Plot the data in the file."""
     try:
-        with open(fname, 'rb') as f:
-            data = pickle.load(f)
+        fname = pathlib.Path(fname)
+        data = load_data(fname)
         try:
             draw(data)
         except:
@@ -45,4 +51,4 @@ def main(fname):
 
 
 if __name__ == '__main__':
-    main()
+    plot()
