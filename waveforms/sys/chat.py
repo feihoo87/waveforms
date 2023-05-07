@@ -185,7 +185,14 @@ def create_chat_completion(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    resp = response.choices[0].message["content"]
+    try:
+        resp = response.choices[0].message["content"]
+    except:
+        try:
+            return response.error.message
+        except:
+            logger.error(f"Error in create_chat_completion: {response}")
+        raise
     return resp
 
 
@@ -422,6 +429,8 @@ class LocalCache():
 
         Returns: List[str]
         """
+        if self.data.embeddings.shape[0] == 0:
+            return []
         embedding = get_embedding(text)
 
         scores = np.dot(self.data.embeddings, embedding)
