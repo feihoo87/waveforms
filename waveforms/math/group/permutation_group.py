@@ -112,7 +112,7 @@ class Cycles():
         c._mapping = {v: k for k, v in self._mapping.items()}
         return c
 
-    @functools.cached_property
+    @property
     def order(self):
         return np.lcm.reduce([len(cycle) for cycle in self._cycles])
 
@@ -210,7 +210,11 @@ def find_permutation(expr1: list, expr2: list) -> Cycles:
             codes[i] = a
     if not support:
         return Cycles()
-    mapping = dict(reversed(zip(support, _encode(perm, codes))))
+    mapping = {
+        k: v
+        for k, v in reversed(list(zip(support, _encode(perm, codes))))
+        if k != v
+    }
     return Cycles._from_sorted_mapping(mapping)
 
 
@@ -253,6 +257,13 @@ class PermutationGroup():
                 break
             elements = new_elements
         return sorted(gens)
+
+    @property
+    def support(self):
+        support = set()
+        for g in self.generators:
+            support.update(g.support)
+        return sorted(support)
 
     @property
     def elements(self):
