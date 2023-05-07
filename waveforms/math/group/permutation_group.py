@@ -283,6 +283,26 @@ class PermutationGroup():
             self._elements = self._generate(self.generators)
         return self._elements
 
+    def orbits(self):
+        orbit_parts = []
+        for g in self.generators:
+            for cycle in g._cycles:
+                for orbit in orbit_parts:
+                    if set(cycle) & set(orbit):
+                        orbit.update(cycle)
+                        break
+                else:
+                    orbit_parts.append(set(cycle))
+        orbits = []
+        for x in orbit_parts:
+            for y in orbits:
+                if x & y:
+                    y.update(x)
+                    break
+            else:
+                orbits.append(x)
+        return orbits
+
     def __len__(self):
         return len(self.elements)
 
