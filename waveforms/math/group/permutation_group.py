@@ -44,6 +44,9 @@ class Cycles():
     def __hash__(self):
         return hash(self._cycles)
 
+    def is_identity(self):
+        return len(self._cycles) == 0
+
     def __eq__(self, value: Cycles) -> bool:
         return self._cycles == value._cycles
 
@@ -103,9 +106,11 @@ class Cycles():
             return self.inv()**(-n)
 
     def inv(self):
-        c = Cycles(*[(cycle[0], ) + tuple(reversed(cycle[1:]))
-                     for cycle in self._cycles],
-                   _simplify=False)
+        c = Cycles()
+        if not c._cycles:
+            return c
+        c._cycles = tuple([(cycle[0], ) + tuple(reversed(cycle[1:]))
+                           for cycle in self._cycles])
         c._max = self._max
         c._min = self._min
         c._support = self._support
@@ -245,6 +250,10 @@ class PermutationGroup():
     def _generate(generators: list[Cycles]):
         gens = [Cycles()]
         elements = generators.copy()
+        for el in elements:
+            inv_el = el.inv()
+            if inv_el not in elements and inv_el not in gens:
+                elements.append(inv_el)
         while True:
             new_elements = []
             for a, b in chain(product(gens, elements), product(elements, gens),
@@ -252,6 +261,9 @@ class PermutationGroup():
                 c = a * b
                 if c not in gens and c not in elements and c not in new_elements:
                     new_elements.append(c)
+                    inv_c = c.inv()
+                    if inv_c not in gens and inv_c not in elements and inv_c not in new_elements:
+                        new_elements.append(inv_c)
             gens.extend(elements)
             if len(new_elements) == 0:
                 break
