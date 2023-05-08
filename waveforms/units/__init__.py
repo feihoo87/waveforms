@@ -1,6 +1,38 @@
 import numpy as np
 
 
+def get_unit_prefix(value):
+    '''
+    获取 value 合适的单位前缀，以及相应的倍数
+
+    Returns:
+        (prefix, multiple)
+    '''
+    prefixs = [
+        'y', 'z', 'a', 'f', 'p', 'n', 'u', 'm', '', 'k', 'M', 'G', 'T', 'P',
+        'E', 'Z', 'Y'
+    ]
+    if value == 0:
+        return '', 1
+    x = np.floor(np.log10(abs(value)) / 3)
+    x = 0 if x < -8 else x
+    x = 0 if x > 8 else x
+    return prefixs[int(x) + 8], 1000**(x)
+
+
+def valueString(value, unit=""):
+    """
+    将 value 转换为更易读的形式
+
+    >>> valueString(1.243e-7, 's')
+    ... "124.3 ns"
+    >>> valueString(1.243e10, 'Hz')
+    ... "12.43 GHz"
+    """
+    prefix, k = get_unit_prefix(value)
+    return f"{value/k:g} {prefix}{unit}"
+
+
 def dBm2Vpp(x, R0=50):
     """
     Convert dBm to Vpp
