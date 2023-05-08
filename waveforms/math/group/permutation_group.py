@@ -124,13 +124,14 @@ class Cycles():
         return self._support
 
     @property
-    def parity(self):
-        """Returns the parity of the permutation.
+    def signature(self):
+        """Returns the signature of the permutation.
 
-        The parity of a permutation is the parity of the number of cycles of
-        even length.
+        The signature of the permutation is (-1)^n, where n is the number of
+        transpositions of pairs of elements that must be composed to build up
+        the permutation. 
         """
-        return sum(len(cycle) % 2 for cycle in self._cycles) % 2
+        return 1 - 2 * ((len(self._support) - len(self._cycles)) % 2)
 
     def __len__(self):
         return len(self._support)
