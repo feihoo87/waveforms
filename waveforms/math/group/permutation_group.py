@@ -9,23 +9,21 @@ import numpy as np
 @functools.total_ordering
 class Cycles():
 
-    __slots__ = ('_cycles', '_support', '_max', '_min', '_mapping')
+    __slots__ = ('_cycles', '_support', '_mapping')
 
     def __init__(self, *cycles):
         self._mapping = {}
         if len(cycles) == 0:
             self._cycles = ()
             self._support = ()
-            self._max = 0
-            self._min = 0
             return
 
-        self._support = set()
+        support = set()
         ret = []
         for cycle in cycles:
             if len(cycle) <= 1:
                 continue
-            self._support.update(cycle)
+            support.update(cycle)
             i = cycle.index(min(cycle))
             cycle = cycle[i:] + cycle[:i]
             ret.append(tuple(cycle))
@@ -33,13 +31,7 @@ class Cycles():
                 self._mapping[cycle[i]] = cycle[i + 1]
             self._mapping[cycle[-1]] = cycle[0]
         self._cycles = tuple(sorted(ret))
-        self._support = tuple(sorted(self._support))
-        if self._support:
-            self._max = max(self._support)
-            self._min = min(self._support)
-        else:
-            self._max = 0
-            self._min = 0
+        self._support = tuple(sorted(support))
 
     def __hash__(self):
         return hash(self._cycles)
@@ -74,8 +66,6 @@ class Cycles():
             return c
 
         c._support = tuple(reversed(mapping.keys()))
-        c._max = max(c._support)
-        c._min = min(c._support)
         c._mapping = mapping.copy()
 
         cycles = []
@@ -111,27 +101,36 @@ class Cycles():
             return c
         c._cycles = tuple([(cycle[0], ) + tuple(reversed(cycle[1:]))
                            for cycle in self._cycles])
-        c._max = self._max
-        c._min = self._min
         c._support = self._support
         c._mapping = {v: k for k, v in self._mapping.items()}
         return c
 
     @property
     def order(self):
+        """Returns the order of the permutation.
+
+        The order of a permutation is the least integer n such that
+        p**n = e, where e is the identity permutation.
+        """
         return np.lcm.reduce([len(cycle) for cycle in self._cycles])
 
     @property
     def support(self):
+        """Returns the support of the permutation.
+
+        The support of a permutation is the set of elements that are moved by
+        the permutation.
+        """
         return self._support
 
     @property
-    def max(self):
-        return self._max
+    def parity(self):
+        """Returns the parity of the permutation.
 
-    @property
-    def min(self):
-        return self._min
+        The parity of a permutation is the parity of the number of cycles of
+        even length.
+        """
+        return sum(len(cycle) % 2 for cycle in self._cycles) % 2
 
     def __len__(self):
         return len(self._support)
@@ -140,7 +139,11 @@ class Cycles():
         return f'Cycles{tuple(self._cycles)!r}'
 
     def to_matrix(self) -> np.ndarray:
-        return self(np.eye(self._max + 1, dtype=np.int8))
+        """Returns the matrix representation of the permutation."""
+        if self._support:
+            return self(np.eye(max(self._support) + 1, dtype=np.int8))
+        else:
+            return np.eye(0, dtype=np.int8)
 
     def replace(self, expr):
         """replaces each part in expr by its image under the permutation."""
@@ -248,23 +251,16 @@ class PermutationGroup():
 
     @staticmethod
     def _generate(generators: list[Cycles]):
-        gens = [Cycles()]
-        elements = generators.copy()
-        for el in elements:
-            inv_el = el.inv()
-            if inv_el not in elements and inv_el not in gens:
-                elements.append(inv_el)
+        gens = {Cycles()}
+        elements = set(generators) | set(g.inv() for g in generators)
         while True:
-            new_elements = []
+            new_elements = set()
             for a, b in chain(product(gens, elements), product(elements, gens),
                               product(elements, elements)):
                 c = a * b
-                if c not in gens and c not in elements and c not in new_elements:
-                    new_elements.append(c)
-                    inv_c = c.inv()
-                    if inv_c not in gens and inv_c not in elements and inv_c not in new_elements:
-                        new_elements.append(inv_c)
-            gens.extend(elements)
+                if c not in gens and c not in elements:
+                    new_elements.add(c)
+            gens.update(elements)
             if len(new_elements) == 0:
                 break
             elements = new_elements
