@@ -280,7 +280,7 @@ class PermutationGroup():
             self._elements = self._generate(self.generators)
         return self._elements
 
-    def orbits(self):
+    def orbits(self, element: int | None = None):
         orbit_parts = []
         for g in self.generators:
             for cycle in g._cycles:
@@ -297,7 +297,8 @@ class PermutationGroup():
                     y.update(x)
                     break
             else:
-                orbits.append(x)
+                if element is None or element in x:
+                    orbits.append(x)
         return orbits
 
     def __len__(self):
