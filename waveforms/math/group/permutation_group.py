@@ -330,6 +330,8 @@ class PermutationGroup():
         self._make_stabilizer_chain()
 
         for a, b, c in self._stabilizer_chain:
+            if g.is_identity():
+                break
             if set(g.support) & set(a):
                 for x in c.values():
                     if not set((g * x.inv()).support) & set(a):
@@ -343,7 +345,7 @@ class PermutationGroup():
         if g != Cycles():
             raise ValueError
 
-        return h[::-1]
+        return list(chain.from_iterable([g._expr for g in reversed(h)]))
 
 
 class ExCycles(Cycles):
@@ -363,15 +365,19 @@ class ExCycles(Cycles):
         return ret
 
     def _merge(self, expr1, expr2):
-        return expr1 + expr2
-        ret = expr1.copy()
-        for g in expr2:
-            if not ret:
-                ret.append(g)
-            elif not (ret[-1] * g).is_identity():
-                ret.append(g)
+        ret = []
+        stack = []
+        for g in expr1 + expr2:
+            ret.append(g)
+            if stack and g == stack[-1][0]:
+                stack[-1][1] += 1
             else:
-                ret.pop()
+                stack.append([g, 1])
+
+            if stack[-1][0].order == stack[-1][1]:
+                _, n = stack.pop()
+                for _ in range(n):
+                    ret.pop()
         return ret
 
     def inv(self) -> ExCycles:
