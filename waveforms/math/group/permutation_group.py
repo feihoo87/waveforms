@@ -312,18 +312,17 @@ def schreier_tree(alpha: int, orbit: set[int],
     while new_nodes:
         nodes = new_nodes.copy()
         new_nodes.clear()
-        for alpha in nodes:
-            gen = cosetRepresentative[alpha]
-            for g in generators:
-                # image of actual alpha under generator g
-                ag = g.replace(alpha)
-                if ag not in cosetRepresentative:
-                    cosetRepresentative[ag] = gen * g
-                    if ag in orbit:
-                        orbit.remove(ag)
-                    if not orbit:
-                        return cosetRepresentative
-                    new_nodes.add(ag)
+        for alpha, g in product(nodes, generators):
+            h = cosetRepresentative[alpha]
+            # image of actual alpha under generator g
+            ag = g.replace(alpha)
+            if ag not in cosetRepresentative:
+                cosetRepresentative[ag] = h * g
+                if ag in orbit:
+                    orbit.remove(ag)
+                if not orbit:
+                    return cosetRepresentative
+                new_nodes.add(ag)
 
     return cosetRepresentative
 
