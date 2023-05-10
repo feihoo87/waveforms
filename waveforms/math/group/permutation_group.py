@@ -311,10 +311,13 @@ class PermutationGroup():
 
     def __len__(self):
         self._stabilizer_chain()
-        return np.multiply.reduce(self._stabilizer_chain[0])
+        return np.multiply.reduce([len(a) for *_, a in self._stabilizer_chain])
 
     def __getitem__(self, i):
         return self.elements[i]
+
+    def __contains__(self, g):
+        return g in self.elements
 
 
 def schreier_tree(
@@ -379,8 +382,6 @@ def schreier_tree(alpha: int, orbit: set[int],
 
 
 def schreier_sims(group: PermutationGroup):
-    orders = []
-
     generators = [*group.generators]
     orbits = group.orbits()
 
@@ -412,75 +413,13 @@ def schreier_sims(group: PermutationGroup):
                             composition_table.add(generator * sg)
                             composition_table.add(generator * sg_inv)
                         new_generators.add(sg)
-
-        orders.append(len(cosetRepresentative))
         sub_group = PermutationGroup(list(new_generators))
-        stabilizer_chain.append((fixed_points, sub_group))
+        stabilizer_chain.append((fixed_points, sub_group, cosetRepresentative))
         fixed_points = fixed_points + (alpha, )
         generators = list(new_generators)
         orbits = PermutationGroup(generators).orbits()
 
-    return orders, stabilizer_chain
-
-
-class StabilizerChain():
-
-    def __init__(self, stabPoint):
-        self.stabPoint = stabPoint
-        # An index into the base for the point stabilized by this group's subgroup.
-        self.orbitTree = {}
-        # A tree to keep track of the orbit in our group of the point stabilized by our subgroup.
-        self.transversalSet = {}
-        # A set of coset representatives of this group's subgroup.
-        self.generators = set()
-        # A set of permutations generating this group.
-        self.subGroup = None
-        # A pointer to this group's subgroup, or null to mean the trivial group.
-
-    def is_member(self, g: Cycles) -> bool:
-        return g.is_identity() or g in self.generators
-
-    def extend(self, generator: list[Cycles], support: list[int]):
-
-        # This is the major optimization of Schreier-Sims.  Weed out redundant Schreier generators.
-        if (self.is_member(generator)):
-            return
-
-        # Our group just got bigger, but the stabilizer chain rooted at our subgroup is still the same.
-        self.generators.add(generator)
-
-        # Explore all new orbits we can reach with the addition of the new generator.
-        # Note that if the tree was empty to begin with, the identity must be returned
-        # in the set to satisfy a condition of Schreier's lemma.
-        newTerritorySet = self.orbitTree.Grow(generator, support)
-
-        # By the orbit-stabilizer theorem, the permutations in the returned set are
-        # coset representatives of the cosets of our subgroup.
-        for permutation in newTerritorySet:
-            self.transversalSet.Add(permutation)
-
-        # We now apply Schreier's lemma to find new generators for our subgroup.
-        # Some iterations of this loop are redundant, but we ignore that for simplicity.
-        for cosetRepresentative in self.transversalSet:
-
-            for generator in self.generators:
-                schreierGenerator = self.CalcSchreierGenerator(
-                    cosetRepresentative, generator)
-                if (schreierGenerator.is_identity()):
-                    continue
-
-                if self.subGroup is None:
-                    self.subGroup = StabilizerChain(self.stabPoint + 1)
-
-                self.subGroup.extend(schreierGenerator, support)
-
-
-def MakeStabChain(generators: list[Cycles], support: list[int]):
-
-    stab_chain = StabilizerChain(0)
-    for generator in generators:
-        stab_chain.extend(generator, support)
-    return stab_chain
+    return stabilizer_chain
 
 
 class SymmetricGroup(PermutationGroup):
