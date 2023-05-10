@@ -305,19 +305,44 @@ class PermutationGroup():
                     orbits.append(x)
         return orbits
 
-    def _stabilizer_chain(self):
+    def _make_stabilizer_chain(self):
         if self._stabilizer_chain is None:
             self._stabilizer_chain = schreier_sims(self)
 
     def __len__(self):
-        self._stabilizer_chain()
+        self._make_stabilizer_chain()
         return np.multiply.reduce([len(a) for *_, a in self._stabilizer_chain])
 
     def __getitem__(self, i):
         return self.elements[i]
 
-    def __contains__(self, g):
-        return g in self.elements
+    def __contains__(self, perm: Cycles):
+        try:
+            h = self._contains(perm)
+            return True
+        except ValueError:
+            return False
+
+    def _contains(self, perm: Cycles):
+        h = []
+        g = perm
+        self._make_stabilizer_chain()
+
+        for a, b, c in self._stabilizer_chain:
+            if set(g.support) & set(a):
+                for x in c.values():
+                    if not set((g * x.inv()).support) & set(a):
+                        h.append(x)
+                        g = g * x.inv()
+                        break
+                else:
+                    raise ValueError
+            else:
+                pass
+        if g != Cycles():
+            raise ValueError
+
+        return h[::-1]
 
 
 def schreier_tree(
@@ -398,6 +423,7 @@ def schreier_sims(group: PermutationGroup):
         cosetRepresentative = schreier_tree(alpha, orbit.copy(), generators)
         if len(cosetRepresentative) <= 1:
             continue
+
         # schreier lemma loop to get the schreier generators
         new_generators = set()
         composition_table = set()
@@ -413,11 +439,11 @@ def schreier_sims(group: PermutationGroup):
                             composition_table.add(generator * sg)
                             composition_table.add(generator * sg_inv)
                         new_generators.add(sg)
-        sub_group = PermutationGroup(list(new_generators))
-        stabilizer_chain.append((fixed_points, sub_group, cosetRepresentative))
-        fixed_points = fixed_points + (alpha, )
         generators = list(new_generators)
-        orbits = PermutationGroup(generators).orbits()
+        fixed_points = fixed_points + (alpha, )
+        sub_group = PermutationGroup(generators)
+        stabilizer_chain.append((fixed_points, sub_group, cosetRepresentative))
+        orbits = sub_group.orbits()
 
     return stabilizer_chain
 
