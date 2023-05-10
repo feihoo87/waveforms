@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import functools
-from itertools import chain, product
 import operator
+from itertools import chain, product
+
 import numpy as np
+
+
+class _NotContained(Exception):
+    pass
 
 
 @functools.total_ordering
@@ -400,7 +405,7 @@ class PermutationGroup():
         try:
             h = self.express(perm)
             return True
-        except ValueError:
+        except _NotContained:
             return False
 
     def express(self, perm: Cycles):
@@ -418,11 +423,11 @@ class PermutationGroup():
                         g = g * x.inv()
                         break
                 else:
-                    raise ValueError
+                    raise _NotContained
             else:
                 pass
         if g != Cycles():
-            raise ValueError
+            raise _NotContained
 
         return ExCycles._merge(*[g._expr for g in reversed(h)])
 
@@ -456,6 +461,8 @@ def schreier_sims(group: PermutationGroup):
                 if not sg.is_identity():
                     sg_inv = sg.inv()
                     if sg not in composition_table and sg_inv not in composition_table:
+                        composition_table.add(sg)
+                        composition_table.add(sg_inv)
                         for generator in new_generators:
                             composition_table.add(generator * sg)
                             composition_table.add(generator * sg_inv)
