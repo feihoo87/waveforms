@@ -318,6 +318,8 @@ class PermutationGroup():
         return self.elements[i]
 
     def __contains__(self, perm: Cycles):
+        if self._elements:
+            return perm in self._elements
         try:
             h = self.express(perm)
             return True
@@ -512,6 +514,9 @@ class SymmetricGroup(PermutationGroup):
     def __len__(self):
         return np.math.factorial(self.N)
 
+    def __contains__(self, perm: Cycles):
+        return set(perm.support) <= set(range(self.N))
+
 
 class CyclicGroup(PermutationGroup):
 
@@ -595,3 +600,6 @@ class AlternatingGroup(PermutationGroup):
 
     def __len__(self):
         return max(np.math.factorial(self.N) // 2, 1)
+
+    def __contains__(self, perm: Cycles):
+        return perm in SymmetricGroup(self.N) and perm.signature == 1
