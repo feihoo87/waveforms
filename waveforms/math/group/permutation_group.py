@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 from itertools import chain, product
-
+import operator
 import numpy as np
 
 
@@ -347,7 +347,7 @@ class PermutationGroup():
         if g != Cycles():
             raise ValueError
 
-        return list(chain.from_iterable([g._expr for g in reversed(h)]))
+        return ExCycles._merge(*[g._expr for g in reversed(h)])
 
 
 class ExCycles(Cycles):
@@ -366,10 +366,11 @@ class ExCycles(Cycles):
             ret._expr = self._merge(self._expr, [other])
         return ret
 
-    def _merge(self, expr1, expr2):
+    @staticmethod
+    def _merge(*exprs):
         ret = []
         stack = []
-        for g in expr1 + expr2:
+        for g in chain.from_iterable(exprs):
             ret.append(g)
             if stack and g == stack[-1][0]:
                 stack[-1][1] += 1
