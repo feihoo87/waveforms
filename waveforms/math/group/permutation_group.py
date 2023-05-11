@@ -327,14 +327,22 @@ def schreier_tree(alpha: int, orbit: set[int],
     return cosetRepresentative
 
 
-def schreier_sims(group: PermutationGroup):
+def schreier_sims(group: PermutationGroup, base: list[int] | None = None):
     generators = [*group.generators]
     orbits = group.orbits()
 
     stabilizer_chain = []
     fixed_points = ()
 
-    for alpha in group.support:
+    support = []
+
+    if base is None:
+        base = [] if group.base is None else group.base
+    for a in chain(base, group.support):
+        if a not in support:
+            support.append(a)
+
+    for alpha in support:
         for orbit in orbits:
             if alpha in orbit:
                 break
@@ -380,6 +388,8 @@ def schreier_sims(group: PermutationGroup):
         sub_group = PermutationGroup(generators)
         stabilizer_chain.append((fixed_points, sub_group, cosetRepresentative))
         orbits = sub_group.orbits()
+        if len(generators) == 0:
+            break
 
     return stabilizer_chain
 
@@ -388,6 +398,7 @@ class PermutationGroup():
 
     def __init__(self, generators: list[Cycles]):
         self.generators = generators
+        self.base = None
         self._elements = []
         self._fixed_points = ()
         self._stabilizer_chain = None
