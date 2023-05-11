@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import functools
+import logging
 import operator
 from itertools import chain, product
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class _NotContained(Exception):
@@ -388,6 +391,8 @@ def schreier_sims(group: PermutationGroup, base: list[int] | None = None):
         sub_group = PermutationGroup(generators)
         stabilizer_chain.append((fixed_points, sub_group, cosetRepresentative))
         orbits = sub_group.orbits()
+        logger.debug(
+            f"{fixed_points} {len(generators)=} {len(cosetRepresentative)=}")
         if len(generators) == 0:
             break
 
