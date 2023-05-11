@@ -425,8 +425,9 @@ class PermutationGroup():
     def __init__(self, generators: list[Cycles]):
         self.generators = generators
         self._elements = []
-        self._stabilizer_chain: tuple[tuple[int], PermutationGroup,
-                                      dict[int, ExCycles]] = None
+        self.fixed_points = ()
+        self.stabilizer_chain: tuple[tuple[int], PermutationGroup,
+                                     dict[int, ExCycles]] = None
 
     def __repr__(self) -> str:
         return f"PermutationGroup({self.generators})"
@@ -488,13 +489,11 @@ class PermutationGroup():
             return [alpha]
 
     def make_stabilizer_chain(self, base: list[int] | None = None):
-        if len(self.generators) == 0 or self._stabilizer_chain is not None:
+        if len(self.generators) == 0 or self.stabilizer_chain is not None:
             return
 
         generators = [*self.generators]
         orbits = self.orbits()
-
-        fixed_points = ()
 
         if base is None:
             base = []
@@ -517,26 +516,22 @@ class PermutationGroup():
         # schreier lemma loop to get the schreier generators
         schreierGenerators = schreier_sims(alpha, generators,
                                            cosetRepresentative)
-        fixed_points = fixed_points + (alpha, )
+        fixed_points = self.fixed_points + (alpha, )
         sub_group = PermutationGroup(schreierGenerators)
         logger.debug(
             f"{fixed_points} {len(schreierGenerators)=} {len(cosetRepresentative)=}"
         )
+        sub_group.fixed_points = fixed_points
         sub_group.make_stabilizer_chain(base[i:])
-        if sub_group._stabilizer_chain is not None:
-            sub_group._stabilizer_chain = (fixed_points +
-                                           sub_group._stabilizer_chain[0],
-                                           sub_group._stabilizer_chain[1],
-                                           sub_group._stabilizer_chain[2])
-        self._stabilizer_chain = (fixed_points, sub_group, cosetRepresentative)
+        self.stabilizer_chain = (fixed_points, sub_group, cosetRepresentative)
 
     def __len__(self):
         self.make_stabilizer_chain()
         if not self.generators:
             return 1
         else:
-            return len(self._stabilizer_chain[2]) * len(
-                self._stabilizer_chain[1])
+            fixed_points, sub_group, cosetRepresentative = self.stabilizer_chain
+            return len(cosetRepresentative) * len(sub_group)
 
     def __getitem__(self, i):
         return self.elements[i]
@@ -556,9 +551,9 @@ class PermutationGroup():
         if perm.is_identity():
             return ExCycles()
         self.make_stabilizer_chain()
-        if not self.generators or self._stabilizer_chain is None:
+        if not self.generators or self.stabilizer_chain is None:
             raise _NotContained
-        fixed_points, sub_group, cosetRepresentative = self._stabilizer_chain
+        fixed_points, sub_group, cosetRepresentative = self.stabilizer_chain
         if set(fixed_points) & set(perm.support):
             for x in cosetRepresentative.values():
                 if not set((perm * x.inv()).support) & set(fixed_points):
