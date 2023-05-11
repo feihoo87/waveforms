@@ -331,73 +331,37 @@ def schreier_tree_(alpha: int, orbit: set[int],
     return cosetRepresentative
 
 
-def schreier_sims(group: PermutationGroup, base: list[int] | None = None):
-    generators = [*group.generators]
-    orbits = group.orbits()
+def schreier_sims(alpha: int, generators: list[Cycles],
+                  cosetRepresentative: dict[int, ExCycles]) -> list[ExCycles]:
+    # schreier lemma loop to get the schreier generators
+    new_generators = set()
+    composition_table = set()
+    rest_generators = set()
 
-    stabilizer_chain = []
-    fixed_points = ()
+    def _add_new_generator(s, s_inv):
+        composition_table.add(s)
+        composition_table.add(s_inv)
+        for generator in new_generators:
+            composition_table.add(generator * s)
+            composition_table.add(generator * s_inv)
+        new_generators.add(s)
 
-    support = []
-
-    if base is None:
-        base = [] if group.base is None else group.base
-    for a in chain(base, group.support):
-        if a not in support:
-            support.append(a)
-
-    for alpha in support:
-        for orbit in orbits:
-            if alpha in orbit:
-                break
+    for g in generators:
+        if alpha in g.support:
+            rest_generators.add(g)
         else:
-            continue
-        # get the coset representatives for G(alpha)
-        cosetRepresentative = schreier_tree(alpha, generators)
-        if len(cosetRepresentative) <= 1:
-            continue
+            s = g
+            s_inv = g.inv()
+            _add_new_generator(s, s_inv)
 
-        # schreier lemma loop to get the schreier generators
-        new_generators = set()
-        composition_table = set()
-        rest_generators = set()
-
-        for g in generators:
-            if alpha in g.support:
-                rest_generators.add(g)
-            else:
-                s = g
-                s_inv = g.inv()
-                composition_table.add(s)
-                composition_table.add(s_inv)
-                for generator in new_generators:
-                    composition_table.add(generator * s)
-                    composition_table.add(generator * s_inv)
-                new_generators.add(s)
-
-        for (i, s), g in product(cosetRepresentative.items(), rest_generators):
-            sd = cosetRepresentative[g.replace(i)]
-            sg = (s * g) * sd.inv()
-            if not sg.is_identity():
-                sg_inv = sg.inv()
-                if sg not in composition_table and sg_inv not in composition_table:
-                    composition_table.add(sg)
-                    composition_table.add(sg_inv)
-                    for generator in new_generators:
-                        composition_table.add(generator * sg)
-                        composition_table.add(generator * sg_inv)
-                    new_generators.add(sg)
-        generators = list(new_generators)
-        fixed_points = fixed_points + (alpha, )
-        sub_group = PermutationGroup(generators)
-        stabilizer_chain.append((fixed_points, sub_group, cosetRepresentative))
-        orbits = sub_group.orbits()
-        logger.debug(
-            f"{fixed_points} {len(generators)=} {len(cosetRepresentative)=}")
-        if len(generators) == 0:
-            break
-
-    return stabilizer_chain
+    for (i, s), g in product(cosetRepresentative.items(), rest_generators):
+        sd = cosetRepresentative[g.replace(i)]
+        sg = (s * g) * sd.inv()
+        if not sg.is_identity():
+            sg_inv = sg.inv()
+            if sg not in composition_table and sg_inv not in composition_table:
+                _add_new_generator(sg, sg_inv)
+    return list(new_generators)
 
 
 def grow(cosetRepresentative: dict[int, ExCycles], generators: list[Cycles],
@@ -460,10 +424,9 @@ class PermutationGroup():
 
     def __init__(self, generators: list[Cycles]):
         self.generators = generators
-        self.base = None
         self._elements = []
-        self._stabilizer_chain = None
-        self._stabilizer_chain2 = (), None, {}
+        self._stabilizer_chain: tuple[tuple[int], PermutationGroup,
+                                      dict[int, ExCycles]] = None
 
     def __repr__(self) -> str:
         return f"PermutationGroup({self.generators})"
@@ -524,52 +487,86 @@ class PermutationGroup():
                     return orbit
             return [alpha]
 
-    def _make_stabilizer_chain(self):
-        if self._stabilizer_chain is None:
-            self._stabilizer_chain = schreier_sims(self)
-
-    def _make_stablizer_chain2(self):
-        if not self.generators:
+    def make_stabilizer_chain(self, base: list[int] | None = None):
+        if len(self.generators) == 0 or self._stabilizer_chain is not None:
             return
 
+        generators = [*self.generators]
+        orbits = self.orbits()
+
+        fixed_points = ()
+
+        if base is None:
+            base = []
+        for a in self.support:
+            if a not in base:
+                base.append(a)
+
+        for i, alpha in enumerate(base):
+            for orbit in orbits:
+                if alpha in orbit:
+                    break
+            else:
+                continue
+            # get the coset representatives for G(alpha)
+            cosetRepresentative = schreier_tree(alpha, generators)
+            if len(cosetRepresentative) <= 1:
+                continue
+            break
+
+        # schreier lemma loop to get the schreier generators
+        schreierGenerators = schreier_sims(alpha, generators,
+                                           cosetRepresentative)
+        fixed_points = fixed_points + (alpha, )
+        sub_group = PermutationGroup(schreierGenerators)
+        logger.debug(
+            f"{fixed_points} {len(schreierGenerators)=} {len(cosetRepresentative)=}"
+        )
+        sub_group.make_stabilizer_chain(base[i:])
+        if sub_group._stabilizer_chain is not None:
+            sub_group._stabilizer_chain = (fixed_points +
+                                           sub_group._stabilizer_chain[0],
+                                           sub_group._stabilizer_chain[1],
+                                           sub_group._stabilizer_chain[2])
+        self._stabilizer_chain = (fixed_points, sub_group, cosetRepresentative)
+
     def __len__(self):
-        self._make_stabilizer_chain()
-        return np.multiply.reduce([len(a) for *_, a in self._stabilizer_chain])
+        self.make_stabilizer_chain()
+        if not self.generators:
+            return 1
+        else:
+            return len(self._stabilizer_chain[2]) * len(
+                self._stabilizer_chain[1])
 
     def __getitem__(self, i):
         return self.elements[i]
 
     def __contains__(self, perm: Cycles):
+        if perm in self.generators:
+            return True
         if self._elements:
             return perm in self._elements
         try:
-            h = self.express(perm)
+            self.express(perm)
             return True
         except _NotContained:
             return False
 
     def express(self, perm: Cycles):
-        h = []
-        g = perm
-        self._make_stabilizer_chain()
-
-        for a, b, c in self._stabilizer_chain:
-            if g.is_identity():
-                break
-            if set(g.support) & set(a):
-                for x in c.values():
-                    if not set((g * x.inv()).support) & set(a):
-                        h.append(x)
-                        g = g * x.inv()
-                        break
-                else:
-                    raise _NotContained
-            else:
-                pass
-        if g != Cycles():
+        if perm.is_identity():
+            return ExCycles()
+        self.make_stabilizer_chain()
+        if not self.generators or self._stabilizer_chain is None:
             raise _NotContained
-
-        return ExCycles._merge(*[g._expr for g in reversed(h)])
+        fixed_points, sub_group, cosetRepresentative = self._stabilizer_chain
+        if set(fixed_points) & set(perm.support):
+            for x in cosetRepresentative.values():
+                if not set((perm * x.inv()).support) & set(fixed_points):
+                    return sub_group.express(perm * x.inv()) * x
+            else:
+                raise _NotContained
+        else:
+            return sub_group.express(perm)
 
 
 class SymmetricGroup(PermutationGroup):
