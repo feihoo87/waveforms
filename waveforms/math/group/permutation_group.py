@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import bisect
+import copy
 import functools
 import logging
+import math
 import operator
+import random
 import weakref
-from itertools import chain, product
+from itertools import chain, combinations, product
+from typing import Callable, TypeVar
 
 import numpy as np
 
@@ -18,15 +23,19 @@ class _NotContained(Exception):
 @functools.total_ordering
 class Cycles():
 
-    __slots__ = ('_cycles', '_support', '_mapping', '_expr')
+    __slots__ = ('_cycles', '_support', '_mapping', '_expr', '_order')
 
     def __init__(self, *cycles):
         self._mapping = {}
         self._expr: list[Cycles] = []
+        self._order = None
         if len(cycles) == 0:
             self._cycles = ()
             self._support = ()
             return
+
+        if not isinstance(cycles[0], (list, tuple)):
+            cycles = (cycles, )
 
         support = set()
         ret = []
@@ -69,6 +78,9 @@ class Cycles():
         }
         return Cycles._from_sorted_mapping(mapping)
 
+    def __rmul__(self, other: Cycles) -> Cycles:
+        return other.__mul__(self)
+
     @staticmethod
     def _from_sorted_mapping(mapping: dict[int, int]) -> Cycles:
         c = Cycles()
@@ -77,15 +89,17 @@ class Cycles():
 
         c._support = tuple(reversed(mapping.keys()))
         c._mapping = mapping.copy()
+        c._order = 1
 
         cycles = []
-        while len(mapping) > 0:
+        while mapping:
             k, el = mapping.popitem()
             cycle = [k]
             while k != el:
                 cycle.append(el)
                 el = mapping.pop(el)
             cycles.append(tuple(cycle))
+            c._order = math.lcm(c._order, len(cycle))
         c._cycles = tuple(cycles)
 
         return c
@@ -113,6 +127,7 @@ class Cycles():
                            for cycle in self._cycles])
         c._support = self._support
         c._mapping = {v: k for k, v in self._mapping.items()}
+        c._order = self._order
         return c
 
     @property
@@ -122,7 +137,9 @@ class Cycles():
         The order of a permutation is the least integer n such that
         p**n = e, where e is the identity permutation.
         """
-        return np.lcm.reduce([len(cycle) for cycle in self._cycles])
+        if self._order is None:
+            self._order = math.lcm(*[len(cycle) for cycle in self._cycles])
+        return self._order
 
     @property
     def support(self):
@@ -163,59 +180,80 @@ class Cycles():
         elif isinstance(expr, Cycles):
             return Cycles(*[self.replace(cycle) for cycle in expr._cycles])
         else:
-            return self._mapping.get(expr, expr)
+            return self._replace(expr)
 
     def _replace(self, x: int) -> int:
-        for cycle in self._cycles:
-            if x in cycle:
-                return cycle[(cycle.index(x) + 1) % len(cycle)]
+        return self._mapping.get(x, x)
 
-    def __call__(self, expr: list | tuple | str | bytes | np.ndarray):
-        return permute(expr, self)
+    def __call__(self, *cycle):
+        return self * Cycles(*cycle)
+
+    def commutator(self, x: Cycles) -> Cycles:
+        """Return the commutator of ``self`` and ``x``: ``self*x*self.inv()*x.inv()``
+
+        References
+        ==========
+
+        .. [1] https://en.wikipedia.org/wiki/Commutator
+        """
+        return self * x * self.inv() * x.inv()
 
 
-class ExCycles(Cycles):
+class _ExCycles(Cycles):
 
-    def __mul__(self, other: Cycles) -> ExCycles:
+    def __mul__(self, other: Cycles) -> _ExCycles:
         c = super().__mul__(other)
-        ret = ExCycles()
+        ret = _ExCycles()
         if c == Cycles():
             return ret
         ret._cycles = c._cycles
         ret._mapping = c._mapping
         ret._support = c._support
-        if isinstance(other, ExCycles):
+        ret._order = c._order
+        if isinstance(other, _ExCycles):
             ret._expr = self._merge(self._expr, other._expr)
         else:
-            ret._expr = self._merge(self._expr, [other])
+            ret._expr = self._merge(self._expr, [[other, 1]])
+        return ret
+
+    def __rmul__(self, other: Cycles) -> _ExCycles:
+        c = super().__rmul__(other)
+        ret = _ExCycles()
+        if c == Cycles():
+            return ret
+        ret._cycles = c._cycles
+        ret._mapping = c._mapping
+        ret._support = c._support
+        ret._order = c._order
+        if isinstance(other, _ExCycles):
+            ret._expr = self._merge(other._expr, self._expr)
+        else:
+            ret._expr = self._merge([[other, 1]], self._expr)
         return ret
 
     @staticmethod
     def _merge(*exprs):
         ret = []
-        stack = []
-        for g in chain.from_iterable(exprs):
-            ret.append(g)
-            if stack and g == stack[-1][0]:
-                stack[-1][1] += 1
-            else:
-                stack.append([g, 1])
-
-            if stack[-1][0].order == stack[-1][1]:
-                _, n = stack.pop()
-                for _ in range(n):
+        for g, n in chain.from_iterable(exprs):
+            if ret and ret[-1][0] == g:
+                ret[-1][1] = (ret[-1][1] + n) % g.order
+                if ret[-1][1] == 0:
                     ret.pop()
+            else:
+                ret.append([g, n])
         return ret
 
-    def inv(self) -> ExCycles:
+    def inv(self) -> _ExCycles:
         c = super().inv()
-        ret = ExCycles()
+        ret = _ExCycles()
         ret._cycles = c._cycles
         ret._mapping = c._mapping
         ret._support = c._support
+        ret._order = c._order
         ret._expr = []
-        for c in reversed(self._expr):
-            ret._expr.extend([c for _ in range(c.order - 1)])
+        for c, n in reversed(self._expr):
+            m = c.order - n
+            ret._expr.append([c, m])
         return ret
 
 
@@ -299,269 +337,536 @@ def random_permutation(n: int) -> Cycles:
     return Cycles(*cycles)
 
 
-def schreier_tree_(alpha: int, orbit: set[int],
-                   generators: list[Cycles]) -> dict[int, ExCycles]:
-    """constructs the Schreier tree for the group generated by the generators."""
-    # breadth first search to determine the orbit of alpha
-
-    cosetRepresentative = {}
-
-    # group element moving original alpha to actual alpha
-    cosetRepresentative[alpha] = ExCycles()
-    orbit.remove(alpha)
-    if not orbit:
-        return cosetRepresentative
-    new_nodes = {alpha}
-
-    while new_nodes:
-        nodes = new_nodes.copy()
-        new_nodes.clear()
-        for alpha, g in product(nodes, generators):
-            h = cosetRepresentative[alpha]
-            # image of actual alpha under generator g
-            ag = g.replace(alpha)
-            if ag not in cosetRepresentative:
-                cosetRepresentative[ag] = h * g
-                if ag in orbit:
-                    orbit.remove(ag)
-                if not orbit:
-                    return cosetRepresentative
-                new_nodes.add(ag)
-
-    return cosetRepresentative
-
-
-def schreier_sims(alpha: int, generators: list[Cycles],
-                  cosetRepresentative: dict[int, ExCycles]) -> list[ExCycles]:
-    # schreier lemma loop to get the schreier generators
-    new_generators = set()
-    composition_table = set()
-    rest_generators = set()
-
-    def _add_new_generator(s, s_inv):
-        composition_table.add(s)
-        composition_table.add(s_inv)
-        for generator in new_generators:
-            composition_table.add(generator * s)
-            composition_table.add(generator * s_inv)
-        new_generators.add(s)
-
-    for g in generators:
-        if alpha in g.support:
-            rest_generators.add(g)
-        else:
-            s = g
-            s_inv = g.inv()
-            _add_new_generator(s, s_inv)
-
-    for (i, s), g in product(cosetRepresentative.items(), rest_generators):
-        sd = cosetRepresentative[g.replace(i)]
-        sg = (s * g) * sd.inv()
-        if not sg.is_identity():
-            sg_inv = sg.inv()
-            if sg not in composition_table and sg_inv not in composition_table:
-                _add_new_generator(sg, sg_inv)
-    return list(new_generators)
-
-
-def grow(cosetRepresentative: dict[int, ExCycles], generators: list[Cycles],
-         generator: Cycles) -> dict[int, ExCycles]:
-    new_nodes = set()
-    nodes = set(cosetRepresentative.keys())
-
-    if not nodes & set(generator.support):
-        return cosetRepresentative
-
-    rest = nodes.copy()
-    for orbit in PermutationGroup(generators + [generator]).orbits():
-        if set(orbit) & rest:
-            rest.update(orbit)
-    rest = rest - nodes
-
-    def updateCosetRepresentative(ag, h, g, new_nodes, rest):
-        if ag not in cosetRepresentative:
-            cosetRepresentative[ag] = h * g
-            new_nodes.add(ag)
-            try:
-                rest.remove(ag)
-            except:
-                pass
-            if not rest:
-                return True
-        return False
-
-    for alpha in nodes:
-        h = cosetRepresentative[alpha]
-        ag = generator.replace(alpha)
-        finished = updateCosetRepresentative(ag, h, generator, new_nodes, rest)
-        if finished:
-            return cosetRepresentative
-
-    while new_nodes:
-        nodes = new_nodes.copy()
-        new_nodes.clear()
-        for alpha, g in product(nodes, generators + [generator]):
-            h = cosetRepresentative[alpha]
-            # image of actual alpha under generator g
-            ag = g.replace(alpha)
-            finished = updateCosetRepresentative(ag, h, g, new_nodes, rest)
-            if finished:
-                return cosetRepresentative
-
-    return cosetRepresentative
-
-
-def schreier_tree(alpha: int, generators: list[Cycles]) -> dict[int, ExCycles]:
-    """constructs the Schreier tree for the group generated by the generators."""
-    cosetRepresentative = {alpha: ExCycles()}
-    for i, generator in enumerate(generators):
-        cosetRepresentative = grow(cosetRepresentative, generators[:i],
-                                   generator)
-    return cosetRepresentative
-
-
 class PermutationGroup():
 
-    def __init__(self, generators: list[Cycles]):
+    def __init__(self, generators: list[Cycles], rebuild: bool = False):
+        self.rebuild = rebuild
         self.generators = generators
         self._elements = []
-        self.fixed_points = ()
-        self.stabilizer_chain: tuple[tuple[int], PermutationGroup,
-                                     dict[int, ExCycles]] = None
+        self._support = None
+
+        self._order = None
+        self._orbits = None
+        self._center = []
+        self._is_abelian = None
+        self._is_trivial = None
+
+        # these attributes are assigned after running schreier_sims
+        self._base = []
+        self._strong_gens = []
+        self._strong_gens_slp = []
+        self._basic_orbits = []
+        self._transversals: list[dict[int, Cycles]] = []
+        self._transversal_slp = []
 
     def __repr__(self) -> str:
         return f"PermutationGroup({self.generators})"
 
+    def is_trivial(self):
+        """Test if the group is the trivial group.
+
+        This is true if the group contains only the identity permutation.
+        """
+        if self._is_trivial is None:
+            self._is_trivial = len(self.generators) == 0
+        return self._is_trivial
+
+    def is_abelian(self):
+        """Test if the group is Abelian.
+        """
+        if self._is_abelian is not None:
+            return self._is_abelian
+
+        self._is_abelian = True
+        for x, y in combinations(self.generators, 2):
+            if not x * y == y * x:
+                self._is_abelian = False
+                break
+        return True
+
+    def is_subgroup(self, G: PermutationGroup):
+        """Return ``True`` if all elements of ``self`` belong to ``G``."""
+        if not isinstance(G, PermutationGroup):
+            return False
+        if self == G or self.is_trivial():
+            return True
+        if G.order() % self.order() != 0:
+            return False
+        return all(g in G for g in self.generators)
+
+    def generate(self, method: str = "schreier_sims"):
+        if method == "schreier_sims":
+            yield from self.generate_schreier_sims()
+        elif method == "dimino":
+            yield from self.generate_dimino(self.generators)
+
     @staticmethod
-    def _generate(generators: list[Cycles]):
-        gens = {Cycles()}
+    def generate_dimino(generators: list[Cycles]):
+        """Yield group elements using Dimino's algorithm."""
+        e = Cycles()
+        yield e
+        gens = {e}
         elements = set(generators) | set(g.inv() for g in generators)
         while True:
             new_elements = set()
             for a, b in chain(product(gens, elements), product(elements, gens),
                               product(elements, elements)):
                 c = a * b
-                if c not in gens and c not in elements:
+                if c not in gens and c not in elements and c not in new_elements:
                     new_elements.add(c)
+                    yield c
             gens.update(elements)
             if len(new_elements) == 0:
                 break
             elements = new_elements
-        return sorted(gens)
+
+    def generate_schreier_sims(self):
+        """Yield group elements using the Schreier-Sims representation
+        in coset_rank order
+        """
+        if self.is_trivial():
+            yield Cycles()
+            return
+
+        self.schreier_sims()
+        for gens in product(
+                *
+            [list(coset.values()) for coset in reversed(self._transversals)]):
+            yield functools.reduce(operator.mul, gens)
 
     @property
     def support(self):
-        support = set()
-        for g in self.generators:
-            support.update(g.support)
-        return sorted(support)
+        if self._support is None:
+            support = set()
+            for g in self.generators:
+                support.update(g.support)
+            self._support = sorted(support)
+        return self._support
 
     @property
     def elements(self):
         if self._elements == []:
-            self._elements = self._generate(self.generators)
+            for g in self.generate():
+                bisect.insort(self._elements, g)
         return self._elements
 
-    def orbits(self, alpha: int | None = None):
-        orbit_parts = []
-        for g in self.generators:
-            for cycle in g._cycles:
-                for orbit in orbit_parts:
-                    if set(cycle) & set(orbit):
-                        orbit.update(cycle)
-                        break
-                else:
-                    orbit_parts.append(set(cycle))
-        orbits = []
-        for x in orbit_parts:
-            for y in orbits:
-                if x & y:
-                    y.update(x)
-                    break
-            else:
-                orbits.append(x)
-        if alpha is None:
-            return orbits
-        elif isinstance(alpha, int):
-            for orbit in orbits:
+    def random(self, N=1):
+        """Return a random element of the group.
+
+        If N > 1, return a list of N random elements.
+        """
+        self.schreier_sims()
+        transversals = self._transversals
+        orbits = self._basic_orbits
+        ret = []
+        for _ in range(N):
+            g = Cycles()
+            for orbit, coset in zip(orbits, transversals):
+                g *= coset[random.choice(orbit)]
+            ret.append(g)
+        if N == 1:
+            return ret[0]
+        return ret
+
+    @property
+    def base(self):
+        """Return a base from the Schreier-Sims algorithm."""
+        if self._base == []:
+            self.schreier_sims()
+        return self._base
+
+    def orbit(
+        self,
+        alpha: TypeVar['T'],
+        action: Callable[[TypeVar['T'], Cycles], TypeVar['T']] | None = None
+    ) -> list[TypeVar['T']]:
+        """finds the orbit under the group action given by a function `action`
+        """
+        if isinstance(alpha, int) and action is None:
+            for orbit in self.orbits():
                 if alpha in orbit:
                     return orbit
-            return [alpha]
+            else:
+                return [alpha]
+        elif isinstance(alpha, Cycles) and action is None:
+            action = lambda x, y: y * x
+        elif action is None:
+            action = permute
+        orbit = set()
+        for g in self.generate():
+            beta = action(alpha, g)
+            orbit.add(beta)
+        return list(orbit)
 
-    def make_stabilizer_chain(self, base: list[int] | None = None):
-        if len(self.generators) == 0 or self.stabilizer_chain is not None:
+    def orbits(self):
+        if self._orbits is None:
+            orbit_parts = []
+            for g in self.generators:
+                for cycle in g._cycles:
+                    for orbit in orbit_parts:
+                        if set(cycle) & set(orbit):
+                            orbit.update(cycle)
+                            break
+                    else:
+                        orbit_parts.append(set(cycle))
+            orbits = []
+            for x in orbit_parts:
+                for y in orbits:
+                    if x & y:
+                        y.update(x)
+                        break
+                else:
+                    orbits.append(x)
+            self._orbits = orbits
+        return self._orbits
+
+    def schreier_sims(self, base: list[int] | None = None):
+        """Schreier-Sims algorithm.
+
+        Explanation
+        ===========
+
+        It computes the generators of the chain of stabilizers
+        `G > G_{b_1} > .. > G_{b1,..,b_r} > 1`
+        in which `G_{b_1,..,b_i}` stabilizes `b_1,..,b_i`,
+        and the corresponding ``s`` cosets.
+        An element of the group can be written as the product
+        `h_1*..*h_s`.
+
+        We use the incremental Schreier-Sims algorithm.
+
+        Examples
+        ========
+
+        >>> from sympy.combinatorics import Permutation, PermutationGroup
+        >>> a = Permutation([0, 2, 1])
+        >>> b = Permutation([1, 0, 2])
+        >>> G = PermutationGroup([a, b])
+        >>> G.schreier_sims()
+        >>> G.basic_transversals
+        [{0: (2)(0 1), 1: (2), 2: (1 2)},
+            {0: (2), 2: (0 2)}]
+        """
+        if self._transversals and (base is None or base == self._base):
             return
 
-        generators = [*self.generators]
-        orbits = self.orbits()
+        if self.rebuild:
+            Identity = _ExCycles()
+        else:
+            Identity = Cycles()
 
-        if base is None:
-            base = []
-        for a in self.support:
-            if a not in base:
-                base.append(a)
+        base, strong_gens, strong_gens_slp = schreier_sims_incremental(
+            self.generators, base=base, Identity=Identity)
+        self._base = base
+        self._strong_gens = strong_gens
+        self._strong_gens_slp = strong_gens_slp
+        if not base:
+            self._transversals = []
+            self._basic_orbits = []
+            return
 
-        for i, alpha in enumerate(base):
-            for orbit in orbits:
-                if alpha in orbit:
-                    break
+        strong_gens_distr = _distribute_gens_by_base(base, strong_gens)
+
+        # Compute basic orbits and transversals from a base and strong generating set.
+        transversals = []
+        slps = []
+        basic_orbits = []
+        for alpha, gens in zip(base, strong_gens_distr):
+            transversal, slp = _orbit_transversal(gens,
+                                                  alpha,
+                                                  Identity=Identity)
+            basic_orbits.append(list(transversal.keys()))
+            transversals.append(transversal)
+            # rewrite the indices stored in slps in terms of strong_gens
+            for k in slp:
+                slp[k] = [strong_gens.index(gens[s]) for s in slp[k]]
+            slps.append(slp)
+
+        self._transversals = transversals
+        self._basic_orbits = [sorted(x) for x in basic_orbits]
+        self._transversal_slp = slps
+
+    def order(self):
+        if self._order is None:
+            if self.is_trivial():
+                self._order = 1
             else:
-                continue
-            # get the coset representatives for G(alpha)
-            cosetRepresentative = schreier_tree(alpha, generators)
-            if len(cosetRepresentative) <= 1:
-                continue
-            break
+                self.schreier_sims()
+                self._order = math.prod(len(x) for x in self._transversals)
+        return self._order
 
-        # schreier lemma loop to get the schreier generators
-        schreierGenerators = schreier_sims(alpha, generators,
-                                           cosetRepresentative)
-        fixed_points = self.fixed_points + (alpha, )
-        sub_group = PermutationGroup(schreierGenerators)
-        logger.debug(
-            f"{fixed_points} {len(schreierGenerators)=} {len(cosetRepresentative)=}"
-        )
-        sub_group.fixed_points = fixed_points
-        sub_group.make_stabilizer_chain(base[i:])
-        self.stabilizer_chain = (fixed_points, sub_group, cosetRepresentative)
+    def index(self, H: PermutationGroup):
+        """
+        Returns the index of a permutation group.
+
+        Examples
+        ========
+
+        >>> a = Permutation(1,2,3)
+        >>> b =Permutation(3)
+        >>> G = PermutationGroup([a])
+        >>> H = PermutationGroup([b])
+        >>> G.index(H)
+        3
+
+        """
+        if H.is_subgroup(self):
+            return self.order() // H.order()
 
     def __len__(self):
-        self.make_stabilizer_chain()
-        if not self.generators:
-            return 1
-        else:
-            fixed_points, sub_group, cosetRepresentative = self.stabilizer_chain
-            return len(cosetRepresentative) * len(sub_group)
+        return self.order()
 
     def __getitem__(self, i):
         return self.elements[i]
 
     def __contains__(self, perm: Cycles):
-        if perm in self.generators:
+        if perm in self.generators or perm.is_identity():
             return True
         if self._elements:
             return perm in self._elements
         try:
-            self.express(perm)
+            perm = self.coset_factor(perm)
             return True
         except _NotContained:
             return False
 
+    def __eq__(self, other) -> bool:
+        """Return ``True`` if PermutationGroup generated by elements in the
+        group are same i.e they represent the same PermutationGroup.
+        """
+        if not isinstance(other, PermutationGroup):
+            raise TypeError(
+                f"'==' not supported between instances of '{type(self)}' and '{type(other)}'"
+            )
+
+        set_self_gens = set(self.generators)
+        set_other_gens = set(other.generators)
+
+        # before reaching the general case there are also certain
+        # optimisation and obvious cases requiring less or no actual
+        # computation.
+        if set_self_gens == set_other_gens:
+            return True
+
+        # in the most general case it will check that each generator of
+        # one group belongs to the other PermutationGroup and vice-versa
+        for gen1 in set_self_gens:
+            if gen1 not in other:
+                return False
+        for gen2 in set_other_gens:
+            if gen2 not in self:
+                return False
+        return True
+
+    def __lt__(self, other) -> bool:
+        if isinstance(other, PermutationGroup):
+            return self.is_subgroup(other) and self.order() < other.order()
+        else:
+            raise TypeError(
+                f"'<' not supported between instances of '{type(self)}' and '{type(other)}'"
+            )
+
+    def __le__(self, other) -> bool:
+        if isinstance(other, PermutationGroup):
+            return self.is_subgroup(other)
+        else:
+            raise TypeError(
+                f"'<=' not supported between instances of '{type(self)}' and '{type(other)}'"
+            )
+
+    def __mul__(self, other: Cycles):
+        if other in self:
+            return self
+        return Coset(self, other, left=False)
+
+    def __rmul__(self, other: Cycles):
+        if other in self:
+            return self
+        return Coset(self, other, left=True)
+
+    def coset_factor(self, g: Cycles, index=False):
+        """Return ``G``'s (self's) coset factorization of ``g``
+
+        Explanation
+        ===========
+
+        If ``g`` is an element of ``G`` then it can be written as the product
+        of permutations drawn from the Schreier-Sims coset decomposition,
+
+        The permutations returned in ``f`` are those for which
+        the product gives ``g``: ``g = f[n]*...f[1]*f[0]`` where ``n = len(B)``
+        and ``B = G.base``. f[i] is one of the permutations in
+        ``self._basic_orbits[i]``.
+        """
+        self.schreier_sims()
+        factors = []
+        for alpha, coset, orbit in zip(self._base, self._transversals,
+                                       self._basic_orbits):
+            beta = g._replace(alpha)
+            if beta == alpha:
+                if index:
+                    factors.append(0)
+                continue
+            if beta not in coset:
+                raise _NotContained
+            u = coset[beta]
+            if index:
+                factors.append(orbit.index(beta))
+            else:
+                factors.append(u)
+            g = g * u.inv()
+            if g.is_identity():
+                break
+        if not g.is_identity():
+            raise _NotContained
+        return factors
+
+    def coset_rank(self, g):
+        """rank using Schreier-Sims representation.
+
+        Explanation
+        ===========
+
+        The coset rank of ``g`` is the ordering number in which
+        it appears in the lexicographic listing according to the
+        coset decomposition
+
+        The ordering is the same as in G.generate(method='coset').
+        If ``g`` does not belong to the group it returns None.
+        """
+        try:
+            index = self.coset_factor(g, index=True)
+            index = index + [0] * (len(self._transversals) - len(index))
+        except _NotContained:
+            raise IndexError(f"Permutation {g} not contained in group.")
+        rank = 0
+        b = 1
+        for i, coset in zip(index, self._transversals):
+            rank += b * i
+            b = b * len(coset)
+        return rank
+
+    def coset_unrank(self, rank):
+        """unrank using Schreier-Sims representation
+
+        coset_unrank is the inverse operation of coset_rank
+        if 0 <= rank < order; otherwise it returns None.
+
+        """
+        if rank < 0 or rank >= self.order():
+            return None
+        transversals = self._transversals
+        orbits = self._basic_orbits
+        ret = Cycles()
+        for orbit, coset in zip(orbits, transversals):
+            rank, c = divmod(rank, len(coset))
+            ret = coset[orbit[c]] * ret
+        return ret
+
     def express(self, perm: Cycles):
         if perm.is_identity():
-            return ExCycles()
-        self.make_stabilizer_chain()
-        if not self.generators or self.stabilizer_chain is None:
-            raise _NotContained
-        fixed_points, sub_group, cosetRepresentative = self.stabilizer_chain
-        if set(fixed_points) & set(perm.support):
-            for x in cosetRepresentative.values():
-                if not set((perm * x.inv()).support) & set(fixed_points):
-                    return sub_group.express(perm * x.inv()) * x
-            else:
-                raise _NotContained
+            return Cycles()
+        self.schreier_sims()
+        return functools.reduce(operator.mul, self.coset_factor(perm)[::-1])
+
+    def stabilizer_chain(self) -> list[tuple[tuple[int], PermutationGroup]]:
+        r"""
+        Return a chain of stabilizers relative to a base and strong generating
+        set.
+
+        Explanation
+        ===========
+
+        The ``i``-th basic stabilizer `G^{(i)}` relative to a base
+        `(b_1, b_2, \dots, b_k)` is `G_{b_1, b_2, \dots, b_{i-1}}`.
+        """
+        self.schreier_sims()
+        strong_gens = self._strong_gens
+        base = self._base
+        if not base:  # e.g. if self is trivial
+            return []
+        strong_gens_distr = _distribute_gens_by_base(base, strong_gens)
+        basic_stabilizers = []
+        for i, gens in enumerate(strong_gens_distr):
+            basic_stabilizers.append((tuple(base[:i]), PermutationGroup(gens)))
+        basic_stabilizers.append((tuple(base), PermutationGroup([])))
+        return basic_stabilizers
+
+    def stabilizer(self, alpha) -> PermutationGroup:
+        """Return the stabilizer subgroup of ``alpha``."""
+        orb = [alpha]
+        table = {alpha: Cycles()}
+        table_inv = {alpha: Cycles()}
+        used = {}
+        used[alpha] = True
+        stab_gens = []
+        for b in orb:
+            for gen in self.generators:
+                temp = gen[b]
+                if temp not in used:
+                    gen_temp = table[b] * gen
+                    orb.append(temp)
+                    table[temp] = gen_temp
+                    table_inv[temp] = gen_temp.inv()
+                    used[temp] = True
+                else:
+                    schreier_gen = table[b] * gen * table_inv[temp]
+                    if schreier_gen not in stab_gens:
+                        stab_gens.append(schreier_gen)
+        return PermutationGroup(stab_gens)
+
+    def centralizer(self, H: PermutationGroup) -> PermutationGroup:
+        """Return the centralizer of ``H`` in ``self``."""
+        raise NotImplementedError
+
+    def normalizer(self, H: PermutationGroup) -> PermutationGroup:
+        """Return the normalizer of ``H`` in ``self``."""
+        raise NotImplementedError
+
+    def center(self) -> PermutationGroup:
+        """Return the center of group."""
+        return self.centralizer(self)
+
+
+class Coset():
+
+    def __init__(self, H: PermutationGroup, g: Cycles, left: bool = True):
+        self._left = left
+        self._norm = True
+        self.H = H
+        self.g = g
+        for gen in self.H.generators:
+            if gen * self.g not in self.g * self.H:
+                self._norm = False
+                break
+
+    def is_left_coset(self):
+        return self._left
+
+    def is_right_coset(self):
+        return not self._left
+
+    def __contains__(self, perm: Cycles):
+        if self._left:
+            return self.g * perm in self.H
         else:
-            return sub_group.express(perm)
+            return perm * self.g in self.H
+
+    def generate(self):
+        if self._left:
+            for perm in self.H.generate():
+                yield self.g * perm
+        else:
+            for perm in self.H.generate():
+                yield perm * self.g
+
+    def __mul__(self, other: PermutationGroup | Coset) -> Coset:
+        if isinstance(other, PermutationGroup) and other == self.H:
+            return self
+        elif isinstance(other, Coset) and other.H == self.H:
+            return Coset(self.H, self.g * other.g, self._left)
+        else:
+            raise TypeError(f"Cannot multiply {self} by {other}")
 
 
 class SymmetricGroup(PermutationGroup):
@@ -670,3 +975,332 @@ class AlternatingGroup(PermutationGroup):
 
     def __contains__(self, perm: Cycles):
         return perm in SymmetricGroup(self.N) and perm.signature == 1
+
+
+def _strip(h: Cycles, base, orbits, transversals, j, slp=[], slps={}):
+    """
+    optimized _strip, with h, transversals and result in array form
+    if the stripped elements is the identity, it returns False, base_len + 1
+
+    j    h[base[i]] == base[i] for i <= j
+
+    """
+    base_len = len(base)
+    for i in range(j + 1, base_len):
+        beta = h._replace(base[i])
+        if beta == base[i]:
+            continue
+        if beta not in orbits[i]:
+            return h, i + 1, slp
+        u = transversals[i][beta]
+        if h == u:
+            return None, base_len + 1, slp
+        h = h * u.inv()
+        u_slp = slps[i][beta][:]
+        u_slp.reverse()
+        u_slp = [(i, (g, )) for g in u_slp]
+        slp = u_slp + slp
+    return h, base_len + 1, slp
+
+
+def _orbit_transversal(
+    generators: list[Cycles],
+    alpha: int,
+    Identity: Cycles = _ExCycles(),
+) -> tuple[list[tuple[int, Cycles]], dict[int, list[int]]]:
+    r"""Computes a transversal for the orbit of ``alpha`` as a set.
+
+    Explanation
+    ===========
+
+    generators   generators of the group ``G``
+
+    For a permutation group ``G``, a transversal for the orbit
+    `Orb = \{g(\alpha) | g \in G\}` is a set
+    `\{g_\beta | g_\beta(\alpha) = \beta\}` for `\beta \in Orb`.
+    Note that there may be more than one possible transversal.
+    If ``pairs`` is set to ``True``, it returns the list of pairs
+    `(\beta, g_\beta)`. For a proof of correctness, see [1], p.79
+
+    If `slp` is `True`, a dictionary `{beta: slp_beta}` is returned
+    for `\beta \in Orb` where `slp_beta` is a list of indices of the
+    generators in `generators` s.t. if `slp_beta = [i_1 \dots i_n]`
+    `g_\beta = generators[i_n] \times \dots \times generators[i_1]`.
+
+    Examples
+    ========
+
+    >>> from sympy.combinatorics.named_groups import DihedralGroup
+    >>> from sympy.combinatorics.perm_groups import _orbit_transversal
+    >>> G = DihedralGroup(6)
+    >>> _orbit_transversal(G.degree, G.generators, 0, False)
+    [(5), (0 1 2 3 4 5), (0 5)(1 4)(2 3), (0 2 4)(1 3 5), (5)(0 4)(1 3), (0 3)(1 4)(2 5)]
+    """
+    tr = [(alpha, Identity)]
+    slp_dict = {alpha: []}
+    for x, px in tr:
+        px_slp = slp_dict[x]
+        for i, gen in enumerate(generators):
+            temp = gen._replace(x)
+            if temp not in slp_dict:
+                slp_dict[temp] = [i] + px_slp
+                tr.append((temp, px * gen))
+
+    return dict(tr), slp_dict
+
+
+def _distribute_gens_by_base(base: list,
+                             gens: list[Cycles]) -> list[list[Cycles]]:
+    r"""
+    Distribute the group elements ``gens`` by membership in basic stabilizers.
+
+    Explanation
+    ===========
+
+    Notice that for a base `(b_1, b_2, \dots, b_k)`, the basic stabilizers
+    are defined as `G^{(i)} = G_{b_1, \dots, b_{i-1}}` for
+    `i \in\{1, 2, \dots, k\}`.
+
+    Parameters
+    ==========
+
+    base : a sequence of points in `\{0, 1, \dots, n-1\}`
+    gens : a list of elements of a permutation group of degree `n`.
+
+    Returns
+    =======
+    list
+        List of length `k`, where `k` is the length of *base*. The `i`-th entry
+        contains those elements in *gens* which fix the first `i` elements of
+        *base* (so that the `0`-th entry is equal to *gens* itself). If no
+        element fixes the first `i` elements of *base*, the `i`-th element is
+        set to a list containing the identity element.
+
+    Examples
+    ========
+
+    >>> from sympy.combinatorics.named_groups import DihedralGroup
+    >>> from sympy.combinatorics.util import _distribute_gens_by_base
+    >>> D = DihedralGroup(3)
+    >>> D.schreier_sims()
+    >>> D.strong_gens
+    [(0 1 2), (0 2), (1 2)]
+    >>> D.base
+    [0, 1]
+    >>> _distribute_gens_by_base(D.base, D.strong_gens)
+    [[(0 1 2), (0 2), (1 2)],
+     [(1 2)]]
+
+    See Also
+    ========
+
+    _strong_gens_from_distr, _orbits_transversals_from_bsgs,
+    _handle_precomputed_bsgs
+
+    """
+    base_len = len(base)
+    stabs = [[] for _ in range(base_len)]
+    max_stab_index = 0
+    for gen in gens:
+        j = 0
+        while j < base_len - 1 and gen._replace(base[j]) == base[j]:
+            j += 1
+        if j > max_stab_index:
+            max_stab_index = j
+        for k in range(j + 1):
+            stabs[k].append(gen)
+    for i in range(max_stab_index + 1, base_len):
+        stabs[i].append(Cycles())
+    return stabs
+
+
+def schreier_sims_incremental(
+    gens: list[Cycles],
+    base: list[int] | None = None,
+    Identity: Cycles = Cycles(),
+) -> tuple[list[int], list[Cycles], dict[int, list[int]]]:
+    """Extend a sequence of points and generating set to a base and strong
+    generating set.
+
+    Parameters
+    ==========
+    gens
+        The generating set to be extended to a strong generating set
+        relative to the base obtained.
+
+    base
+        The sequence of points to be extended to a base. Optional
+        parameter with default value ``[]``.
+    
+    Identity
+        The identity element of the group. Optional parameter with
+        default value ``Cycles()``.
+
+    Returns
+    =======
+
+    (base, strong_gens, slp_dict)
+        ``base`` is the base obtained, and ``strong_gens`` is the strong
+        generating set relative to it. The original parameters ``base``,
+        ``gens`` remain unchanged.
+        ``slp_dict`` is a dictionary `{g: gens}` for each strong
+        generator `g` where `gens` is a list of strong generators
+        coming before `g` in `strong_gens`, such that the product
+        of the elements of `gens` is equal to `g`.
+
+    Examples
+    ========
+
+    >>> from sympy.combinatorics.named_groups import AlternatingGroup
+    >>> from sympy.combinatorics.testutil import _verify_bsgs
+    >>> A = AlternatingGroup(7)
+    >>> base = [2, 3]
+    >>> seq = [2, 3]
+    >>> base, strong_gens = A.schreier_sims_incremental(base=seq)
+    >>> _verify_bsgs(A, base, strong_gens)
+    True
+    >>> base[:2]
+    [2, 3]
+
+    Notes
+    =====
+
+    This version of the Schreier-Sims algorithm runs in polynomial time.
+    There are certain assumptions in the implementation - if the trivial
+    group is provided, ``base`` and ``gens`` are returned immediately,
+    as any sequence of points is a base for the trivial group. If the
+    identity is present in the generators ``gens``, it is removed as
+    it is a redundant generator.
+    The implementation is described in [1], pp. 90-93.
+
+    See Also
+    ========
+
+    schreier_sims, schreier_sims_random
+
+    """
+    if base is None:
+        base = []
+    else:
+        base = base.copy()
+    support = set()
+    for g in gens:
+        support.update(g.support)
+    # handle the trivial group
+    if len(gens) == 1 and gens[0].is_identity():
+        return base, gens, {gens[0]: [gens[0]]}
+    # remove the identity as a generator
+    gens = [x for x in gens if not x.is_identity()]
+    # make sure no generator fixes all base points
+    for gen in gens:
+        if all(x == gen._replace(x) for x in base):
+            for new in support:
+                if gen._replace(new) != new:
+                    break
+            else:
+                assert None  # can this ever happen?
+            base.append(new)
+    #logger.debug("Schreier-Sims: base = %s, gens = %s", _base, _gens)
+    # distribute generators according to basic stabilizers
+    strong_gens_distr = _distribute_gens_by_base(base, gens)
+    strong_gens_slp = []
+    # initialize the basic stabilizers, basic orbits and basic transversals
+    orbs = {}
+    transversals = {}
+    slps = {}
+    for i, alpha in enumerate(base):
+        transversals[i], slps[i] = _orbit_transversal(strong_gens_distr[i],
+                                                      alpha,
+                                                      Identity=Identity)
+        orbs[i] = list(transversals[i].keys())
+    # main loop: amend the stabilizer chain until we have generators
+    # for all stabilizers
+    base_len = len(base)
+    i = base_len - 1
+    while i >= 0:
+        # this flag is used to continue with the main loop from inside
+        # a nested loop
+        continue_i = False
+        # test the generators for being a strong generating set
+        db = {}
+        for beta, u_beta in list(transversals[i].items()):
+            for j, gen in enumerate(strong_gens_distr[i]):
+                gb = gen._replace(beta)
+                u1 = transversals[i][gb]
+                g1 = u_beta * gen
+                slp = [(i, g) for g in slps[i][beta]]
+                slp = [(i, j)] + slp
+                if g1 != u1:
+                    # test if the schreier generator is in the i+1-th
+                    # would-be basic stabilizer
+                    y = True
+                    try:
+                        u1_inv = db[gb]
+                    except KeyError:
+                        u1_inv = db[gb] = u1.inv()
+                    schreier_gen = g1 * u1_inv
+                    u1_inv_slp = slps[i][gb][:]
+                    u1_inv_slp.reverse()
+                    u1_inv_slp = [(i, (g, )) for g in u1_inv_slp]
+                    slp = u1_inv_slp + slp
+                    h, j, slp = _strip(schreier_gen,
+                                       base,
+                                       orbs,
+                                       transversals,
+                                       i,
+                                       slp=slp,
+                                       slps=slps)
+                    if j <= base_len:
+                        # new strong generator h at level j
+                        y = False
+                    elif h is not None:
+                        # h fixes all base points
+                        y = False
+                        moved = 0
+                        while h._replace(moved) == moved:
+                            moved += 1
+                        base.append(moved)
+                        base_len += 1
+                        strong_gens_distr.append([])
+                    if y is False:
+                        # if a new strong generator is found, update the
+                        # data structures and start over
+                        strong_gens_slp.append((h, slp))
+                        for l in range(i + 1, j):
+                            strong_gens_distr[l].append(h)
+                            transversals[l], slps[l] =\
+                            _orbit_transversal(strong_gens_distr[l],
+                                base[l], Identity=Identity)
+                            orbs[l] = list(transversals[l].keys())
+                        i = j - 1
+                        # continue main loop using the flag
+                        continue_i = True
+                if continue_i is True:
+                    break
+            if continue_i is True:
+                break
+        logger.debug(
+            "Schreier-Sims: i = %s, continue_i = %s, len(transversals[i]) = %s",
+            i, continue_i, len(transversals[i]))
+        if continue_i is True:
+            continue
+        i -= 1
+
+    strong_gens = gens[:]
+
+    # create the list of the strong generators strong_gens and
+    # rewrite the indices of strong_gens_slp in terms of the
+    # elements of strong_gens
+    for k, slp in strong_gens_slp:
+        strong_gens.append(k)
+        for i in range(len(slp)):
+            s = slp[i]
+            if isinstance(s[1], tuple):
+                slp[i] = strong_gens_distr[s[0]][s[1][0]].inv()
+            else:
+                slp[i] = strong_gens_distr[s[0]][s[1]]
+    strong_gens_slp = dict(strong_gens_slp)
+    # add the original generators
+    for g in gens:
+        strong_gens_slp[g] = [g]
+    return (base, strong_gens, strong_gens_slp)
