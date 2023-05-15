@@ -238,8 +238,11 @@ def phi_op(N=5):
     return ifft(T, overwrite_x=True)
 
 
-def H_C(C, N=5):
-    num_qubits = C.shape[0]
+def H_C(C, N=5, ng=None):
+    if ng is None:
+        num_qubits = C.shape[0]
+    else:
+        num_qubits = C.shape[0] - len(ng)
 
     A = np.linalg.inv(mass(C))
 
@@ -250,12 +253,15 @@ def H_C(C, N=5):
     for i in range(num_qubits):
         n_ops.append(
             reduce(np.kron, [n if j == i else I for j in range(num_qubits)]))
+    dim = n_ops[0].shape[0]
+    for v in ng:
+        n_ops.append(np.diag([np.mod(v + 0.5, 1) - 0.5] * dim))
 
     ret = np.zeros_like(n_ops[0], dtype=float)
 
-    for i in range(num_qubits):
-        for j in range(num_qubits):
-            ret += n_ops[i] * A[i, j] / 2 * n_ops[j]
+    for i, n_i in enumerate(n_ops):
+        for j, n_j in enumerate(n_ops):
+            ret += n_i * A[i, j] / 2 * n_j
     return ret
 
 
