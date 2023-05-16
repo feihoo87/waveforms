@@ -3,7 +3,7 @@ import itertools
 import operator
 import random
 from functools import reduce
-from itertools import product
+from itertools import chain, product
 
 import numpy as np
 
@@ -50,7 +50,9 @@ def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
 
 
 def expand_expr(perm):
-    return itertools.chain.from_iterable([[c] * n for c, n in perm._expr])
+    perm.simplify()
+    expr = perm._expr
+    return itertools.chain.from_iterable([[c] * n for c, n in expr])
 
 
 def make_clifford_generators(N):
@@ -172,7 +174,7 @@ def test_express():
 
     generators = make_clifford_generators(N)
 
-    clifford = PermutationGroup(list(generators.values()), rebuild=True)
+    clifford = PermutationGroup(list(generators.values()))
 
     circuit = random_circuit(
         N, DEPTH, ['X/2', 'Y/2', 'X', 'Y', '-X/2', '-Y/2', 'Z', 'S', '-S'],

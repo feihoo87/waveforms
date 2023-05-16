@@ -76,6 +76,21 @@ def U(theta, phi, lambda_, delta=0):
                          [s * np.exp(1j * b), c * np.exp(1j * a)]])
 
 
+def _check_angle(x):
+    x = np.fmod(np.fmod(x, np.pi * 4) + np.pi * 4, np.pi * 4)
+    flag = 0
+    for i in range(3):
+        if x[i] > np.pi * 2:
+            x[i] -= np.pi * 4
+        if abs(x[i]) > np.pi:
+            x[i] -= np.sign(x[i]) * (np.pi * 2)
+            flag += 1
+    x[3] = np.fmod(x[3] + np.pi * flag, np.pi * 2)
+    if abs(x[3]) > np.pi:
+        x[3] -= np.sign(x[3]) * (np.pi * 2)
+    return x
+
+
 def Unitary2Angles(U: np.ndarray) -> np.ndarray:
     if U[0, 0] == 0:
         delta = (np.angle(U[1, 0]) + np.angle(U[0, 1])) / 2
@@ -90,7 +105,7 @@ def Unitary2Angles(U: np.ndarray) -> np.ndarray:
         phi = np.angle(U[1, 0])
         lambda_ = np.angle(-U[0, 1])
         delta += (phi + lambda_) / 2
-    return np.array([theta, phi, lambda_, delta]).real
+    return _check_angle(np.array([theta, phi, lambda_, delta]).real)
 
 
 def rfUnitary(theta, phi):
