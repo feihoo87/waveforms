@@ -612,11 +612,15 @@ class Storage(Tracker):
                 self.dims[level] = self.dims[level] + (key, )
                 if key not in self.storage and isinstance(
                         iter, (list, range, ndarray)):
+                    if key.startswith('__'):
+                        continue
                     self.storage[key] = iter
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
 
         for key, value in constants.items():
+            if key.startswith('__'):
+                continue
             self.storage[key] = value
             self._init_keys.append(key)
             self.vars_dims[key] = ()
