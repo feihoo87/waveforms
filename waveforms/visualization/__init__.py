@@ -369,7 +369,10 @@ def plot_lines(x,
         if y_unit:
             label = f"{ylabel}={l:.3} [{y_unit}]"
         else:
-            label = f"{ylabel}={l:.3}"
+            if isinstance(l, float):
+                label = f"{ylabel}={l:.3}"
+            else:
+                label = f"{ylabel}={l}"
         ax.plot(x, z[i, :], label=label, **kwds)
     ax.legend()
     xlabel = f"{xlabel} [{x_unit}]" if x_unit else xlabel
