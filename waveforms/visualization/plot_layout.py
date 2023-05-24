@@ -1,7 +1,10 @@
+import functools
+import operator
+
 import matplotlib.pyplot as plt
 import numpy as np
 
-layout = {
+layout_example = {
     'qubits': {
         'Q0': {
             'pos': (0, 1)
@@ -53,7 +56,11 @@ def get_shared_coupler(layout, q1, q2):
     return None
 
 
-def get_neighbours(layout, qubit, distance=1, type='qubit'):
+def get_neighbours(layout,
+                   qubit_or_coupler,
+                   distance=1,
+                   type='qubit',
+                   inrange=False):
 
     def _qubits(couplers):
         ret = set()
@@ -70,8 +77,14 @@ def get_neighbours(layout, qubit, distance=1, type='qubit'):
     couplers = []
     neighbors = []
 
-    couplers.append(set(layout['qubits'][qubit]['couplers']))
-    neighbors.append(_qubits(couplers[0]) - {qubit})
+    if qubit_or_coupler in layout['qubits']:
+        couplers.append(set(layout['qubits'][qubit_or_coupler]['couplers']))
+        neighbors.append(_qubits(couplers[0]) - {qubit_or_coupler})
+    elif qubit_or_coupler in layout['couplers']:
+        neighbors.append(set(layout['couplers'][qubit_or_coupler]['qubits']))
+        couplers.append({qubit_or_coupler})
+    else:
+        raise ValueError(f'qubit or coupler {qubit_or_coupler!r} not found')
     distance -= 1
 
     while distance > 0:
@@ -80,9 +93,17 @@ def get_neighbours(layout, qubit, distance=1, type='qubit'):
         distance -= 1
 
     if type == 'qubit':
-        return list(neighbors[-1])
+        if inrange:
+            return list(functools.reduce(operator.or_, neighbors, set()))
+        else:
+            return list(neighbors[-1])
     elif type == 'coupler':
-        return list(couplers[-1])
+        if inrange:
+            if qubit_or_coupler in couplers[0]:
+                couplers = couplers[1:]
+            return list(functools.reduce(operator.or_, couplers, set()))
+        else:
+            return list(couplers[-1])
     else:
         raise ValueError("type must be 'qubit' or 'coupler'")
 
