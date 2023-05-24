@@ -81,6 +81,8 @@ def get_neighbours(layout,
         couplers.append(set(layout['qubits'][qubit_or_coupler]['couplers']))
         neighbors.append(_qubits(couplers[0]) - {qubit_or_coupler})
     elif qubit_or_coupler in layout['couplers']:
+        if type == 'coupler':
+            distance += 1
         neighbors.append(set(layout['couplers'][qubit_or_coupler]['qubits']))
         couplers.append({qubit_or_coupler})
     else:
