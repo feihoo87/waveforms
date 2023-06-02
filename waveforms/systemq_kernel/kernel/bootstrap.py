@@ -21,6 +21,9 @@ def bootstrap(config_path: str = etc / 'bootstrap.json'):
             },
             "repo": {}
         }
+        Path(config_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, 'w') as f:
+            json.dump(config, f, indent=4)
     else:
         with open(config_path) as f:
             config = json.load(f)
