@@ -12,3 +12,16 @@ from .waveform import (D, Waveform, chirp, const, cos, cosh, coshPulse,
                        registerDerivative, samplingPoints, sign, sin, sinc,
                        sinh, square, step, zero)
 from .waveform_parser import wave_eval
+
+
+def _use_systemq():
+    import sys
+    import pathlib
+    import waveforms.systemq_kernel
+
+    path = str(pathlib.Path(waveforms.systemq_kernel.__file__).parent)
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+
+_use_systemq()
