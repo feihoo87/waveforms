@@ -158,7 +158,7 @@ def v2Hermitian(V):
     X = V[:(N**2 - N) // 2]
     Y = V[(N**2 - N) // 2:(N**2 - N)]
     Z = V[(N**2 - N):]
-    H = np.diag(Z / 2).astype(np.complex)
+    H = np.diag(Z / 2).astype(complex)
 
     H[np.triu_indices(N, 1)] = X + 1j * Y
     H += dagger(H)
