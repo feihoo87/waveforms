@@ -1,10 +1,11 @@
 from pathlib import Path
 
 from numpy import mod, pi
+
 from waveforms.qlisp.base import MeasurementTask
 from waveforms.qlisp.library import Library
 from waveforms.qlisp.macro import add_VZ_rule
-from waveforms.waveform import (cos, coshPulse, cosPulse, gaussian, mixing,
+from waveforms.waveform import (cos, coshPulse, cosPulse, gaussian, mixing, pi,
                                 sin, square, zero)
 from waveforms.waveform_parser import wave_eval
 
@@ -26,7 +27,6 @@ def get_frequency_phase(ctx, qubit, phi, level1, level2):
     return freq, phi
 
 
-@lib.opaque('R')
 def R(ctx, qubits, phi=0, level1=0, level2=1):
     qubit, = qubits
 
@@ -68,9 +68,20 @@ def R(ctx, qubits, phi=0, level1=0, level2=1):
         yield ('!add', 'time', width + plateau + buffer), qubit
 
 
+@lib.opaque('R')
+def _R(ctx, qubits, phi=0, level1=0, level2=1):
+    yield from R(ctx, qubits, phi, level1, level2)
+
+
+@lib.opaque('R12')
+def _R12(ctx, qubits, phi=0, level1=0, level2=1):
+    yield from R(ctx, qubits, phi, level1, level2)
+
+
 @lib.opaque('P')
 def P(ctx, qubits, phi):
     import numpy as np
+
     from waveforms.qlisp.assembly import call_opaque
 
     phi += ctx.phases[qubits[0]]
@@ -382,3 +393,23 @@ def CZ(ctx, qubits):
 
     yield ('!add', 'phase', ctx.params['phi1']), qubits[0]
     yield ('!add', 'phase', ctx.params['phi2']), qubits[1]
+
+
+@lib.opaque('Reset')
+def Reset(ctx, qubits):
+    qubit, *_ = qubits
+
+    f12 = ctx.cfg.query(f'gate.R12.{qubit}.params.frequency')
+    duration = ctx.params.get('duration', 1e-6)
+    amp_ef = ctx.params.get('amp_ef', 1.0)
+    amp_f0_g1 = ctx.params.get('amp_f0_g1', 1.0)
+    freq_f0_g1 = ctx.params.get('freq_f0_g1', 1e9)
+
+    wav1 = amp_ef * square(duration) * cos(2 * pi * f12)
+    wav2 = amp_f0_g1 * square(duration) * cos(2 * pi * freq_f0_g1)
+
+    t = ctx.time[qubit]
+
+    yield ('!add', 'waveform', wav1 >> t), ('RF', qubit)
+    yield ('!add', 'waveform', wav2 >> t), ('Z', qubit)
+    yield ('!add', 'time', duration), qubit
