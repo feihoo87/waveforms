@@ -141,6 +141,8 @@ class Task(BaseTask):
         self.__cfg = None
         self.__runtime.arch = get_arch(arch)
         self._hooks: list[Callable[[Task, int, Executor], None]] = []
+        self._init_hooks: list[Callable[[Task, int, Executor], None]] = []
+        self._final_hooks: list[Callable[[Task, int, Executor], None]] = []
 
     @property
     def signal(self):

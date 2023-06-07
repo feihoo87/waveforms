@@ -93,7 +93,12 @@ def clean_side_effects(task: Task,
             pass
         else:
             cmds.append(WRITE(k, v))
-    return executor.feed(task.id, -2, cmds, priority=task.task_priority, name=task.name, next_feed_time=0)
+    return executor.feed(task.id,
+                         -2,
+                         cmds,
+                         priority=task.task_priority,
+                         name=task.name,
+                         next_feed_time=0)
 
 
 def submit_loop(task_queue: PriorityQueue, current_stack: list[Task],
@@ -163,7 +168,7 @@ def _feed_step(task, feed_step, executor):
                                 task.runtime.prog.steps[feed_step].cmds,
                                 extra,
                                 priority=task.task_priority,
-                                name = task.name,
+                                name=task.name,
                                 next_feed_time=30)
         if succeed == 0 and feed_step == 0:
             with task.runtime._status_lock:
@@ -252,8 +257,8 @@ def _save_data(task,
     return last_time, saved_step
 
 
-def _exec_hooks(task, step, executor):
-    for hook in task._hooks:
+def _exec_hooks(task, step, executor, hooks):
+    for hook in hooks:
         hook(task, step, executor)
     time.sleep(0.01)
 
@@ -283,7 +288,15 @@ def task_run_thread(task: Task, kill_event: threading.Event,
         circuit = task.circuits
     else:
         circuit = []
-    executor.create_task(task.id, {'priority':task.task_priority,'user':user,'name':task.name,'circuit':circuit})
+    executor.create_task(
+        task.id, {
+            'priority': task.task_priority,
+            'user': user,
+            'name': task.name,
+            'circuit': circuit
+        })
+    if task._init_hooks:
+        _exec_hooks(task, feed_step, executor, task._init_hooks)
 
     try:
         while True:
@@ -314,7 +327,7 @@ def task_run_thread(task: Task, kill_event: threading.Event,
 
             if feed_more:
                 if task._hooks:
-                    _exec_hooks(task, feed_step, executor)
+                    _exec_hooks(task, feed_step, executor, task._hooks)
                 _feed_step(task, feed_step, executor)
                 feed_step += 1
 
@@ -324,8 +337,10 @@ def task_run_thread(task: Task, kill_event: threading.Event,
             if (feed_finished and
                     task.runtime.finished_step >= task.runtime.compiled_step):
                 # executor.save(task.id, task.data_path)
-                executor.save(task.id, f'{task.data_path}/{task.record.id}', # save checkpoint once the Task is finished
-                              task.result()['index'])
+                executor.save(
+                    task.id,
+                    f'{task.data_path}/{task.record.id}',  # save checkpoint once the Task is finished
+                    task.result()['index'])
                 task.runtime.finished_time = time.time()
                 with task.runtime._status_lock:
                     task.runtime.status = 'finished'
@@ -340,6 +355,8 @@ def task_run_thread(task: Task, kill_event: threading.Event,
         log.exception(f"{task.name}({task.id}) is failed")
         executor.free(task.id)
     finally:
+        if task._final_hooks:
+            _exec_hooks(task, feed_step, executor, task._final_hooks)
         if not side_effect_cleared:
             clean_side_effects(task, executor, task.runtime.keep_last_status)
         _save_data(task)
@@ -446,7 +463,7 @@ def set(key: str, value: Any, cache: bool = False):
     if not cache:
         cmds.append(WRITE(key, value))
     if len(cmds) > 0:
-        succeed = __executor.feed(0, -1, cmds,next_feed_time=0)
+        succeed = __executor.feed(0, -1, cmds, next_feed_time=0)
         if succeed == 0:
             raise RuntimeError(
                 f'Failed to set {key} to {value}, executor busy.')
@@ -552,7 +569,8 @@ def exec(circuit,
          cmds=[],
          no_record=False,
          parent=None,
-         dry_run: bool = False, **kw):
+         dry_run: bool = False,
+         **kw):
     """Execute a circuit.
 
     Parameters:
@@ -581,7 +599,7 @@ def exec(circuit,
                               arch=arch,
                               lib=lib,
                               cfg=cfg,
-                              cmds=cmds)|kw)
+                              cmds=cmds) | kw)
     if parent is not None:
         t.parent = parent.id
         t.runtime.prog.snapshot = parent.cfg.export()
