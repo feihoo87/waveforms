@@ -55,6 +55,43 @@ __system_info = {
     'packages': [],
     'repositories': {}
 }
+__system_hooks = {
+    'before_task_start': [],
+    'after_task_finished': [],
+    'before_task_step': [],
+}
+
+
+def register_hook(hook_name, func):
+    if func not in __system_hooks[hook_name]:
+        __system_hooks[hook_name].append(func)
+    return func
+
+
+def unregister_hook(hook_name, func):
+    if func in __system_hooks[hook_name]:
+        __system_hooks[hook_name].remove(func)
+    return func
+
+
+def unregister_all_hooks(hook_name):
+    if hook_name is None:
+        for k in __system_hooks.keys():
+            unregister_all_hooks(k)
+    elif hook_name in __system_hooks:
+        __system_hooks[hook_name].clear()
+
+
+def before_task_start(func):
+    return register_hook('before_task_start', func)
+
+
+def after_task_finished(func):
+    return register_hook('after_task_finished', func)
+
+
+def before_task_step(func):
+    return register_hook('before_task_step', func)
 
 
 def _stack():
@@ -516,6 +553,15 @@ def create_task(app, args=(), kwds={}):
     task.runtime.id = generate_task_id()
     task.runtime.user = __system_user
     task.runtime.system_info = get_system_info()
+    for fun in __system_hooks['before_task_start']:
+        if fun not in task._init_hooks:
+            task._init_hooks.append(fun)
+    for fun in __system_hooks['before_task_step']:
+        if fun not in task._hooks:
+            task._hooks.append(fun)
+    for fun in __system_hooks['after_task_finished']:
+        if fun not in task._final_hooks:
+            task._final_hooks.append(fun)
     return task
 
 
