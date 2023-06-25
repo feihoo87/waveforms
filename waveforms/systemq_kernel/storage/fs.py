@@ -1,6 +1,10 @@
+import gzip
 import hashlib
+import pickle
 import zlib
 from pathlib import Path
+
+import dill
 
 DATAPATH = Path.home() / 'data'
 CHUNKSIZE = 1024 * 1024 * 4  # 4 MB
@@ -16,10 +20,10 @@ def get_data_path() -> Path:
 
 
 def _save_object(data) -> tuple[str, str]:
-    import gzip
-    import pickle
-
-    data = pickle.dumps(data)
+    try:
+        data = pickle.dumps(data)
+    except:
+        data = dill.dumps(data)
     hashstr = hashlib.sha1(data).hexdigest()
     file = get_data_path(
     ) / 'objects' / hashstr[:2] / hashstr[2:4] / hashstr[4:]
@@ -30,11 +34,12 @@ def _save_object(data) -> tuple[str, str]:
 
 
 def _load_object(file: str) -> bytes:
-    import gzip
-    import pickle
-
     with gzip.open(get_data_path() / file, 'rb') as f:
-        data = pickle.load(f)
+        try:
+            data = pickle.load(f)
+        except:
+            f.seek(0)
+            data = dill.load(f)
     return data
 
 
