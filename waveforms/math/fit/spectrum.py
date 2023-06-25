@@ -15,11 +15,11 @@ def get_2d_spectrum_background(data):
     Returns:
         bg (np.ndarray): background
     """
-    x = np.median(data, axis=0)
-    y = np.median(data, axis=1)
+    x = np.nanmedian(data, axis=0)
+    y = np.nanmedian(data, axis=1)
     x, y = np.meshgrid(x, y)
     bg = x + y
-    offset = np.median(data - bg)
+    offset = np.nanmedian(data - bg)
     return bg - offset
 
 
