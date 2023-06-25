@@ -245,7 +245,15 @@ def _process_classify(data, gate_params_list, signal, classify):
             result['population'].append(p1)
         result['population'] = np.asarray(result['population'])
         for i in range(4):
-           result[f'P{i}'] = populations[i]
+            result[f'P{i}'] = populations[i]
+        for i, gate_params in enumerate(gate_params_list):
+            M = gate_params['params'].get('M', np.eye(4))
+            q = np.linalg.inv(np.asarray(M)) @ populations[:M.shape[0], i]
+            for j, v in enumerate(q):
+                if f'Q{j}' in result:
+                    result[f'Q{j}'].append(v)
+                else:
+                    result[f'Q{j}'] = [v]
     elif signal & Signal.state:
         result['state'] = state
 

@@ -225,6 +225,7 @@ class Scan(App):
              aggregation: None | dict[str, tuple[str, callable]] = None,
              find_dim: None | tuple[str, int | float | complex] = None,
              T=False,
+             figsize=None,
              **kwds):
         import matplotlib.pyplot as plt
         from waveforms.visualization import autoplot
@@ -261,7 +262,9 @@ class Scan(App):
             row += 1
 
         if fig is None:
-            fig, axis = plt.subplots(row, col, figsize=(5 * col, 4 * row))
+            if figsize is None:
+                figsize = (5 * col, 4 * row)
+            fig, axis = plt.subplots(row, col, figsize=figsize)
             #plt.tight_layout()
             axis = np.array([axis]).reshape(row, col)
 
