@@ -1,6 +1,8 @@
-import pickle
 import pathlib
+import pickle
+
 import click
+import dill
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,15 +14,30 @@ default_draw_methods = {
 
 
 def load_data(fname):
+    try:
+        from home.hkxu.tools import get_record_by_id
+        record_id = int(fname)
+        return get_record_by_id(record_id).data
+    except:
+        pass
     with open(fname, 'rb') as f:
-        data = pickle.load(f)
+        try:
+            data = pickle.load(f)
+        except:
+            f.seek(0)
+            data = dill.load(f)
     return data
 
 
-def draw(data):
-    script = data['meta']['plot_script']
-    global_namespace = {'plt': plt, 'np': np, 'result': data}
-    exec(script, global_namespace)
+def draw_common(data):
+    try:
+        script = data['meta']['plot_script']
+        assert script.strip()
+        global_namespace = {'plt': plt, 'np': np, 'result': data}
+        exec(script, global_namespace)
+    except:
+        from home.hkxu.tools import plot_record
+        plot_record(data['meta']['id'])
 
 
 def draw_error(data, text="No validate plot script found"):
@@ -39,7 +56,7 @@ def plot(fname):
         fname = pathlib.Path(fname)
         data = load_data(fname)
         try:
-            draw(data)
+            draw_common(data)
         except:
             default_draw_methods.get(fname.suffix, draw_error)(data)
     except FileNotFoundError:
