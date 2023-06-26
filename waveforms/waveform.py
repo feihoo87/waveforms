@@ -687,6 +687,50 @@ class Waveform:
             ])
         return "$$\n{}\n$$".format(expr)
 
+    def _play(self, time_unit):
+        RATE = 48000
+        y = self.sample(sample_rate=RATE / time_unit)
+        play(y, RATE)
+
+    def play(self, time_unit=1):
+        import multiprocessing as mp
+        p = mp.Process(target=self._play, args=(time_unit, ), daemon=True)
+        p.start()
+
+
+def play(data, rate=48000):
+    import io
+    import pyaudio
+
+    CHUNK = 1024
+
+    max_amp = np.max(np.abs(data))
+
+    if max_amp > 1:
+        data /= max_amp
+
+    data = np.array(2**15 * 0.999 * data, dtype=np.int16)
+    buff = io.BytesIO(data.data)
+    p = pyaudio.PyAudio()
+
+    try:
+        stream = p.open(format=pyaudio.paInt16,
+                        channels=1,
+                        rate=rate,
+                        output=True)
+        try:
+            while True:
+                data = buff.read(CHUNK)
+                if data:
+                    stream.write(data)
+                else:
+                    break
+        finally:
+            stream.stop_stream()
+            stream.close()
+    finally:
+        p.terminate()
+
 
 _zero_waveform = Waveform()
 _one_waveform = Waveform(seq=(_one, ))
