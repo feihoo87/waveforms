@@ -674,6 +674,7 @@ class Storage(Tracker):
             kwds = {}
         self.queue.put_nowait(
             (step.iteration, step.pos, dataframe, kwds, self.mtime))
+        self.flush()
 
     def _append(self, iteration, pos, dataframe, kwds, now):
         for k, v in chain(kwds.items(), dataframe.items()):
