@@ -356,13 +356,36 @@ class Waveform:
         else:
             return min(self.stop, self._tail())
 
-    def sample(self, sample_rate=None, out=None):
+    def sample(self, sample_rate=None, out=None, chunk_size=None):
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
             raise ValueError('Waveform is not initialized')
-        x = np.arange(self.start, self.stop, 1 / sample_rate)
-        return self.__call__(x, out=out)
+        if chunk_size is None:
+            x = np.arange(self.start, self.stop, 1 / sample_rate)
+            return self.__call__(x, out=out)
+        else:
+            return self._sample_iter(sample_rate, chunk_size, out)
+
+    def _sample_iter(self, sample_rate, chunk_size, out):
+        start = self.start
+        start_n = 0
+        length = chunk_size / sample_rate
+        while start < self.stop:
+            if start + length > self.stop:
+                length = self.stop - start
+                stop = self.stop
+                size = round((stop - start) * sample_rate)
+            else:
+                stop = start + length
+                size = chunk_size
+            x = np.linspace(start, stop, size, endpoint=False)
+            if out is not None:
+                yield self.__call__(x, out=out[start_n:])
+            else:
+                yield self.__call__(x)
+            start = stop
+            start_n += chunk_size
 
     def tolist(self):
         ret = [self.max, self.min, self.start, self.stop, self.sample_rate]
@@ -687,14 +710,41 @@ class Waveform:
             ])
         return "$$\n{}\n$$".format(expr)
 
-    def _play(self, time_unit):
-        RATE = 48000
-        y = self.sample(sample_rate=RATE / time_unit)
-        play(y, RATE)
+    def _play(self, time_unit, volume=1.0):
+        import pyaudio
 
-    def play(self, time_unit=1):
+        CHUNK = 1024
+        RATE = 48000
+
+        dynamic_volume = 1.0
+        amp = 2**15 * 0.999 * volume * dynamic_volume
+
+        p = pyaudio.PyAudio()
+        try:
+            stream = p.open(format=pyaudio.paInt16,
+                            channels=1,
+                            rate=RATE,
+                            output=True)
+            try:
+                for data in self.sample(sample_rate=RATE / time_unit,
+                                        chunk_size=CHUNK):
+                    lim = np.abs(data).max()
+                    if lim > 0 and dynamic_volume > 1.0 / lim:
+                        dynamic_volume = 1.0 / lim
+                        amp = 2**15 * 0.99 * volume * dynamic_volume
+                    data = (amp * data).astype(np.int16)
+                    stream.write(bytes(data.data))
+            finally:
+                stream.stop_stream()
+                stream.close()
+        finally:
+            p.terminate()
+
+    def play(self, time_unit=1, volume=1.0):
         import multiprocessing as mp
-        p = mp.Process(target=self._play, args=(time_unit, ), daemon=True)
+        p = mp.Process(target=self._play,
+                       args=(time_unit, volume),
+                       daemon=True)
         p.start()
 
 
