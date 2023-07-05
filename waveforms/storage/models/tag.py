@@ -1,5 +1,8 @@
+from typing import Type
+
 from sqlalchemy import Column, ForeignKey, Integer, String, Table
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Query, Session, aliased, relationship
+from sqlalchemy.orm.exc import NoResultFound
 
 from . import Base
 
@@ -20,7 +23,7 @@ class Tag(Base):
         return f'Tag({self.name!r})'
 
 
-def has_tags(cls: Base) -> Base:
+def has_tags(cls: Type[Base]) -> Type[Base]:
     table = Table(
         f'{cls.__tablename__}_tags', Base.metadata,
         Column('item_id',
@@ -42,3 +45,40 @@ def has_tags(cls: Base) -> Base:
     cls.remove_tag = remove_tag
 
     return cls
+
+
+def get_object_with_tags(session: Session, cls: Type[Base],
+                         *tags: str) -> Query:
+    """
+    Query objects with the given tags.
+
+    Parameters
+    ----------
+    session : :class:`sqlalchemy.orm.Session`
+        The database session.
+    cls : :class:`sqlalchemy.orm.Mapper`
+        The object class.
+    tags : str
+        The tags.
+
+    Returns
+    -------
+    :class:`sqlalchemy.orm.Query`
+        The query.
+    """
+    if isinstance(session, Query):
+        q = session
+    else:
+        q = session.query(cls)
+    if not hasattr(cls, 'tags'):
+        return []
+
+    aliase = {tag: aliased(Tag) for tag in tags}
+
+    for tag, a in aliase.items():
+        q = q.join(a, cls.tags)
+        if '*' in tag:
+            q = q.filter(a.text.like(tag.replace('*', '%')))
+        else:
+            q = q.filter(a.text == tag)
+    return q
