@@ -198,7 +198,13 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
 
     allQubits = set()
 
-    for gate, qubits in qlisp:
+    for gate, *qubits in qlisp:
+        if len(qubits) == 1:
+            qubits = qubits[0]
+        if isinstance(gate, str) and gate.startswith('!'):
+            cmd = tuple([gate, *qubits])
+            _execute(ctx, cmd)
+            continue
         ctx.qlisp.append((gate, qubits))
         if isinstance(qubits, (int, str)):
             qubits = (ctx.qubit(qubits), )
