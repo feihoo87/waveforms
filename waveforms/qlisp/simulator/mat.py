@@ -91,13 +91,17 @@ def _check_angle(x):
     return x
 
 
-def Unitary2Angles(U: np.ndarray) -> np.ndarray:
-    if U[0, 0] == 0:
-        delta = (np.angle(U[1, 0]) + np.angle(U[0, 1])) / 2
-        U /= np.exp(1j * delta)
+def Unitary2Angles(U: np.ndarray, eps: float = 1e-15) -> np.ndarray:
+    if np.abs(U[0, 0]) < eps:
         theta = np.pi
-        phi = np.angle(U[1, 0])
-        lambda_ = -phi
+        delta = (np.angle(U[1, 0]) + np.angle(-U[0, 1])) / 2
+        phi = np.angle(U[1, 0]) - np.angle(-U[0, 1])
+        lambda_ = 0
+    elif np.abs(U[0, 1]) < eps:
+        theta = 0
+        delta = (np.angle(U[0, 0]) + np.angle(U[1, 1])) / 2
+        phi = -(np.angle(U[0, 0]) - np.angle(U[1, 1])) / 2
+        lambda_ = phi
     else:
         delta = np.angle(U[0, 0])
         U = U / np.exp(1j * delta)
