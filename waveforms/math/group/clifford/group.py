@@ -91,9 +91,13 @@ class CliffordGroup(PermutationGroup):
         self.reversed_map = {v: k for k, v in generators.items()}
 
     def matrix_to_circuit(self, mat):
+        perm = self.matrix_to_permutation(mat)
+        return [self.reversed_map[c] for c in expand_expr(perm)]
+
+    def matrix_to_permutation(self, mat):
         assert mat.shape == (
             2**self.N, 2**self.N
         ), f"mat.shape = {mat.shape} != (2**{self.N}, 2**{self.N})"
         perm = find_permutation_for_Unitary(mat, self.N)
         perm = self.express(perm)
-        return [self.reversed_map[c] for c in expand_expr(perm)]
+        return perm
