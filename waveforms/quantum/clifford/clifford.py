@@ -1,9 +1,10 @@
-from pathlib import Path
 import pickle
 import struct
 from itertools import chain, product
+from pathlib import Path
 
 import numpy as np
+from numpy import pi
 
 from ...cache import cache_dir
 from .mat import mat2num, num2mat
@@ -76,6 +77,41 @@ one_qubit_clifford_seq_2 = [
     ('-X/2', 'Z'),
     ('X', 'S'),
     ('Y', 'S')
+] #yapf: disable
+
+
+one_qubit_clifford_seq_3 = [
+    # Paulis
+    ("u3", 0 / 6 * pi, 0 / 6 * pi, 0 / 6 * pi),
+    ("u3", 6 / 6 * pi, -6 / 6 * pi, 0 / 6 * pi),
+    ("u3", 6 / 6 * pi, 0 / 6 * pi, 0 / 6 * pi),
+    ("u3", 0 / 6 * pi, 3 / 6 * pi, 3 / 6 * pi),
+
+    # 2 pi / 3 rotations
+    ("u3", 3 / 6 * pi, -3 / 6 * pi, 0 / 6 * pi),
+    ("u3", 3 / 6 * pi, -3 / 6 * pi, 6 / 6 * pi),
+    ("u3", 3 / 6 * pi, 3 / 6 * pi, 0 / 6 * pi),
+    ("u3", 3 / 6 * pi, 3 / 6 * pi, -6 / 6 * pi),
+    ("u3", 3 / 6 * pi, 0 / 6 * pi, 3 / 6 * pi),
+    ("u3", 3 / 6 * pi, 0 / 6 * pi, -3 / 6 * pi),
+    ("u3", 3 / 6 * pi, -6 / 6 * pi, 3 / 6 * pi),
+    ("u3", 3 / 6 * pi, 6 / 6 * pi, -3 / 6 * pi),
+
+    # pi / 2 rotations
+    ("u3", 3 / 6 * pi, -3 / 6 * pi, 3 / 6 * pi),
+    ("u3", 3 / 6 * pi, 3 / 6 * pi, -3 / 6 * pi),
+    ("u3", 3 / 6 * pi, 0 / 6 * pi, 0 / 6 * pi),
+    ("u3", 3 / 6 * pi, 6 / 6 * pi, -6 / 6 * pi),
+    ("u3", 0 / 6 * pi, 2 / 6 * pi, 2 / 6 * pi),
+    ("u3", 0 / 6 * pi, -2 / 6 * pi, -2 / 6 * pi),
+
+    # Hadamard-like
+    ("u3", 3 / 6 * pi, -6 / 6 * pi, 0 / 6 * pi),
+    ("u3", 3 / 6 * pi, 0 / 6 * pi, 6 / 6 * pi), # Hadamard
+    ("u3", 3 / 6 * pi, 3 / 6 * pi, 3 / 6 * pi),
+    ("u3", 3 / 6 * pi, -3 / 6 * pi, -3 / 6 * pi),
+    ("u3", 6 / 6 * pi, -3 / 6 * pi, 0 / 6 * pi),
+    ("u3", 6 / 6 * pi, 3 / 6 * pi, 0 / 6 * pi)
 ] #yapf: disable
 
 
