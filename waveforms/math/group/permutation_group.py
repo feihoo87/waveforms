@@ -169,7 +169,7 @@ class Cycles():
     def to_matrix(self) -> np.ndarray:
         """Returns the matrix representation of the permutation."""
         if self._support:
-            return self(np.eye(max(self._support) + 1, dtype=np.int8))
+            return permute(np.eye(max(self._support) + 1, dtype=np.int8), self)
         else:
             return np.eye(0, dtype=np.int8)
 
