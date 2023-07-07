@@ -34,8 +34,8 @@ class FileChunk(Base):
 
 
 @event.listens_for(FileChunk, 'before_insert')
-def before_insert_file_chunk(mapper, connection, target):
-    target.chunk_hash, _ = save_chunk(target._chunk)
+def before_insert_file_chunk(mapper, connection, target: FileChunk):
+    target.chunk_hash, target.size = save_chunk(target._chunk)
 
 
 class File(Base):
@@ -77,8 +77,9 @@ def compress_chunks(db: Session):
             FileChunk.compressed == False).limit(100):
         old_chunk_hash = chunk.chunk_hash
         buf = zlib.compress(chunk.chunk)
-        chunk_hash, _ = save_chunk(buf, compressed=True)
+        chunk_hash, size = save_chunk(buf, compressed=True)
         chunk.chunk_hash = chunk_hash
+        chunk.size = size
         chunk.compressed = True
         try:
             db.commit()

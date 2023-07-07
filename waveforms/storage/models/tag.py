@@ -47,6 +47,15 @@ def has_tags(cls: Type[Base]) -> Type[Base]:
     return cls
 
 
+def tag(session: Session, tag_text: str) -> Tag:
+    """Get a tag from the database or create a new if not exists."""
+    try:
+        return session.query(Tag).filter(Tag.text == tag_text).one()
+    except NoResultFound:
+        tag = Tag(text=tag_text)
+        return tag
+
+
 def get_object_with_tags(session: Session, cls: Type[Base],
                          *tags: str) -> Query:
     """
