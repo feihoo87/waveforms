@@ -746,7 +746,6 @@ class Storage(Tracker):
         try:
             data[self.pos[key]] = tmp
         except:
-            print(data.shape, self.pos[key], tmp)
             raise
         self.cache[key] = (data, shape, count)
         return data
