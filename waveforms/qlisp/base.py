@@ -167,8 +167,8 @@ class Context():
     time: dict[str,
                float] = field(default_factory=lambda: defaultdict(lambda: 0))
     addressTable: dict = field(default_factory=dict)
-    waveforms: dict[str, Waveform] = field(
-        default_factory=lambda: defaultdict(zero))
+    waveforms: dict[str, list[Waveform]] = field(
+        default_factory=lambda: defaultdict(list))
     raw_waveforms: dict[tuple[str, ...], Waveform] = field(
         default_factory=lambda: defaultdict(zero))
     measures: dict[int, MeasurementTask] = field(default_factory=dict)

@@ -748,8 +748,30 @@ class Waveform:
         p.start()
 
 
+def wave_sum(*waves):
+    if not waves:
+        return Waveform()
+
+    bounds = list(waves[0].bounds)
+    seq = list(waves[0].seq)
+
+    for wave in waves[1:]:
+        lo = 0
+        for b, s in zip(wave.bounds, wave.seq):
+            i = bisect_left(bounds, b, lo)
+            if bounds[i] != b:
+                bounds.insert(i, b)
+                seq.insert(i, seq[i])
+            for j in range(lo + 1, i + 1):
+                seq[j] = _add(seq[j], s)
+            lo = i
+
+    return Waveform(tuple(bounds), tuple(seq))
+
+
 def play(data, rate=48000):
     import io
+
     import pyaudio
 
     CHUNK = 1024

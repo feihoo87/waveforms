@@ -3,7 +3,7 @@ import inspect
 from numpy import pi
 
 from ..dicttree import NOTSET
-from ..waveform import Waveform, cos, sin, step
+from ..waveform import Waveform, cos, sin, step, wave_sum
 from .base import (ADChannel, AWGChannel, Context, GateConfig, MeasurementTask,
                    MultADChannel, MultAWGChannel, QLispCode, QLispError,
                    create_context, gateName)
@@ -163,7 +163,7 @@ def _addWaveforms(ctx: Context, channel: tuple, wav: Waveform):
     name, *qubits = channel
     ch = ctx.cfg._getAWGChannel(name, *qubits)
     if isinstance(ch, AWGChannel):
-        ctx.waveforms[ch.name] += wav
+        ctx.waveforms[ch.name].append(wav)
     else:
         _addMultChannelWaveforms(ctx, wav, ch)
 
@@ -181,10 +181,10 @@ def _addMultChannelWaveforms(ctx: Context, wav, ch: MultAWGChannel):
             print("    waveform =", w.tolist())
             print("====== ERROR WAVEFORM ======")
             raise
-        ctx.waveforms[ch.I.name] += I
+        ctx.waveforms[ch.I.name].append(I)
     if ch.Q is not None:
         Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
-        ctx.waveforms[ch.Q.name] += Q
+        ctx.waveforms[ch.Q.name].append(Q)
 
 
 def _allocQubits(ctx, qlisp):
@@ -222,9 +222,11 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
     _ctx_update_biases(ctx, ctx)
     ctx.end = max(ctx.time.values())
 
+    waveforms = {ch: wave_sum(*waves) for ch, waves in ctx.waveforms.items()}
+
     code = QLispCode(cfg=ctx.cfg,
                      qlisp=ctx.qlisp,
-                     waveforms=dict(ctx.waveforms),
+                     waveforms=waveforms,
                      measures=dict(ctx.measures),
                      end=ctx.end)
     return code
