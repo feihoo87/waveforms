@@ -646,7 +646,7 @@ class Waveform:
     def __lshift__(self, time):
         return self >> (-time)
 
-    def __call__(self, x, frag=False, out=None):
+    def __call__(self, x, frag=False, out=None, accumulate=False):
         if isinstance(x, (int, float, complex)):
             return self.__call__(np.array([x]))[0]
         range_list = np.searchsorted(x, self.bounds)
@@ -666,10 +666,14 @@ class Waveform:
         if not frag:
             if out is None:
                 out = np.zeros_like(x, dtype=dtype)
-            else:
+            elif not accumulate:
                 out *= 0
-            for start, stop, part in ret:
-                out[start:stop] = part
+            if accumulate:
+                for start, stop, part in ret:
+                    out[start:stop] += part
+            else:
+                for start, stop, part in ret:
+                    out[start:stop] = part
             return out
         else:
             return ret
@@ -746,6 +750,34 @@ class Waveform:
                        args=(time_unit, volume),
                        daemon=True)
         p.start()
+
+
+class WaveVStack(Waveform):
+
+    def __init__(self, wlist):
+        self.wlist = wlist
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+
+    def __call__(self, x, frag=False, out=None):
+        out = np.zeros_like(x, dtype=complex)
+        for w in self.wlist:
+            w(x, frag, out, accumulate=True)
+        return out.real
+
+    def simplify(self):
+        wav = wave_sum(*self.wlist)
+        wav.start = self.start
+        wav.stop = self.stop
+        wav.sample_rate = self.sample_rate
+        return wav
+
+    def __rshift__(self, time):
+        return WaveVStack([w >> time for w in self.wlist])
+
+    def _repr_latex_(self):
+        return r"\sum_{i=1}^{" + f"{len(self.wlist)}" + r"}" + r"f_i(t)"
 
 
 def wave_sum(*waves):
