@@ -761,9 +761,10 @@ class WaveVStack(Waveform):
         self.sample_rate = None
 
     def __call__(self, x, frag=False, out=None):
+        assert frag is False, 'WaveVStack does not support frag mode'
         out = np.zeros_like(x, dtype=complex)
         for w in self.wlist:
-            w(x, frag, out, accumulate=True)
+            w(x, False, out, accumulate=True)
         return out.real
 
     def simplify(self):
@@ -775,6 +776,27 @@ class WaveVStack(Waveform):
 
     def __rshift__(self, time):
         return WaveVStack([w >> time for w in self.wlist])
+
+    def __add__(self, other):
+        if isinstance(other, WaveVStack):
+            return WaveVStack(self.wlist + other.wlist)
+        elif isinstance(other, Waveform):
+            return WaveVStack(self.wlist + [other])
+        else:
+            return WaveVStack(self.wlist + [const(other)])
+
+    def __radd__(self, v):
+        return self + v
+
+    def __mul__(self, other):
+        if isinstance(other, Waveform):
+            other = other.simplify()
+            return WaveVStack([w * other for w in self.wlist])
+        else:
+            return WaveVStack([w * other for w in self.wlist])
+
+    def __rmul__(self, v):
+        return self * v
 
     def _repr_latex_(self):
         return r"\sum_{i=1}^{" + f"{len(self.wlist)}" + r"}" + r"f_i(t)"
