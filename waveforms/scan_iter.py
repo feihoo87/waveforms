@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import chain, count
+from multiprocessing import Lock
 from queue import Empty, Queue
 from typing import Any, Callable, Iterable, Sequence, Type
 
@@ -558,6 +559,7 @@ class Storage(Tracker):
         self.save_kwds = save_kwds
         self.queue = Queue()
         self._queue_buffer = None
+        self._lock = Lock()
 
     def init(self, loops: dict, functions: dict, constants: dict, graph: dict,
              order: list):
@@ -708,6 +710,10 @@ class Storage(Tracker):
                 self.storage[k].append(v)
 
     def flush(self, block=False):
+        with self._lock:
+            self._flush(block=block)
+
+    def _flush(self, block=False):
         if self._queue_buffer is not None:
             iteration, pos, fut, kwds, now = self._queue_buffer
             if fut.done() or block:
