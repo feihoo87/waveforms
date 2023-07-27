@@ -6,25 +6,41 @@ class DataPicker():
 
     def __init__(self, ax=None):
         self.points_and_text = {}
-        self.line = None
+        self.points = None
+        self.hline = None
+        self.vline = None
+        self.text = None
         if ax is None:
             ax = plt.gca()
         self.ax = ax
         self.ax.figure.canvas.mpl_connect('button_press_event', self.on_click)
+        # self.ax.figure.canvas.mpl_connect('motion_notify_event', self.on_move)
+        self.ax.figure.canvas.mpl_connect('key_press_event', self.on_key_press)
         self.mode = 'pick'
 
     def on_key_press(self, event):
-        if event.key == 'p':
+        if event.key == 'a':
             if self.mode != 'pick':
                 self.mode = 'pick'
             else:
                 self.mode = 'default'
 
+    def on_move(self, event):
+        if event.inaxes is self.ax:
+            # self.hline = self.ax.axhline(y=np.nan, color='r', lw=1)
+            # self.vline = self.ax.axvline(x=np.nan, color='r', lw=1)
+            # self.text = self.ax.text(0, 0, '', verticalalignment='center')
+            self.hline.set_ydata(event.ydata)
+            self.vline.set_xdata(event.xdata)
+            self.text.set_position((event.xdata, event.ydata))
+            self.text.set_text(f'({event.xdata:.2f}, {event.ydata:.2f})')
+            self.ax.draw()
+
     def on_click(self, event):
         if self.mode != 'pick':
             return
         # 鼠标左键的button值为1
-        if event.button == 1 and event.inaxes is not None:
+        if event.button == 1 and event.inaxes is self.ax:
             point = (event.xdata, event.ydata)
             text = self.ax.text(point[0],
                                 point[1],
@@ -32,13 +48,13 @@ class DataPicker():
                                 verticalalignment='center')
             self.points_and_text[point] = text
             x, y = self.get_xy()
-            if self.line is None:
-                self.line, = self.ax.plot(x, y, 'ro')
+            if self.points is None:
+                self.points, = self.ax.plot(x, y, 'ro')
             else:
-                self.line.set_data(x, y)
+                self.points.set_data(x, y)
             self.ax.draw()
 
-        elif event.button == 3 and event.inaxes is not None:
+        elif event.button == 3 and event.inaxes is self.ax:
             for point, text in list(self.points_and_text.items()):
                 point_xdisplay, point_ydisplay = self.ax.transData.transform_point(
                     point)
@@ -50,10 +66,10 @@ class DataPicker():
                     self.points_and_text.pop(point)
                     if self.points_and_text:
                         x, y = self.get_xy()
-                        self.line.set_data(x, y)
+                        self.points.set_data(x, y)
                     else:
-                        self.line.remove()
-                        self.line = None
+                        self.points.remove()
+                        self.points = None
                     self.ax.draw()
                     break
 
