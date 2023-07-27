@@ -3,7 +3,7 @@ import inspect
 from numpy import pi
 
 from ..dicttree import NOTSET
-from ..waveform import Waveform, cos, sin, step, wave_sum
+from ..waveform import Waveform, WaveVStack, cos, sin, step
 from .base import (ADChannel, AWGChannel, Context, GateConfig, MeasurementTask,
                    MultADChannel, MultAWGChannel, QLispCode, QLispError,
                    create_context, gateName)
@@ -222,7 +222,7 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
     _ctx_update_biases(ctx, ctx)
     ctx.end = max(ctx.time.values())
 
-    waveforms = {ch: wave_sum(*waves) for ch, waves in ctx.waveforms.items()}
+    waveforms = {ch: WaveVStack(waves) for ch, waves in ctx.waveforms.items()}
 
     code = QLispCode(cfg=ctx.cfg,
                      qlisp=ctx.qlisp,
