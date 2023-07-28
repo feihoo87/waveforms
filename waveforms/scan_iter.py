@@ -536,11 +536,14 @@ class Storage(Tracker):
         The modification time of the tracker.
     """
 
-    def __init__(self,
-                 storage: dict = None,
-                 shape: tuple = (),
-                 save_kwds: bool | Sequence[str] = True,
-                 frozen_keys: tuple = ()):
+    def __init__(
+            self,
+            storage: dict = None,
+            shape: tuple = (),
+            save_kwds: bool | Sequence[str] = True,
+            frozen_keys: tuple = (),
+            ignores: tuple = (),
+    ):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
         self.storage = storage if storage is not None else {}
@@ -550,6 +553,7 @@ class Storage(Tracker):
         self.iteration = {}
         self._init_keys = list(self.storage.keys())
         self._frozen_keys = frozen_keys
+        self._ignores = ignores
         self._key_levels = ()
         self.depends = {}
         self.dims = {}
@@ -674,13 +678,23 @@ class Storage(Tracker):
                 }
         else:
             kwds = {}
+
+        if isinstance(dataframe, dict):
+            dataframe = self._prune(dataframe)
         self.queue.put_nowait(
             (step.iteration, step.pos, dataframe, kwds, self.mtime))
         self.flush()
 
+    def _prune(self, dataframe: dict[str, Any]) -> dict[str, Any]:
+        return {
+            k: v
+            for k, v in dataframe.items() if k not in self._ignores
+            and k not in self._frozen_keys and not k.startswith('__')
+        }
+
     def _append(self, iteration, pos, dataframe, kwds, now):
         for k, v in chain(kwds.items(), dataframe.items()):
-            if k in self._frozen_keys:
+            if k in self._frozen_keys or k in self._ignores:
                 continue
             if k.startswith('__'):
                 continue
@@ -717,7 +731,8 @@ class Storage(Tracker):
         if self._queue_buffer is not None:
             iteration, pos, fut, kwds, now = self._queue_buffer
             if fut.done() or block:
-                self._append(iteration, pos, fut.result(), kwds, now)
+                self._append(iteration, pos, self._prune(fut.result()), kwds,
+                             now)
                 self._queue_buffer = None
             else:
                 return
@@ -728,7 +743,8 @@ class Storage(Tracker):
                     self._queue_buffer = (iteration, pos, dataframe, kwds, now)
                     return
                 else:
-                    self._append(iteration, pos, dataframe.result(), kwds, now)
+                    self._append(iteration, pos,
+                                 self._prune(dataframe.result()), kwds, now)
             else:
                 self._append(iteration, pos, dataframe, kwds, now)
 
@@ -820,6 +836,7 @@ class Storage(Tracker):
             'mtime': self.mtime,
             '_init_keys': self._init_keys,
             '_frozen_keys': self._frozen_keys,
+            '_ignores': self._ignores,
             '_key_levels': self._key_levels,
             'save_kwds': self.save_kwds,
         }
