@@ -369,7 +369,7 @@ def get_threshold_info(s0, s1, thr=None, phi=None):
             [np.zeros_like(s0, dtype=float),
              np.ones_like(s1, dtype=float)])
         X = np.c_[np.real(data), np.imag(data)]
-        clf = svm.LinearSVC()
+        clf = svm.LinearSVC(dual='auto')
         clf.fit(X, target)
         A, B, C = clf.coef_[0, 0], clf.coef_[0, 1], clf.intercept_[0]
         phi = np.arctan2(B, A)
