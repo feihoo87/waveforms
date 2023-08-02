@@ -8,7 +8,7 @@ from .readout import (cdf, classify, classify_data, count_state, count_to_diag,
                       mult_gaussian_pdf, readout_distribution,
                       uninstall_classify_method)
 from .simple import (complex_amp_to_real, find_cross_point, fit_circle,
-                     fit_cosine, fit_cross_point, fit_pole, goodness_of_fit,
-                     inv_poly, lin_fit, poly_fit)
+                     fit_cosine, fit_cross_point, fit_max, fit_pole,
+                     goodness_of_fit, inv_poly, lin_fit, poly_fit)
 from .spectrum import (fit_transmon_spectrum, get_2d_spectrum_background,
                        transmon_spectrum, transmon_spectrum_fast)
