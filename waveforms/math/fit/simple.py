@@ -95,8 +95,7 @@ def poly_fit(x_data, y_data, degree=20, selectors=[]):
         err = (y_fit - y_data)**2
         thr = np.mean(err) * a + np.median(err) * b
         mask = err < thr
-        model.fit(x_train[mask],
-                  np.array(y_data)[mask])
+        model.fit(x_train[mask], np.array(y_data)[mask])
         y_fit = model.predict(x_train)
 
     try:
@@ -185,6 +184,19 @@ def find_cross_point(z1, z2, z3, z4):
 def fit_pole(x, y):
     a, b, c = np.polyfit(x, y, 2)
     return -0.5 * b / a, c - 0.25 * b**2 / a
+
+
+def fit_max(x, y, lim=None, deg=6):
+    if lim is None:
+        lim = x[0], x[-1]
+    mask = (x >= lim[0]) * (x <= lim[1])
+    x, y = x[mask], y[mask]
+    a = np.polyfit(x, y, deg)
+    poles = np.roots(np.polyder(a))
+    poles = poles[np.abs(poles.imag) < 1e-12].real
+    poles = poles[(poles >= lim[0]) * (poles <= lim[1])]
+    poles = poles[np.polyval(np.polyder(a, 2), poles) < 0]
+    return poles[np.argmax(np.polyval(a, poles))]
 
 
 def fit_cosine(data, repeat=1, weight=None, x=None):
