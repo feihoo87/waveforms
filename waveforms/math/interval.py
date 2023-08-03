@@ -249,6 +249,9 @@ class Interval():
         else:
             raise TypeError(f"Cannot add interval with {type(other)} {other}.")
 
+    def __radd__(self, other: int | float) -> Self:
+        return self + other
+
     def __sub__(self, other: int | float) -> Self:
         if isinstance(other, (int, float)):
             return Interval([interval - other for interval in self.intervals])
@@ -260,6 +263,9 @@ class Interval():
             return Interval([interval * other for interval in self.intervals])
         else:
             raise TypeError(f"Cannot add interval with {type(other)} {other}.")
+
+    def __rmul__(self, other: int | float) -> Self:
+        return self * other
 
     def __truediv__(self, other: int | float) -> Self:
         if isinstance(other, (int, float)):
