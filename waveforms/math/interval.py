@@ -1,8 +1,12 @@
 import ast
 import bisect
 import functools
-import math
-from typing import Self
+
+try:
+    from typing import Self
+except:
+    from typing import TypeVar
+    Self = TypeVar('Self')
 
 import numpy as np
 from pyparsing import Forward, Literal, Optional, Or, Regex, Suppress
