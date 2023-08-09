@@ -218,14 +218,17 @@ def seq2mat(seq, U=None):
 
 
 regesterGateMatrix('U', U, 1)
+regesterGateMatrix('u1', lambda p: U(theta=0, phi=0, lambda_=p), 1)
+regesterGateMatrix('u2', lambda phi, lam: U(np.pi / 2, phi, lam), 1)
+regesterGateMatrix('u3', U, 1)
 regesterGateMatrix('P', lambda p: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('rfUnitary', rfUnitary, 1)
-regesterGateMatrix('R', partial(rfUnitary, theta=np.pi / 2), 1)
+regesterGateMatrix('R', lambda phi: rfUnitary(np.pi / 2, phi), 1)
 regesterGateMatrix('Rx', partial(rfUnitary, phi=0), 1)
 regesterGateMatrix('Ry', partial(rfUnitary, phi=np.pi / 2), 1)
 regesterGateMatrix('Rz', lambda p: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('fSim', fSim, 2)
-regesterGateMatrix('Cphase', partial(fSim, theta=0), 2)
+regesterGateMatrix('Cphase', lambda phi: fSim(theta=0, phi=phi), 2)
 
 # one qubit
 regesterGateMatrix('I', np.array([[1, 0], [0, 1]]))
