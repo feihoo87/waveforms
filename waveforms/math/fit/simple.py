@@ -196,7 +196,9 @@ def fit_max(x, y, lim=None, deg=6):
     poles = poles[np.abs(poles.imag) < 1e-12].real
     poles = poles[(poles >= lim[0]) * (poles <= lim[1])]
     poles = poles[np.polyval(np.polyder(a, 2), poles) < 0]
-    return poles[np.argmax(np.polyval(a, poles))]
+    x0 = poles[np.argmax(np.polyval(a, poles))]
+    y0 = np.polyval(a, x0)
+    return x0, y0
 
 
 def fit_cosine(data, repeat=1, weight=None, x=None):
