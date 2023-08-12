@@ -169,7 +169,7 @@ def _call_func_with_kwds(func, args, kwds):
     try:
         return func(*args, **kw)
     except:
-        print(args, kw, kwds, sig.parameters.keys())
+        print(func.__name__, args, kw, kwds, sig.parameters.keys())
         raise
 
 
@@ -239,7 +239,8 @@ def _generate_kwds(keys, iters, kwds, iteration, limit):
 def _send_feedback(generator, feedback):
     if hasattr(generator, 'ask') and hasattr(generator, 'tell') and hasattr(
             generator, 'get_result'):
-        generator.tell(*feedback)
+        generator.tell(
+            *[x.result() if isinstance(x, Future) else x for x in feedback])
 
 
 def _feedback(iters):
@@ -647,7 +648,11 @@ class Storage(Tracker):
                 elif v[0] not in self.dims:
                     self.dims[v[0]] = (k, )
 
-    def feed(self, step: StepStatus, dataframe: dict, store=False, **options):
+    def feed(self,
+             step: StepStatus,
+             dataframe: dict | Future,
+             store=False,
+             **options):
         """
         Feed the results of the step to the storage.
 
@@ -727,26 +732,41 @@ class Storage(Tracker):
         with self._lock:
             self._flush(block=block)
 
+    def _dataframe_done(self, dataframe: Future | dict) -> bool:
+        if isinstance(dataframe, Future):
+            return dataframe.done()
+        else:
+            return all(x.done() for x in dataframe.values()
+                       if isinstance(x, Future))
+
+    def _dataframe_result(self, dataframe: Future | dict) -> dict:
+        if isinstance(dataframe, Future):
+            return dataframe.result()
+        else:
+            return {
+                k: v.result() if isinstance(v, Future) else v
+                for k, v in dataframe.items()
+            }
+
     def _flush(self, block=False):
         if self._queue_buffer is not None:
-            iteration, pos, fut, kwds, now = self._queue_buffer
-            if fut.done() or block:
-                self._append(iteration, pos, self._prune(fut.result()), kwds,
-                             now)
+            iteration, pos, dataframe, kwds, now = self._queue_buffer
+            if self._dataframe_done(dataframe) or block:
+                self._append(iteration, pos,
+                             self._prune(self._dataframe_result(dataframe)),
+                             kwds, now)
                 self._queue_buffer = None
             else:
                 return
         while not self.queue.empty():
             iteration, pos, dataframe, kwds, now = self.queue.get()
-            if isinstance(dataframe, Future):
-                if not dataframe.done() and not block:
-                    self._queue_buffer = (iteration, pos, dataframe, kwds, now)
-                    return
-                else:
-                    self._append(iteration, pos,
-                                 self._prune(dataframe.result()), kwds, now)
+            if not self._dataframe_done(dataframe) and not block:
+                self._queue_buffer = (iteration, pos, dataframe, kwds, now)
+                return
             else:
-                self._append(iteration, pos, dataframe, kwds, now)
+                self._append(iteration, pos,
+                             self._prune(self._dataframe_result(dataframe)),
+                             kwds, now)
 
     def _get_array(self, key, shape, count):
         import numpy as np
