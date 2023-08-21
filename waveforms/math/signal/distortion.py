@@ -4,7 +4,7 @@ from typing import Sequence
 import numpy as np
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
 from scipy.optimize import curve_fit
-from scipy.signal import fftconvolve, lfilter
+from scipy.signal import fftconvolve, lfilter, lfiltic
 
 
 def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
@@ -192,30 +192,77 @@ def correct_reflection(sig, A, tau, sample_rate=None):
         raise ValueError('sample_rate is not given')
 
 
+def combine_filters(
+    filters: list[tuple[np.ndarray,
+                        np.ndarray]]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    combine filters
+
+    Args:
+        filters (list): list of (b, a) array like, numerator (b) and denominator
+        (a) polynomials of the IIR filter. See scipy.signal.lfilter for more.
+
+    Returns:
+        tuple: (b, a) array like, numerator (b) and denominator (a)
+        polynomials of the combined filter. See scipy.signal.lfilter for more.
+    """
+    b, a = np.poly1d([1.0]), np.poly1d([1.0])
+    for b_, a_ in filters:
+        b = b * np.poly1d(b_)
+        a = a * np.poly1d(a_)
+    return b.coeffs, a.coeffs
+
+
 def predistort(sig: np.ndarray,
                filters: list = None,
-               ker: np.ndarray = None) -> np.ndarray:
-    if filters is None:
-        filters = []
-    for b, a in filters:
-        sig = lfilter(b, a, sig)
+               ker: np.ndarray = None,
+               initial: float = 0.0,
+               initial_x: np.ndarray | None = None,
+               initial_y: np.ndarray | None = None,
+               zi: np.ndarray | None = None,
+               return_zf: bool = False) -> np.ndarray:
+    if filters is not None:
+        b, a = combine_filters(filters)
+        if zi is None:
+            if initial_x is None:
+                initial_x = np.full((len(b) - 1, ), initial)
+            else:
+                initial_x = np.asarray(initial_x)[:len(b) - 1]
+            if initial_y is None:
+                initial_y = np.full((len(a) - 1, ), initial)
+            else:
+                initial_y = np.asarray(initial_y)[:len(a) - 1]
+            zi = lfiltic(
+                b,
+                a,
+                initial_y,
+                initial_x,
+            )
+        sig, zf = lfilter(b, a, sig, zi=zi)
 
     if ker is None:
-        return sig
+        if return_zf:
+            return sig, zf
+        else:
+            return sig
 
     size = len(sig)
     sig = np.hstack((np.zeros_like(sig), sig, np.zeros_like(sig)))
     start = size + len(ker) // 2
     stop = start + size
-    return fftconvolve(sig, ker, mode='full')[start:stop]
+    points = fftconvolve(sig, ker, mode='full')[start:stop]
+    if return_zf:
+        return points, zf
+    else:
+        return points
 
 
-def distort(points, params, sample_rate):
+def distort(points, params, sample_rate, initial=0.0):
     filters = []
     for amp, tau in np.asarray(params).reshape(-1, 2):
         b, a = exp_decay_filter(amp, abs(tau), sample_rate)
         filters.append((b, a))
-    return predistort(points, filters)
+    return predistort(points, filters, initial=initial)
 
 
 def phase_curve(t, params, df_dphi, pulse_width, start, wav, sample_rate):
@@ -240,6 +287,7 @@ def phase_curve(t, params, df_dphi, pulse_width, start, wav, sample_rate):
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+
     from waveforms import square
 
     data = np.load('Z_distortion.npz')
