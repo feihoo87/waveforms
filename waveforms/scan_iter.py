@@ -2,7 +2,7 @@ import bisect
 import inspect
 import warnings
 from abc import ABC, abstractclassmethod
-from concurrent.futures import Future
+from concurrent.futures import Executor, Future
 from dataclasses import dataclass, field
 from datetime import datetime
 from graphlib import TopologicalSorter
@@ -167,6 +167,13 @@ def _call_func_with_kwds(func, args, kwds):
         if k in list(sig.parameters.keys())[len(args):]
     }
     try:
+        args = [
+            arg.result() if isinstance(arg, Future) else arg for arg in args
+        ]
+        kw = {
+            k: v.result() if isinstance(v, Future) else v
+            for k, v in kw.items()
+        }
         return func(*args, **kw)
     except:
         print(func.__name__, args, kw, kwds, sig.parameters.keys())
@@ -249,7 +256,7 @@ def _feedback(iters):
             _send_feedback(generator, feedback)
 
 
-def _call_functions(functions, kwds, order):
+def _call_functions(functions, kwds, order, pool: Executor | None = None):
     vars = []
     for i, ready in enumerate(order):
         rest = []
@@ -257,7 +264,10 @@ def _call_functions(functions, kwds, order):
             if k in kwds:
                 continue
             elif k in functions:
-                kwds[k] = _try_to_call(functions[k], (), kwds)
+                if pool is None:
+                    kwds[k] = _try_to_call(functions[k], (), kwds)
+                else:
+                    kwds[k] = pool.submit(_try_to_call, functions[k], (), kwds)
                 vars.append(k)
             else:
                 rest.append(k)
@@ -271,14 +281,18 @@ def _call_functions(functions, kwds, order):
         return order[i:], vars
 
 
-def _args_generator(loops: list, kwds: dict[str,
-                                            Any], level: int, pos: tuple[int,
-                                                                         ...],
-                    vars: list[tuple[str]], filter: Callable[..., bool] | None,
-                    functions: dict[str, Callable], trackers: list[Tracker],
-                    pipes: dict[str | tuple[str, ...],
-                                FeedbackPipe], order: list[str]):
-    order, local_vars = _call_functions(functions, kwds, order)
+def _args_generator(loops: list,
+                    kwds: dict[str, Any],
+                    level: int,
+                    pos: tuple[int, ...],
+                    vars: list[tuple[str]],
+                    filter: Callable[..., bool] | None,
+                    functions: dict[str, Callable],
+                    trackers: list[Tracker],
+                    pipes: dict[str | tuple[str, ...], FeedbackPipe],
+                    order: list[str],
+                    pool: Executor | None = None):
+    order, local_vars = _call_functions(functions, kwds, order, pool)
     if len(loops) == level and level > 0:
         if order:
             raise TypeError(f'Unresolved functions: {order}')
@@ -409,6 +423,7 @@ def scan_iters(loops: dict[str | tuple[str, ...],
                constants: dict[str, Any] = {},
                trackers: list[Tracker] = [],
                level_marker: bool = False,
+               pool: Executor | None = None,
                **kwds) -> Iterable[StepStatus]:
     """
     Scan the given iterable of iterables.
@@ -500,7 +515,8 @@ def scan_iters(loops: dict[str | tuple[str, ...],
                                 functions=functions,
                                 trackers=trackers,
                                 pipes={},
-                                order=order):
+                                order=order,
+                                pool=pool):
         if isinstance(step, (Begin, End)):
             if level_marker:
                 if last_step is not None:
