@@ -1,4 +1,4 @@
-from itertools import repeat
+from itertools import repeat, zip_longest
 from typing import Sequence
 
 import numpy as np
@@ -211,6 +211,27 @@ def combine_filters(
         b = b * np.poly1d(b_)
         a = a * np.poly1d(a_)
     return b.coeffs, a.coeffs
+
+
+def factor_filter(b, a):
+    """
+    factor filter
+
+    Args:
+        b (array_like): numerator polynomial of the IIR filter.
+        a (array_like): denominator polynomial of the IIR filter.
+
+    Returns:
+        list: list of (b, a) array like, numerator (b) and denominator
+    """
+    b, a = np.poly1d(b), np.poly1d(a)
+    p = a.roots
+    q = b.roots
+    b_amp = (b[0] / a[0])**(1 / max(len(q), len(p)))
+    filters = []
+    for a_, b_ in zip_longest(p, q, fillvalue=0):
+        filters.append(([b_amp, -b_amp * b_], [1, -a_]))
+    return filters
 
 
 def predistort(sig: np.ndarray,
