@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.constants as const
+from scipy.signal import convolve
 
 
 def Svv(f, T, Z=lambda f: 50 * np.ones_like(f)):
@@ -154,11 +155,12 @@ def lorentzianGaussian(x, x0, gamma, sigma):
     elif sigma == 0:
         return lorentzian(x, x0, gamma)
     else:
-        t = np.arange(-3 * sigma, 3 * sigma, x[1] - x[0])
-        t -= t.mean()
-        ker = gaussian(t, 0, sigma)
+        ker = gaussian(x - x.mean(), 0, sigma)
         ker /= ker.sum()
-        return np.convolve(lorentzian(x, x0, gamma), ker, mode='same')
+        return convolve(lorentzian(x, x0, gamma),
+                        ker,
+                        mode='same',
+                        method='fft')
 
 
 def lorentzianSpace(f0, gamma, numOfPoints):
@@ -189,7 +191,7 @@ def peaks(x, peaks, background=0):
         elif shape == 'lorentzian':
             ret += amp * lorentzian(x, center, width)
         else:
-            ret += amp * lorentzian(x, center, width)
+            ret += amp * lorentzianAmp(x, center, width)
 
     return ret + background
 

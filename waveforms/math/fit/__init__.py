@@ -1,5 +1,6 @@
 from ..bayes import bayesian_correction
 from .delay import calc_delays, fit_relative_delay
+from .peak import fit_peaks, peaks
 from .readout import (cdf, classify, classify_data, count_state, count_to_diag,
                       fit_readout_distribution, fit_readout_distribution2,
                       gaussian_cdf, gaussian_cdf_inv, gaussian_pdf,
