@@ -6,7 +6,7 @@ from typing import Optional
 
 from waveforms.qlisp.base import QLispCode, Signal
 from waveforms.qlisp.commands import COMMAND, DataMap
-from waveforms.scan_iter import StepStatus
+from waveforms.scan.base import StepStatus
 
 
 @dataclass
