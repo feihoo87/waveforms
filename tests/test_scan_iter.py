@@ -1,6 +1,9 @@
 import numpy as np
-from waveforms.scan_iter import *
 import pytest
+
+from waveforms.scan.base import (BaseOptimizer, Begin, End, OptimizerConfig,
+                                 StepStatus, scan_iters)
+from waveforms.storage.base_storage import Storage
 
 
 class FindPeak(BaseOptimizer):
@@ -181,9 +184,10 @@ def test_scan_iter3():
                 for i in range(N)
             ]),
         },
-        'functions':
-        {f"z{i}": lambda i=i, **kw: kw[f"x{i}"]
-         for i in range(N)}
+        'functions': {
+            f"z{i}": lambda i=i, **kw: kw[f"x{i}"]
+            for i in range(N)
+        }
     }
     for step, args in zip(scan_iters(**info), scan_iter2()):
         for k in ['x0', 'x1', 'x2', 'y0', 'y1', 'y2', 'z0', 'z1', 'z2']:
