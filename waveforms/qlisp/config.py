@@ -7,15 +7,20 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
+
 from waveforms.baseconfig import BaseConfig, Trait
 
 from .base import (ABCCompileConfigMixin, ADChannel, AWGChannel, GateConfig,
-                    MultADChannel, MultAWGChannel, getConfig,
-                    set_config_factory)
+                   MultADChannel, MultAWGChannel, getConfig,
+                   set_config_factory)
+
+_NO_DEFAULT = object()
 
 
 class CompileConfigMixin(ABCCompileConfigMixin):
+
     def _getAWGChannel(self, name, *qubits) -> Union[str, dict]:
+
         def _getSharedCoupler(qubits):
             s = set(qubits[0]['couplers'])
             for qubit in qubits[1:]:
@@ -127,6 +132,7 @@ class CompileConfigMixin(ABCCompileConfigMixin):
 
 
 class Config(BaseConfig, CompileConfigMixin):
+
     def __init__(self, path: Optional[Union[str, Path]] = None):
         super().__init__(path)
         if 'station' not in self:
@@ -322,8 +328,18 @@ class Config(BaseConfig, CompileConfigMixin):
             else:
                 raise KeyError(f'Could not find "{name}" gate for {qubits}')
 
+    def get(self, key, default=_NO_DEFAULT):
+        try:
+            return self.query(key)
+        except:
+            if default is _NO_DEFAULT:
+                raise KeyError(f'"{key}" not found.')
+            else:
+                return default
+
 
 class ConfigObject(Trait):
+
     def setParams(self, **params):
         self['params'].update(params)
 
@@ -383,11 +399,13 @@ class ConfigObject(Trait):
 
 
 class Qubit(ConfigObject):
+
     def details(self):
         return super().details(skip=('qubits', ))
 
 
 class Gate(ConfigObject):
+
     def details(self):
         ret = {}
         ret.update(self)
@@ -418,6 +436,7 @@ class Gate(ConfigObject):
 
 
 class rfUnitary(Gate):
+
     def setAmp(self, theta, amp):
         t = theta / np.pi
         dct = {k: v for k, v in zip(*self['params']['amp'])}
@@ -472,6 +491,7 @@ class rfUnitary(Gate):
 
 
 class Measure(Gate):
+
     @property
     def wfile(self) -> Path:
         return self._cfg_._path_.parent / 'Measure' / (self.qubits[0] + '.pic')
@@ -487,6 +507,7 @@ class Measure(Gate):
 
 
 class ConfigProxy(ABC):
+
     @abstractmethod
     def getQubit(self, name):
         pass
@@ -501,6 +522,10 @@ class ConfigProxy(ABC):
 
     @abstractmethod
     def getGate(self, name, *qubits):
+        pass
+
+    @abstractmethod
+    def get(self, key, default=_NO_DEFAULT):
         pass
 
 
