@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import operator
 
 import numpy as np
@@ -113,6 +115,17 @@ class Expression():
     def __init__(self):
         self.cache = _empty
 
+    def d(self, x: str | Symbol):
+        if isinstance(x, Symbol):
+            x = x.name
+        if x in self.symbols():
+            return self.derivative(x)
+        else:
+            return 0
+
+    def derivative(self, x):
+        raise NotImplementedError
+
     def __add__(self, other):
         return BinaryExpression(self, other, operator.add)
 
@@ -222,6 +235,12 @@ class UnaryExpression(Expression):
         a = self.a.value(env) if isinstance(self.a, Expression) else self.a
         return self.op(a)
 
+    def derivative(self, x):
+        if isinstance(self.a, Expression):
+            return self.op(self.a.d(x))
+        else:
+            return 0
+
 
 class BinaryExpression(Expression):
 
@@ -243,6 +262,38 @@ class BinaryExpression(Expression):
         a = self.a.value(env) if isinstance(self.a, Expression) else self.a
         b = self.b.value(env) if isinstance(self.b, Expression) else self.b
         return self.op(a, b)
+
+    def derivative(self, x):
+        if isinstance(self.a, Expression):
+            da = self.a.d(x)
+        else:
+            da = 0
+        if isinstance(self.b, Expression):
+            db = self.b.d(x)
+        else:
+            db = 0
+
+        if self.op is operator.add:
+            return da + db
+        elif self.op is operator.sub:
+            return da - db
+        elif self.op is operator.mul:
+            return self.a * db + da * self.b
+        elif self.op is operator.truediv:
+            return (da * self.b - self.a * db) / self.b**2
+        elif self.op is operator.pow:
+            if isinstance(self.a, Expression) and isinstance(
+                    self.b, Expression):
+                return self.a**self.b * (self.b * da / self.a +
+                                         ObjectMethod(np, 'log', self.a) * db)
+            elif isinstance(self.a, Expression):
+                return self.b * self.a**(self.b - 1) * da
+            elif isinstance(self.b, Expression):
+                return np.log(self.a) * db * self.a**self.b
+            else:
+                return 0
+        else:
+            return 0
 
 
 class ObjectMethod(Expression):
@@ -268,7 +319,8 @@ class ObjectMethod(Expression):
         args = [
             a.value(env) if isinstance(a, Expression) else a for a in self.args
         ]
-        if isinstance(obj, Expression):
+        if isinstance(obj, Expression) or any(
+                isinstance(x, Expression) for x in args):
             return ObjectMethod(obj, self.method, *args)
         else:
             return getattr(obj, self.method)(*args)
@@ -288,3 +340,9 @@ class Symbol(Expression):
             return env[self.name]
         else:
             return self
+
+    def derivative(self, x):
+        if x == self.name:
+            return 1
+        else:
+            return 0
