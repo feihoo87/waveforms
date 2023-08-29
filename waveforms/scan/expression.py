@@ -188,6 +188,9 @@ class Expression():
 
     def __call__(self, *args):
         return ObjectMethod(self, '__call__', *args)
+    
+    def __round__(self, n=None):
+        return self
 
     def eval(self, env):
         raise NotImplementedError
@@ -240,6 +243,9 @@ class UnaryExpression(Expression):
             return self.op(self.a.d(x))
         else:
             return 0
+        
+    def __repr__(self) -> str:
+        return f"{self.op.__name__}({self.a!r})"
 
 
 class BinaryExpression(Expression):
@@ -294,6 +300,9 @@ class BinaryExpression(Expression):
                 return 0
         else:
             return 0
+        
+    def __repr__(self) -> str:
+        return f"({self.a!r} {self.op.__name__} {self.b!r})"
 
 
 class ObjectMethod(Expression):
@@ -346,3 +355,6 @@ class Symbol(Expression):
             return 1
         else:
             return 0
+    
+    def __repr__(self) -> str:
+        return self.name

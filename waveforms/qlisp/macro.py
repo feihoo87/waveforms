@@ -2,7 +2,7 @@ from collections import defaultdict
 
 from numpy import mod, pi
 
-from .base import QLispError, gateName
+from .base import QLispError, head
 
 
 def _lookup(name, env):
@@ -55,14 +55,14 @@ def extend_macro(qlisp, lib, env=None):
     if env is None:
         env = {}
     for st in qlisp:
-        if gateName(st) == 'define':
+        if head(st) == 'define':
             define_macro(st[1], st[2], env)
-        elif gateName(st) == 'C':
+        elif head(st) == 'C':
             st = lookup(st, env)
             yield from extend_control_gate(st, lib)
         else:
             st = lookup(st, env)
-            gate = lib.getGate(gateName(st))
+            gate = lib.getGate(head(st))
             if gate is None:
                 yield st
             else:
@@ -114,8 +114,8 @@ add_VZ_rule('iSWAP', _VZ_swap)
 add_VZ_rule('SWAP', _VZ_swap)
 
 
-def exchangeRzWithGate(st, phaseList, lib):
-    gate = gateName(st)
+def _exchange_VZ_and_gate(st, phaseList, lib):
+    gate = head(st)
     if gate in _VZ_rules:
         return _VZ_rules[gate](st, phaseList)
     else:
@@ -130,9 +130,8 @@ def reduceVirtualZ(qlisp, lib):
         if isinstance(target, (int, str)):
             target = (target, )
         try:
-            stList, phaseList = exchangeRzWithGate(st,
-                                                   [hold[q] for q in target],
-                                                   lib)
+            stList, phaseList = _exchange_VZ_and_gate(
+                st, [hold[q] for q in target], lib)
             yield from stList
             for q, p in zip(target, phaseList):
                 hold[q] = mod(p, 2 * pi)

@@ -646,12 +646,9 @@ class Waveform:
     def __lshift__(self, time):
         return self >> (-time)
 
-    def __call__(self, x, frag=False, out=None, accumulate=False):
-        if isinstance(x, (int, float, complex)):
-            return self.__call__(np.array([x]))[0]
+    def _calc_parts(self, x):
         range_list = np.searchsorted(x, self.bounds)
-        #ret = np.zeros_like(x)
-        ret = []
+        parts = []
         start, stop = 0, 0
         dtype = float
         for i, stop in enumerate(range_list):
@@ -661,22 +658,90 @@ class Waveform:
                 if (isinstance(part, complex) or isinstance(part, np.ndarray)
                         and isinstance(part[0], complex)):
                     dtype = complex
-                ret.append((start, stop, part))
+                parts.append((start, stop, part))
             start = stop
+        return parts, dtype
+
+    def _merge_parts(self, parts, out):
+        lo = 0
+        for start, stop, part in parts:
+            i = bisect_left(out, (start, stop), lo, key=lambda x: x[0])
+            j = bisect_left(out, (start, stop), i, key=lambda x: x[1])
+            # assert start <= out[i][0]
+            # assert stop <= out[j][1]
+            if i == j:
+                start2, stop2, part2 = out[j]
+                if stop < start2:
+                    out.insert(i, (start, stop, part))
+                elif stop == start2:
+                    if isinstance(part, np.ndarray) and isinstance(
+                            part2, np.ndarray):
+                        out[j] = (start, stop2, np.hstack([part, part2]))
+                    elif isinstance(
+                            part, (int, float, complex)) and isinstance(
+                                part2,
+                                (int, float, complex)) and part == part2:
+                        out[i] = (start, stop2, part)
+                    else:
+                        out.insert(i, (start, stop, part))
+                else:
+                    match (isinstance(part, np.ndarray),
+                           isinstance(part2, np.ndarray)):
+                        case (True, True):
+                            out[j] = (start, stop2,
+                                      np.hstack([
+                                          part[:start2 - start],
+                                          part[start2 - start:stop - start] +
+                                          part2[:stop - start2],
+                                          part2[stop - start2:]
+                                      ]))
+                        case (True, False):
+                            out[j] = (stop, stop2, part2)
+                            part[start2 - start:] += part2
+                            out.insert(j, (start, stop, part))
+                        case (False, True):
+                            part2[:stop - start2] += part
+                            out.insert(j, (start, start2, part))
+                        case (False, False):
+                            out[j] = (stop, stop2, part2)
+                            out.insert(j, (start2, stop, part + part2))
+                            out.insert(j, (start, start2, part))
+            else:
+                for k in range(i, j):
+                    if isinstance(part, (int, float, complex)):
+                        out[k] = (out[k][0], out[k][1], out[k][2] + part)
+                    else:
+                        out[k] = (out[k][0], out[k][1],
+                                  out[k][2] + part[k - i])
+
+                out[i:j] = [(out[i][0], start, out[i][2]), (start, stop, part),
+                            (stop, out[j][1], out[j][2])]
+            lo = j
+
+    def _fill_parts(self, parts, out):
+        for start, stop, part in parts:
+            out[start:stop] += part
+
+    def __call__(self, x, frag=False, out=None, accumulate=False):
+        if isinstance(x, (int, float, complex)):
+            return self.__call__(np.array([x]))[0]
+        parts, dtype = self._calc_parts(x)
         if not frag:
             if out is None:
                 out = np.zeros_like(x, dtype=dtype)
             elif not accumulate:
                 out *= 0
-            if accumulate:
-                for start, stop, part in ret:
-                    out[start:stop] += part
-            else:
-                for start, stop, part in ret:
-                    out[start:stop] = part
-            return out
+            self._fill_parts(parts, out)
         else:
-            return ret
+            if out is None:
+                return parts
+            else:
+                if not accumulate:
+                    out.clear()
+                    out.extend(parts)
+                else:
+                    self._merge_parts(parts, out)
+        return out
 
     def __hash__(self):
         return hash((self.max, self.min, self.start, self.stop,
@@ -754,7 +819,7 @@ class Waveform:
 
 class WaveVStack(Waveform):
 
-    def __init__(self, wlist):
+    def __init__(self, wlist: list[Waveform] = []):
         self.wlist = wlist
         self.start = None
         self.stop = None
@@ -1017,6 +1082,27 @@ HYPERBOLICCHIRP = registerBaseFunc(lambda t, f0, k, phi0: np.sin(
     phi0 + 2 * np.pi * f0 / k * np.log(1 + k * t)))
 COSH = registerBaseFunc(lambda t, w: np.cosh(w * t), _format_COSH)
 SINH = registerBaseFunc(lambda t, w: np.sinh(w * t), _format_SINH)
+
+
+def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
+          block_freq: float, phase: float):
+
+    o = np.pi / width
+    b = 0 if block_freq is None else 1 / np.pi / 2 / (block_freq - delta)
+
+    return np.sin(o * (t - t0))**2 * np.cos(
+        2 * np.pi * freq * t + 2 * np.pi * delta *
+        (t - t0) - phase) - b * o * np.sin(
+            2 * o *
+            (t - t0)) * np.cos(2 * np.pi * freq * t + 2 * np.pi * delta *
+                               (t - t0) - phase - np.pi / 2)
+
+
+def _format_DRAG(shift, *args):
+    return f"DRAG(...)"
+
+
+DRAG = registerBaseFunc(_drag, _format_DRAG)
 
 # register derivative
 registerDerivative(LINEAR, lambda shift, *args: _one)
@@ -1329,9 +1415,16 @@ def _poly(*a):
     """
     a[0] + a[1] * t + a[2] * t**2 + ...
     """
-    t = (((), ()), *[(((LINEAR, 0), ), (n, ))
-                     for n, _ in enumerate(a[1:], start=1)])
-    return t, a
+    t = []
+    amp = []
+    if a[0] != 0:
+        t.append(((), ()))
+        amp.append(a[0])
+    for n, a_ in enumerate(a[1:], start=1):
+        if a_ != 0:
+            t.append((((LINEAR, 0), ), (n, )))
+            amp.append(a_)
+    return tuple(t), tuple(a)
 
 
 def poly(a):
@@ -1339,6 +1432,18 @@ def poly(a):
     a[0] + a[1] * t + a[2] * t**2 + ...
     """
     return Waveform(seq=(_poly(*a), ))
+
+
+def t():
+    return Waveform(seq=((((LINEAR, 0), ), (1, )), (1, )))
+
+
+def drag(freq, width, delta=0, block_freq=None, phase=0, t0=0):
+    return Waveform(seq=(_zero,
+                         _basic_wave(DRAG, t0, freq, width, delta, block_freq,
+                                     phase), _zero),
+                    bounds=(round(t0, NDIGITS), round(t0 + width,
+                                                      NDIGITS), +inf))
 
 
 def chirp(f0, f1, T, phi0=0, type='linear'):
@@ -1459,13 +1564,14 @@ def mixing(I,
         Qout = -I * np.sin(-phase) + Q * np.cos(-phase)
 
     # apply DRAG
-    if block_freq is not None:
+    if block_freq is not None and block_freq != freq:
         a = block_freq / (block_freq - freq)
         b = 1 / (block_freq - freq)
         I = a * Iout + b / (2 * pi) * D(Qout)
         Q = a * Qout - b / (2 * pi) * D(Iout)
         Iout, Qout = I, Q
     elif DRAGScaling is not None and DRAGScaling != 0:
+        # 2 * pi * scaling * (freq - block_freq) = 1
         I = (1 - w * DRAGScaling) * Iout - DRAGScaling * D(Qout)
         Q = (1 - w * DRAGScaling) * Qout + DRAGScaling * D(Iout)
         Iout, Qout = I, Q
@@ -1477,8 +1583,8 @@ def mixing(I,
 
 __all__ = [
     'D', 'Waveform', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
-    'cut', 'exp', 'function', 'gaussian', 'general_cosine', 'hanning',
+    'cut', 'drag', 'exp', 'function', 'gaussian', 'general_cosine', 'hanning',
     'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
     'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
-    'square', 'step', 'zero'
+    'square', 'step', 't', 'zero'
 ]

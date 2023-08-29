@@ -1,82 +1,137 @@
 import inspect
+import warnings
 
 from numpy import pi
 
 from ..dicttree import NOTSET
-from ..waveform import Waveform, WaveVStack, cos, sin, step
-from .base import (ADChannel, AWGChannel, Context, GateConfig, MeasurementTask,
-                   MultADChannel, MultAWGChannel, QLispCode, QLispError,
-                   create_context, gateName)
+from ..waveform import Waveform, WaveVStack, cos, sin, step, zero
+from .base import (ADChannel, AWGChannel, Capture, Context, GateConfig,
+                   MultADChannel, MultAWGChannel, QLispCode, QLispError, head)
 from .library import Library
 
 
-def _ctx_update_biases(sub_ctx: Context, ctx: Context):
-    for channel, bias in sub_ctx.biases.items():
-        if isinstance(bias, tuple):
-            bias, edge, buffer = bias
-        else:
-            edge, buffer = 0, 0
-        if ctx.biases[channel] != bias:
-            _, *qubits = channel
-            t = max(ctx.time[q] for q in qubits)
-            wav = (bias - ctx.biases[channel]) * step(edge) >> (t + buffer / 2)
-            _addWaveforms(ctx, channel, wav)
-            ctx.biases[channel] = bias
-
-
-def _ctx_update_time(sub_ctx: Context, ctx: Context):
-    ctx.time.update(sub_ctx.time)
-
-
-def _ctx_update_phases(sub_ctx: Context, ctx: Context):
-    #ctx.phases.update(sub_ctx.phases)
-    for k, v in sub_ctx.phases_ext.items():
-        ctx.phases_ext[k].update(v)
-
-
-def _ctx_update_waveforms(sub_ctx: Context, ctx: Context):
-    for channel, wav in sub_ctx.raw_waveforms.items():
-        _addWaveforms(ctx, channel, wav)
-
-
-def _ctx_update_measurement_tasks(sub_ctx: Context, ctx: Context):
-    for cbit, task in sub_ctx.measures.items():
-        hardware = ctx.cfg._getADChannel(task.qubit)
-        ctx.measures[cbit] = MeasurementTask(task.qubit, task.cbit, task.time,
-                                             task.signal, task.params,
-                                             hardware)
-
-
-def _execute(ctx, cmd):
-    from waveforms.waveform import NDIGITS
-
-    (op, target, *values), key = cmd
-    if op == '!nop':
-        return
-    if (op, target) == ('!set', 'time'):
-        ctx.time[key] = round(values[0], NDIGITS)
-    elif (op, target) == ('!set', 'phase'):
-        ctx.phases[key] = values[0]
-    elif (op, target) == ('!set', 'phase_ext'):
-        ctx.phases_ext[key][values[0]] = values[1]
-    elif (op, target) == ('!set', 'bias'):
-        ctx.biases[key] = values[0]
-    elif (op, target) == ('!set', 'waveform'):
-        ctx.raw_waveforms[key] = values[0]
-    elif (op, target) == ('!set', 'cbit'):
-        ctx.measures[key] = values[0]
-    elif (op, target) == ('!add', 'time'):
-        ctx.time[key] = round(ctx.time[key] + values[0], NDIGITS)
-    elif (op, target) == ('!add', 'phase'):
-        ctx.phases[key] += values[0]
-    elif (op, target) == ('!add', 'phase_ext'):
-        ctx.phases_ext[key][values[0]] += values[1]
-    elif (op, target) == ('!add', 'bias'):
-        ctx.biases[key] += values[0]
-    elif (op, target) == ('!add', 'waveform'):
-        ctx.raw_waveforms[key] += values[0]
+def _set_bias(ctx: Context, channel: str, bias: float | tuple):
+    if isinstance(bias, tuple):
+        bias, edge, buffer = bias
     else:
-        raise QLispError(f'Unknown command: {cmd}')
+        edge, buffer = 0, 0
+    if ctx.biases[channel] != bias:
+        _, *qubits = channel
+        t = max(ctx.time[q] for q in qubits)
+        wav = (bias - ctx.biases[channel]) * step(edge) >> (t + buffer / 2)
+        _play(ctx, channel, wav)
+        ctx.biases[channel] = bias
+
+
+def _add_bias(ctx: Context, channel: str, bias: float | tuple):
+    if isinstance(bias, tuple):
+        bias, edge, buffer = bias
+        _set_bias(ctx, channel, (bias + ctx.biases[channel], edge, buffer))
+    else:
+        _set_bias(ctx, channel, bias)
+
+
+def _set_time(ctx: Context, target: tuple, time: float):
+    from waveforms.waveform import NDIGITS
+    ctx.time[target] = round(time, NDIGITS)
+
+
+def _add_time(ctx: Context, target: tuple, time: float):
+    from waveforms.waveform import NDIGITS
+    ctx.time[target] = round(ctx.time[target] + time, NDIGITS)
+
+
+def _set_phase(ctx: Context, target: tuple, phase: float):
+    ctx.phases_ext[target][1] = phase + ctx.phases_ext[target][0]
+
+
+def _add_phase(ctx: Context, target: tuple, phase: float):
+    ctx.phases_ext[target][1] += phase
+
+
+def _set_phase_ext(ctx: Context, target: tuple, level: int, phase: float):
+    ctx.phases_ext[target][level] = phase
+
+
+def _add_phase_ext(ctx: Context, target: tuple, level: int, phase: float):
+    ctx.phases_ext[target][level] += phase
+
+
+def _play(ctx: Context, channel: tuple, wav: Waveform):
+    if wav is zero():
+        return
+    name, *qubits = channel
+    ch = ctx.get_awg_channel(name, qubits)
+    if isinstance(ch, AWGChannel):
+        ctx.waveforms[ch.name].append(wav)
+    else:
+        _mult_channel_play(ctx, wav, ch)
+
+
+def _mult_channel_play(ctx: Context, wav, ch: MultAWGChannel):
+    lofreq = ch.lo_freq
+    if ch.I is not None:
+        try:
+            I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
+        except:
+            w = (2 * wav * cos(-2 * pi * lofreq))
+            print("====== ERROR WAVEFORM ======")
+            print("    lofreq =", lofreq)
+            print("")
+            print("    waveform =", w.tolist())
+            print("====== ERROR WAVEFORM ======")
+            raise
+        ctx.waveforms[ch.I.name].append(I)
+    if ch.Q is not None:
+        Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
+        ctx.waveforms[ch.Q.name].append(Q)
+
+
+def _capture(ctx: Context, cbit: int, info: Capture):
+    hardware = ctx.get_ad_channel(info.qubit)
+    ctx.measures[cbit] = Capture(info.qubit, info.cbit, info.time, info.signal,
+                                 info.params, hardware)
+
+
+def _execute(ctx: Context, cmd: tuple[tuple, tuple | str]):
+
+    (op, *args), target = cmd
+    match op:
+        case '!nop':
+            return
+        case '!set_time':
+            _set_time(ctx, target, args[0])
+        case '!set_phase':
+            _set_phase(ctx, target, args[0])
+        case '!set_phase_ext':
+            _set_phase_ext(ctx, target, args[0], args[1])
+        case '!set_bias':
+            _set_bias(ctx, target, args[0])
+        case '!play':
+            _play(ctx, target, args[0])
+        case '!capture':
+            _capture(ctx, target, args[0])
+        case '!add_time':
+            _add_time(ctx, target, args[0])
+        case '!add_phase':
+            _add_phase(ctx, target, args[0])
+        case '!add_phase_ext':
+            _add_phase_ext(ctx, target, args[0], args[1])
+        case '!add_bias':
+            _add_bias(ctx, target, args[0])
+        case '!set' | '!add':
+            new_op = f'{op}_{args[0]}'
+            new_op = {
+                '!add_waveform': '!play',
+                '!set_waveform': '!play',
+                '!set_cbit': '!capture'
+            }.get(new_op, new_op)
+            warnings.warn(
+                f"('{op}', '{args[0]}', ...) are deprecated, use '{new_op}' instead.",
+                DeprecationWarning, 2)
+            _execute(ctx, ((new_op, *args[1:]), target))
+        case _:
+            raise QLispError(f'Unknown command: {cmd}')
 
 
 def _call_func_with_kwds(func, kwds):
@@ -104,13 +159,15 @@ def _try_to_lookup_config(cfg, key):
         return key
 
 
-def call_opaque(st: tuple, ctx: Context, lib: Library):
-    name = gateName(st)
-    gate, qubits = st
+def _get_opaque_params(ctx: Context, name: str, gate: str | tuple,
+                       qubits: tuple):
+    try:
+        return ctx.cache[(name, gate, qubits)]
+    except:
+        pass
     type = None
     tmp_params = {}
     args = []
-
     if isinstance(gate, tuple):
         for arg in gate[1:]:
             if isinstance(arg, tuple) and isinstance(arg[0],
@@ -125,7 +182,7 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
                                 ctx.cfg, p[1])
             else:
                 args.append(_try_to_lookup_config(ctx.cfg, arg))
-    gatecfg = ctx.cfg._getGateConfig(name, *qubits, type=type)
+    gatecfg = ctx.get_gate_config(name, qubits, type=type)
     if gatecfg is None:
         gatecfg = GateConfig(name, qubits)
 
@@ -136,64 +193,34 @@ def call_opaque(st: tuple, ctx: Context, lib: Library):
     params = gatecfg.params.copy()
     params.update(tmp_params)
 
-    func, params_declaration = lib.getOpaque(name, gatecfg.type)
+    ctx.cache[(name, gate, qubits)] = args, params, gatecfg
+    return args, params, gatecfg
+
+
+def call_opaque(st: tuple, ctx: Context, lib: Library):
+    name = head(st)
+    gate, qubits = st
+
+    args, params, gatecfg = _get_opaque_params(ctx, name, gate, qubits)
+
+    func, *_ = lib.getOpaque(name, gatecfg.type)
     if func is None:
         raise KeyError(f'Undefined {gatecfg.type} type of {name} opaque.')
-    for p in params_declaration:
-        if p.name not in params:
-            pass
-            # raise ValueError(
-            #     f'{name} (type={gatecfg.type}) opaque of {qubits} missing parameter {k}.'
-            # )
 
-    args = tuple(args)
-
-    sub_ctx = create_context(ctx, scopes=[*ctx.scopes, params])
-
-    for cmd in func(sub_ctx, gatecfg.qubits, *args):
-        _execute(sub_ctx, cmd)
-    _ctx_update_biases(sub_ctx, ctx)
-    _ctx_update_time(sub_ctx, ctx)
-    _ctx_update_phases(sub_ctx, ctx)
-    _ctx_update_waveforms(sub_ctx, ctx)
-    _ctx_update_measurement_tasks(sub_ctx, ctx)
-
-
-def _addWaveforms(ctx: Context, channel: tuple, wav: Waveform):
-    name, *qubits = channel
-    ch = ctx.cfg._getAWGChannel(name, *qubits)
-    if isinstance(ch, AWGChannel):
-        ctx.waveforms[ch.name].append(wav)
-    else:
-        _addMultChannelWaveforms(ctx, wav, ch)
-
-
-def _addMultChannelWaveforms(ctx: Context, wav, ch: MultAWGChannel):
-    lofreq = ch.lo_freq
-    if ch.I is not None:
-        try:
-            I = (2 * wav * cos(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
-        except:
-            w = (2 * wav * cos(-2 * pi * lofreq))
-            print("====== ERROR WAVEFORM ======")
-            print("    lofreq =", lofreq)
-            print("")
-            print("    waveform =", w.tolist())
-            print("====== ERROR WAVEFORM ======")
-            raise
-        ctx.waveforms[ch.I.name].append(I)
-    if ch.Q is not None:
-        Q = (2 * wav * sin(-2 * pi * lofreq)).filter(high=2 * pi * lofreq)
-        ctx.waveforms[ch.Q.name].append(Q)
+    ctx.scopes.append(params)
+    for cmd in func(ctx, gatecfg.qubits, *args):
+        _execute(ctx, cmd)
+    ctx.scopes.pop()
 
 
 def _allocQubits(ctx, qlisp):
-    for i, q in enumerate(ctx.cfg._getAllQubitLabels()):
+    for i, q in enumerate(ctx.all_qubits):
         ctx.addressTable[q] = q
         ctx.addressTable[i] = q
 
 
 def assembly_align_left(qlisp, ctx: Context, lib: Library):
+    ctx.cache.clear()
     _allocQubits(ctx, qlisp)
 
     allQubits = set()
@@ -202,7 +229,7 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
         if len(qubits) == 1:
             qubits = qubits[0]
         if isinstance(gate, str) and gate.startswith('!'):
-            cmd = tuple([gate, *qubits])
+            cmd = (gate, *qubits)
             _execute(ctx, cmd)
             continue
         ctx.qlisp.append((gate, qubits))
@@ -216,10 +243,6 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
             allQubits.update(set(qubits))
         except:
             raise QLispError(f'assembly statement {(gate, qubits)} error.')
-    call_opaque(('Barrier', tuple(allQubits)), ctx, lib=lib)
-    for ch in ctx.biases:
-        ctx.biases[ch] = 0
-    _ctx_update_biases(ctx, ctx)
     ctx.end = max(ctx.time.values())
 
     waveforms = {ch: WaveVStack(waves) for ch, waves in ctx.waveforms.items()}

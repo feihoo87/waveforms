@@ -5,9 +5,10 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Flag, auto
-from typing import Any, Literal, NamedTuple, Optional, Union
+from functools import cached_property
+from typing import Any, NamedTuple, Optional, Union
 
-from ..waveform import Waveform, zero
+from ..waveform import Waveform
 
 
 class Signal(Flag):
@@ -36,18 +37,18 @@ class Signal(Flag):
     remote_count = count | _remote
 
 
-def gateName(st):
+def head(st):
     if isinstance(st[0], str):
         return st[0]
     else:
-        return st[0][0]
+        return head(st[0])
 
 
 class QLispError(SyntaxError):
     pass
 
 
-class MeasurementTask(NamedTuple):
+class Capture(NamedTuple):
     qubit: str
     cbit: int
     time: float
@@ -169,14 +170,14 @@ class Context():
     addressTable: dict = field(default_factory=dict)
     waveforms: dict[str, list[Waveform]] = field(
         default_factory=lambda: defaultdict(list))
-    raw_waveforms: dict[tuple[str, ...], Waveform] = field(
-        default_factory=lambda: defaultdict(zero))
-    measures: dict[int, MeasurementTask] = field(default_factory=dict)
+    measures: dict[int, Capture] = field(default_factory=dict)
     phases_ext: dict[str, dict[Union[int, str], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(lambda: 0)))
     biases: dict[str,
                  float] = field(default_factory=lambda: defaultdict(lambda: 0))
     end: float = 0
+
+    cache: dict = field(default_factory=dict)
 
     @property
     def channel(self):
@@ -213,6 +214,29 @@ class Context():
     def globals(self):
         return self.scopes[0]
 
+    @cached_property
+    def all_qubits(self):
+        return self.cfg._getAllQubitLabels()
+
+    def get_gate_config(self, name: str, qubits: tuple,
+                        type: str) -> GateConfig:
+        return self.cfg._getGateConfig(name, *qubits, type=type)
+
+    def get_awg_channel(self, name: str,
+                        qubits: tuple) -> AWGChannel | MultAWGChannel:
+        try:
+            return self.cache[(1, name, *qubits)]
+        except:
+            return self.cache.setdefault(
+                (1, name, *qubits), self.cfg._getAWGChannel(name, *qubits))
+
+    def get_ad_channel(self, qubit: str | int) -> ADChannel | MultADChannel:
+        try:
+            return self.cache[(2, qubit)]
+        except:
+            return self.cache.setdefault((2, qubit),
+                                         self.cfg._getADChannel(qubit))
+
     def qubit(self, q):
         return self.addressTable[q]
 
@@ -222,7 +246,7 @@ class QLispCode():
     cfg: ABCCompileConfigMixin = field(repr=False)
     qlisp: list = field(repr=True)
     waveforms: dict[str, Waveform] = field(repr=True)
-    measures: dict[int, list[MeasurementTask]] = field(repr=True)
+    measures: dict[int, list[Capture]] = field(repr=True)
     end: float = field(default=0, repr=True)
     signal: Signal = Signal.state
     shots: int = 1024

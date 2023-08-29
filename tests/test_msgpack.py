@@ -15,7 +15,7 @@ import datetime
 import io
 from collections import OrderedDict, namedtuple
 
-import waveforms.server.umsgpack as umsgpack
+import waveforms.sys.rpc.msgpack as umsgpack
 
 single_test_vectors = [
     # None
