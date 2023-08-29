@@ -1,8 +1,8 @@
 import pytest
+from config import config
+
 from waveforms.qlisp import (Library, Parameter, QLispCode, compile, libraries,
                              stdlib)
-
-from config import config
 
 qasm = """
 OPENQASM 2.0;
@@ -64,7 +64,7 @@ qlisp4 = [
 
 @pytest.fixture
 def cfg():
-    from waveforms.qlisp.config import Config
+    from waveforms.qlisp import Config
     try:
         yield Config.fromdict(config)
     finally:
@@ -92,10 +92,9 @@ def lib():
 
         if amp > 0 and duration > 0:
             pulse = (cos(pi / duration) * square(duration)) >> duration / 2
-            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z',
-                                                           control, target)
-        yield ('!add', 'time', t + duration), control
-        yield ('!add', 'time', t + duration), target
+            yield ('!play', amp * pulse >> t), ('coupler.Z', control, target)
+        yield ('!add_time', t + duration), control
+        yield ('!add_time', t + duration), target
 
     @lib.opaque('iSWAP',
                 params=[('duration', float, 50e-9, 's'),
@@ -116,10 +115,9 @@ def lib():
         if duration > 0:
             pulse = square(duration) >> duration / 2
             pulse = pulse * offset + amp * pulse * sin(2 * pi * frequency)
-            yield ('!add', 'waveform', amp * pulse >> t), ('coupler.Z',
-                                                           control, target)
-        yield ('!add', 'time', t + duration), control
-        yield ('!add', 'time', t + duration), target
+            yield ('!play', amp * pulse >> t), ('coupler.Z', control, target)
+        yield ('!add_time', t + duration), control
+        yield ('!add_time', t + duration), target
 
     @lib.gate(2)
     def bellMeasure(qubits):

@@ -1,6 +1,6 @@
 import copy
 
-from waveforms.quantum.circuit.qlisp.config import Config, getConfig, setConfig
+from waveforms.qlisp import Config
 
 from config import config
 
