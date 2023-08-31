@@ -1441,12 +1441,19 @@ def t():
 
 
 def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
-    if plateau == 0:
+    if plateau <= 0:
         return Waveform(seq=(_zero,
                              _basic_wave(DRAG, t0, freq, width, delta,
                                          block_freq, phase), _zero),
                         bounds=(round(t0, NDIGITS), round(t0 + width,
                                                           NDIGITS), +inf))
+    elif width <= 0:
+        w = 2 * pi * (freq + delta)
+        return Waveform(seq=(_zero, _basic_wave(COS, w,
+                                                shift=t0 + phase / w), _zero),
+                        bounds=(round(t0,
+                                      NDIGITS), round(t0 + plateau,
+                                                      NDIGITS), +inf))
     else:
         w = 2 * pi * (freq + delta)
         return Waveform(seq=(_zero,
