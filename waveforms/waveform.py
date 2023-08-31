@@ -1088,14 +1088,16 @@ def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
           block_freq: float, phase: float):
 
     o = np.pi / width
-    b = 0 if block_freq is None else 1 / np.pi / 2 / (block_freq - delta)
+    Omega_x = np.sin(o * (t - t0))**2
+    wt = 2 * np.pi * (freq + delta) * t - (2 * np.pi * delta * t0 + phase)
 
-    return np.sin(o * (t - t0))**2 * np.cos(
-        2 * np.pi * freq * t + 2 * np.pi * delta *
-        (t - t0) - phase) - b * o * np.sin(
-            2 * o *
-            (t - t0)) * np.cos(2 * np.pi * freq * t + 2 * np.pi * delta *
-                               (t - t0) - phase - np.pi / 2)
+    if block_freq is None or block_freq - delta == 0:
+        return Omega_x * np.cos(wt)
+
+    b = 1 / np.pi / 2 / (block_freq - delta)
+    Omega_y = -b * o * np.sin(2 * o * (t - t0))
+
+    return Omega_x * np.cos(wt) + Omega_y * np.sin(wt)
 
 
 def _format_DRAG(shift, *args):
@@ -1438,12 +1440,25 @@ def t():
     return Waveform(seq=((((LINEAR, 0), ), (1, )), (1, )))
 
 
-def drag(freq, width, delta=0, block_freq=None, phase=0, t0=0):
-    return Waveform(seq=(_zero,
-                         _basic_wave(DRAG, t0, freq, width, delta, block_freq,
-                                     phase), _zero),
-                    bounds=(round(t0, NDIGITS), round(t0 + width,
-                                                      NDIGITS), +inf))
+def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
+    if plateau == 0:
+        return Waveform(seq=(_zero,
+                             _basic_wave(DRAG, t0, freq, width, delta,
+                                         block_freq, phase), _zero),
+                        bounds=(round(t0, NDIGITS), round(t0 + width,
+                                                          NDIGITS), +inf))
+    else:
+        w = 2 * pi * (freq + delta)
+        return Waveform(seq=(_zero,
+                             _basic_wave(DRAG, t0, freq, width, delta,
+                                         block_freq, phase),
+                             _basic_wave(COS, w, shift=t0 + phase / w),
+                             _basic_wave(DRAG, t0, freq, width, delta,
+                                         block_freq, phase), _zero),
+                        bounds=(round(t0,
+                                      NDIGITS), round(t0 + width / 2, NDIGITS),
+                                round(t0 + width / 2 + plateau, NDIGITS),
+                                round(t0 + width + plateau, NDIGITS), +inf))
 
 
 def chirp(f0, f1, T, phi0=0, type='linear'):
