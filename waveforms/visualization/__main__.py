@@ -16,7 +16,7 @@ default_draw_methods = {
 def load_data(fname):
     try:
         from home.hkxu.tools import get_record_by_id
-        record_id = int(fname)
+        record_id = int(str(fname))
         return get_record_by_id(record_id).data
     except:
         pass
