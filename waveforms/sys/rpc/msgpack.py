@@ -1,38 +1,60 @@
+# u-msgpack-python v2.8.0 - v at sergeev.io
+# https://github.com/vsergeev/u-msgpack-python
+#
+# u-msgpack-python is a lightweight MessagePack serializer and deserializer
+# module, compatible with both Python 2 and 3, as well CPython and PyPy
+# implementations of Python. u-msgpack-python is fully compliant with the
+# latest MessagePack specification.com/msgpack/msgpack/blob/master/spec.md). In
+# particular, it supports the new binary, UTF-8 string, and application ext
+# types.
+#
+# MIT License
+#
+# Copyright (c) 2013-2023 vsergeev / Ivan (Vanya) A. Sergeev
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+#
 """
-umsgpack
+u-msgpack-python v2.8.0 - v at sergeev.io
+https://github.com/vsergeev/u-msgpack-python
 
-umsgpack is a lightweight MessagePack serializer and deserializer module,
-compatible with both Python 3. umsgpack is fully compliant with the latest
-MessagePack specification.com/msgpack/msgpack/blob/master/spec.md). In
+u-msgpack-python is a lightweight MessagePack serializer and deserializer
+module, compatible with both Python 2 and 3, as well CPython and PyPy
+implementations of Python. u-msgpack-python is fully compliant with the
+latest MessagePack specification.com/msgpack/msgpack/blob/master/spec.md). In
 particular, it supports the new binary, UTF-8 string, and application ext
 types.
 
-this mudule is forked from https://github.com/vsergeev/u-msgpack-python
+License: MIT
 """
-import struct
 import collections
 import datetime
-import sys
 import io
-
+import struct
+import sys
 from collections.abc import Hashable
 
-__version__ = "2.7.1"
+__version__ = "2.8.0"
 "Module version string"
 
-version = (2, 7, 1)
+version = (2, 8, 0)
 "Module version tuple"
-
-_utc_tzinfo = datetime.timezone.utc
-
-# Calculate an aware epoch datetime
-_epoch = datetime.datetime(1970, 1, 1, tzinfo=_utc_tzinfo)
-
-# Auto-detect system float precision
-if sys.float_info.mant_dig == 53:
-    _float_precision = "double"
-else:
-    _float_precision = "single"
 
 ##############################################################################
 # Ext Class
@@ -45,26 +67,30 @@ class Ext(object):
     The Ext class facilitates creating a serializable extension object to store
     an application-defined type and data byte array.
     """
+
     def __init__(self, type, data):
         """
         Construct a new Ext object.
+
         Args:
-            type: application-defined type integer
-            data: application-defined data byte array
-        TypeError:
-            Type is not an integer.
-        ValueError:
-            Type is out of range of -128 to 127.
-        TypeError::
-            Data is not type 'bytes' (Python 3) or not type 'str' (Python 2).
+            type (int): application-defined type integer
+            data (bytes): application-defined data byte array
+
+        Raises:
+            TypeError:
+                Type is not an integer.
+            ValueError:
+                Type is out of range of -128 to 127.
+            TypeError:
+                Data is not type 'bytes' (Python 3) or not type 'str' (Python 2).
+
         Example:
-        >>> foo = umsgpack.Ext(5, b"\x01\x02\x03")
-        >>> umsgpack.packb({u"special stuff": foo, u"awesome": True})
-        '\x82\xa7awesome\xc3\xadspecial stuff\xc7\x03\x05\x01\x02\x03'
-        >>> bar = umsgpack.unpackb(_)
-        >>> print(bar["special stuff"])
-        Ext Object (Type: 5, Data: 01 02 03)
-        >>>
+            >>> foo = umsgpack.Ext(5, b"\\x01\\x02\\x03")
+            >>> umsgpack.packb({u"special stuff": foo, u"awesome": True})
+            '\\x82\\xa7awesome\\xc3\\xadspecial stuff\\xc7\\x03\\x05\\x01\\x02\\x03'
+            >>> bar = umsgpack.unpackb(_)
+            >>> print(bar["special stuff"])
+            Ext Object (Type: 5, Data: 01 02 03)
         """
         # Check type is type int and in range
         if not isinstance(type, int):
@@ -74,8 +100,10 @@ class Ext(object):
                 "ext type value {:d} is out of range (-128 to 127)".format(
                     type))
         # Check data is type bytes or str
-        elif not isinstance(data, (bytes, bytearray)):
+        elif sys.version_info[0] == 3 and not isinstance(data, bytes):
             raise TypeError("ext data is not type \'bytes\'")
+        elif sys.version_info[0] == 2 and not isinstance(data, str):
+            raise TypeError("ext data is not type \'str\'")
 
         self.type = type
         self.data = data
@@ -99,7 +127,7 @@ class Ext(object):
         """
         s = "Ext Object (Type: {:d}, Data: ".format(self.type)
         s += " ".join([
-            "0x{:02}".format(ord(self.data[i:i + 1]))
+            "0x{:02x}".format(ord(self.data[i:i + 1]))
             for i in range(min(len(self.data), 8))
         ])
         if len(self.data) > 8:
@@ -133,8 +161,10 @@ def ext_serializable(ext_type):
     `packb()` method that returns serialized bytes, and an `unpackb()` class
     method or static method that accepts serialized bytes and returns an
     instance of the application class.
+
     Args:
-        ext_type: application-defined Ext type code
+        ext_type (int): application-defined Ext type code
+
     Raises:
         TypeError:
             Ext type is not an integer.
@@ -143,6 +173,7 @@ def ext_serializable(ext_type):
         ValueError:
             Ext type or class already registered.
     """
+
     def wrapper(cls):
         if not isinstance(ext_type, int):
             raise TypeError("Ext type is not type integer")
@@ -222,21 +253,31 @@ KeyDuplicateException = DuplicateKeyException
 # Exported Functions and Glob
 #############################################################################
 
+# Exported functions and variables, set up in __init()
+pack = None
+packb = None
+unpack = None
+unpackb = None
+dump = None
+dumps = None
+load = None
+loads = None
+
 compatibility = False
 """
 Compatibility mode boolean.
+
 When compatibility mode is enabled, u-msgpack-python will serialize both
 unicode strings and bytes into the old "raw" msgpack type, and deserialize the
 "raw" msgpack type into bytes. This provides backwards compatibility with the
 old MessagePack specification.
+
 Example:
->>> umsgpack.compatibility = True
->>>
->>> umsgpack.packb([u"some string", b"some bytes"])
-b'\x92\xabsome string\xaasome bytes'
->>> umsgpack.unpackb(_)
-[b'some string', b'some bytes']
->>>
+    >>> umsgpack.compatibility = True
+    >>> umsgpack.packb([u"some string", b"some bytes"])
+    b'\\x92\\xabsome string\\xaasome bytes'
+    >>> umsgpack.unpackb(_)
+    [b'some string', b'some bytes']
 """
 
 ##############################################################################
@@ -426,26 +467,30 @@ def _pack_map(obj, fp, options):
 def _pack3(obj, fp, **options):
     """
     Serialize a Python object into MessagePack bytes.
+
     Args:
         obj: a Python object
         fp: a .write()-supporting file-like object
-    Kwargs:
+
+    Keyword Args:
         ext_handlers (dict): dictionary of Ext handlers, mapping a custom type
                              to a callable that packs an instance of the type
                              into an Ext object
         force_float_precision (str): "single" to force packing floats as
                                      IEEE-754 single-precision floats,
                                      "double" to force packing floats as
-                                     IEEE-754 double-precision floats.
+                                     IEEE-754 double-precision floats
+
     Returns:
-        None.
+        None
+
     Raises:
-        UnsupportedType(PackException):
+        UnsupportedTypeException(PackException):
             Object type not supported for packing.
+
     Example:
-    >>> f = open('test.bin', 'wb')
-    >>> umsgpack.pack({u"compact": True, u"schema": 0}, f)
-    >>>
+        >>> f = open('test.bin', 'wb')
+        >>> umsgpack.pack({u"compact": True, u"schema": 0}, f)
     """
     global compatibility
 
@@ -514,25 +559,29 @@ def _pack3(obj, fp, **options):
 def _packb3(obj, **options):
     """
     Serialize a Python object into MessagePack bytes.
+
     Args:
         obj: a Python object
-    Kwargs:
+
+    Keyword Args:
         ext_handlers (dict): dictionary of Ext handlers, mapping a custom type
                              to a callable that packs an instance of the type
                              into an Ext object
         force_float_precision (str): "single" to force packing floats as
                                      IEEE-754 single-precision floats,
                                      "double" to force packing floats as
-                                     IEEE-754 double-precision floats.
+                                     IEEE-754 double-precision floats
+
     Returns:
-        A 'bytes' containing serialized MessagePack bytes.
+        bytes: Serialized MessagePack bytes
+
     Raises:
-        UnsupportedType(PackException):
+        UnsupportedTypeException(PackException):
             Object type not supported for packing.
+
     Example:
-    >>> umsgpack.packb({u"compact": True, u"schema": 0})
-    b'\x82\xa7compact\xc3\xa6schema\x00'
-    >>>
+        >>> umsgpack.packb({u"compact": True, u"schema": 0})
+        b'\\x82\\xa7compact\\xc3\\xa6schema\\x00'
     """
     fp = io.BytesIO()
     _pack3(obj, fp, **options)
@@ -544,41 +593,21 @@ def _packb3(obj, **options):
 #############################################################################
 
 
-def _read_except2(fp, n):
-    if n == 0:
-        return b""
-
-    data = bytearray(n)
-
-    size = fp.readinto(data)
-
-    if size == 0:
-        raise InsufficientDataException()
-
-    view = memoryview(data)
-    while size < n:
-        read = fp.readinto(view[size:])
-        if read == 0:
-            raise InsufficientDataException()
-        size += read
-
-    return data
-
-
 def _read_except(fp, n):
     if n == 0:
         return b""
 
     data = fp.read(n)
-
     if len(data) == 0:
         raise InsufficientDataException()
 
     while len(data) < n:
-        chuck = fp.read(n - len(data))
-        if not chuck:
+        chunk = fp.read(n - len(data))
+        if len(chunk) == 0:
             raise InsufficientDataException()
-        data  = data + chuck
+
+        data += chunk
+
     return data
 
 
@@ -651,11 +680,11 @@ def _unpack_string(code, fp, options):
     # Always return raw bytes in compatibility mode
     global compatibility
     if compatibility:
-        return bytes(_read_except(fp, length))
+        return _read_except(fp, length)
 
     data = _read_except(fp, length)
     try:
-        return data.decode('utf-8')
+        return bytes.decode(data, 'utf-8')
     except UnicodeDecodeError:
         if options.get("allow_invalid_utf8"):
             return InvalidString(data)
@@ -805,7 +834,7 @@ def _unpack_map(code, fp, options):
 
 
 def _unpack(fp, options):
-    code = bytes(_read_except(fp, 1))
+    code = _read_except(fp, 1)
     return _unpack_dispatch_table[code](code, fp, options)
 
 
@@ -815,21 +844,25 @@ def _unpack(fp, options):
 def _unpack3(fp, **options):
     """
     Deserialize MessagePack bytes into a Python object.
+
     Args:
         fp: a .read()-supporting file-like object
-    Kwargs:
+
+    Keyword Args:
         ext_handlers (dict): dictionary of Ext handlers, mapping integer Ext
                              type to a callable that unpacks an instance of
                              Ext into an object
-        use_ordered_dict (bool): unpack maps into OrderedDict, instead of
-                                 unordered dict (default False)
+        use_ordered_dict (bool): unpack maps into OrderedDict, instead of dict
+                                 (default False)
         use_tuple (bool): unpacks arrays into tuples, instead of lists (default
                           False)
         allow_invalid_utf8 (bool): unpack invalid strings into instances of
-                                   InvalidString, for access to the bytes
-                                   (default False)
+                                   :class:`InvalidString`, for access to the
+                                   bytes (default False)
+
     Returns:
-        A Python object.
+        Python object
+
     Raises:
         InsufficientDataException(UnpackException):
             Insufficient data to unpack the serialized object.
@@ -844,11 +877,11 @@ def _unpack3(fp, **options):
             The serialized map cannot be deserialized into a Python dictionary.
         DuplicateKeyException(UnpackException):
             Duplicate key encountered during map unpacking.
+
     Example:
-    >>> f = open('test.bin', 'rb')
-    >>> umsgpack.unpackb(f)
-    {'compact': True, 'schema': 0}
-    >>>
+        >>> f = open('test.bin', 'rb')
+        >>> umsgpack.unpackb(f)
+        {'compact': True, 'schema': 0}
     """
     return _unpack(fp, options)
 
@@ -857,21 +890,25 @@ def _unpack3(fp, **options):
 def _unpackb3(s, **options):
     """
     Deserialize MessagePack bytes into a Python object.
+
     Args:
-        s: a 'bytes' or 'bytearray' containing serialized MessagePack bytes
-    Kwargs:
+        s (bytes, bytearray): serialized MessagePack bytes
+
+    Keyword Args:
         ext_handlers (dict): dictionary of Ext handlers, mapping integer Ext
                              type to a callable that unpacks an instance of
                              Ext into an object
-        use_ordered_dict (bool): unpack maps into OrderedDict, instead of
-                                 unordered dict (default False)
+        use_ordered_dict (bool): unpack maps into OrderedDict, instead of dict
+                                 (default False)
         use_tuple (bool): unpacks arrays into tuples, instead of lists (default
                           False)
         allow_invalid_utf8 (bool): unpack invalid strings into instances of
-                                   InvalidString, for access to the bytes
-                                   (default False)
+                                   :class:`InvalidString`, for access to the
+                                   bytes (default False)
+
     Returns:
-        A Python object.
+        Python object
+
     Raises:
         TypeError:
             Packed data type is neither 'bytes' nor 'bytearray'.
@@ -888,10 +925,10 @@ def _unpackb3(s, **options):
             The serialized map cannot be deserialized into a Python dictionary.
         DuplicateKeyException(UnpackException):
             Duplicate key encountered during map unpacking.
+
     Example:
-    >>> umsgpack.unpackb(b'\x82\xa7compact\xc3\xa6schema\x00')
-    {'compact': True, 'schema': 0}
-    >>>
+        >>> umsgpack.unpackb(b'\\x82\\xa7compact\\xc3\\xa6schema\\x00')
+        {'compact': True, 'schema': 0}
     """
     if not isinstance(s, (bytes, bytearray)):
         raise TypeError("packed data must be type 'bytes' or 'bytearray'")
@@ -902,65 +939,114 @@ def _unpackb3(s, **options):
 # Module Initialization
 #############################################################################
 
-# Map packb and unpackb to the appropriate version
-pack = _pack3
-packb = _packb3
-dump = _pack3
-dumps = _packb3
-unpack = _unpack3
-unpackb = _unpackb3
-load = _unpack3
-loads = _unpackb3
 
-# Build a dispatch table for fast lookup of unpacking function
+def __init():
+    global pack
+    global packb
+    global unpack
+    global unpackb
+    global dump
+    global dumps
+    global load
+    global loads
+    global compatibility
+    global _epoch
+    global _utc_tzinfo
+    global _float_precision
+    global _unpack_dispatch_table
 
-_unpack_dispatch_table = {}
-# Fix uint
-for code in range(0, 0x7f + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
-# Fix map
-for code in range(0x80, 0x8f + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_map
-# Fix array
-for code in range(0x90, 0x9f + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_array
-# Fix str
-for code in range(0xa0, 0xbf + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_string
-# Nil
-_unpack_dispatch_table[b'\xc0'] = _unpack_nil
-# Reserved
-_unpack_dispatch_table[b'\xc1'] = _unpack_reserved
-# Boolean
-_unpack_dispatch_table[b'\xc2'] = _unpack_boolean
-_unpack_dispatch_table[b'\xc3'] = _unpack_boolean
-# Bin
-for code in range(0xc4, 0xc6 + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_binary
-# Ext
-for code in range(0xc7, 0xc9 + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_ext
-# Float
-_unpack_dispatch_table[b'\xca'] = _unpack_float
-_unpack_dispatch_table[b'\xcb'] = _unpack_float
-# Uint
-for code in range(0xcc, 0xcf + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
-# Int
-for code in range(0xd0, 0xd3 + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
-# Fixext
-for code in range(0xd4, 0xd8 + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_ext
-# String
-for code in range(0xd9, 0xdb + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_string
-# Array
-_unpack_dispatch_table[b'\xdc'] = _unpack_array
-_unpack_dispatch_table[b'\xdd'] = _unpack_array
-# Map
-_unpack_dispatch_table[b'\xde'] = _unpack_map
-_unpack_dispatch_table[b'\xdf'] = _unpack_map
-# Negative fixint
-for code in range(0xe0, 0xff + 1):
-    _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
+    # Compatibility mode for handling strings/bytes with the old specification
+    compatibility = False
+
+    if sys.version_info[0] == 3:
+        _utc_tzinfo = datetime.timezone.utc
+    else:
+
+        class UTC(datetime.tzinfo):
+            ZERO = datetime.timedelta(0)
+
+            def utcoffset(self, dt):
+                return UTC.ZERO
+
+            def tzname(self, dt):
+                return "UTC"
+
+            def dst(self, dt):
+                return UTC.ZERO
+
+        _utc_tzinfo = UTC()
+
+    # Calculate an aware epoch datetime
+    _epoch = datetime.datetime(1970, 1, 1, tzinfo=_utc_tzinfo)
+
+    # Auto-detect system float precision
+    if sys.float_info.mant_dig == 53:
+        _float_precision = "double"
+    else:
+        _float_precision = "single"
+
+    # Map packb and unpackb to the appropriate version
+    pack = _pack3
+    packb = _packb3
+    dump = _pack3
+    dumps = _packb3
+    unpack = _unpack3
+    unpackb = _unpackb3
+    load = _unpack3
+    loads = _unpackb3
+
+    # Build a dispatch table for fast lookup of unpacking function
+
+    _unpack_dispatch_table = {}
+    # Fix uint
+    for code in range(0, 0x7f + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
+    # Fix map
+    for code in range(0x80, 0x8f + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_map
+    # Fix array
+    for code in range(0x90, 0x9f + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_array
+    # Fix str
+    for code in range(0xa0, 0xbf + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_string
+    # Nil
+    _unpack_dispatch_table[b'\xc0'] = _unpack_nil
+    # Reserved
+    _unpack_dispatch_table[b'\xc1'] = _unpack_reserved
+    # Boolean
+    _unpack_dispatch_table[b'\xc2'] = _unpack_boolean
+    _unpack_dispatch_table[b'\xc3'] = _unpack_boolean
+    # Bin
+    for code in range(0xc4, 0xc6 + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_binary
+    # Ext
+    for code in range(0xc7, 0xc9 + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_ext
+    # Float
+    _unpack_dispatch_table[b'\xca'] = _unpack_float
+    _unpack_dispatch_table[b'\xcb'] = _unpack_float
+    # Uint
+    for code in range(0xcc, 0xcf + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
+    # Int
+    for code in range(0xd0, 0xd3 + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
+    # Fixext
+    for code in range(0xd4, 0xd8 + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_ext
+    # String
+    for code in range(0xd9, 0xdb + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_string
+    # Array
+    _unpack_dispatch_table[b'\xdc'] = _unpack_array
+    _unpack_dispatch_table[b'\xdd'] = _unpack_array
+    # Map
+    _unpack_dispatch_table[b'\xde'] = _unpack_map
+    _unpack_dispatch_table[b'\xdf'] = _unpack_map
+    # Negative fixint
+    for code in range(0xe0, 0xff + 1):
+        _unpack_dispatch_table[struct.pack("B", code)] = _unpack_integer
+
+
+__init()
