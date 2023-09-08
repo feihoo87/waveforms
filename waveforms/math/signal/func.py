@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.constants as const
 from scipy.signal import convolve
+from scipy.special import voigt_profile
 
 
 def Svv(f, T, Z=lambda f: 50 * np.ones_like(f)):
@@ -151,16 +152,37 @@ def lorentzianGaussian(x, x0, gamma, sigma):
     """complex lorentzian peak
     """
     if gamma == 0:
-        return gaussian(x, x0, sigma)
+        return gaussian(x, x0, sigma / np.sqrt(2))
     elif sigma == 0:
         return lorentzian(x, x0, gamma)
     else:
-        ker = gaussian(x - x.mean(), 0, sigma)
+        ker = gaussian(x - x.mean(), 0, sigma / np.sqrt(2))
         ker /= ker.sum()
         return convolve(lorentzian(x, x0, gamma),
                         ker,
                         mode='same',
                         method='fft')
+
+
+def Voigt(x, x0, gamma, sigma):
+    """Voigt profile
+
+    The Voigt profile (named after Woldemar Voigt) is a probability distribution
+    given by a convolution of a Cauchy-Lorentz distribution and a Gaussian
+    distribution. It is often used in analyzing data from spectroscopy or diffraction.
+
+    See also
+    https://en.wikipedia.org/wiki/Voigt_profile
+    """
+    return voigt_profile(x - x0, sigma, gamma)
+    from scipy.special import wofz
+    if gamma == 0:
+        return gaussian(x, x0, sigma) / sigma / np.sqrt(2 * np.pi)
+    elif sigma == 0:
+        return lorentzian(x, x0, gamma) / gamma / np.pi
+    else:
+        z = (x - x0 + 1j * gamma) / (sigma * np.sqrt(2))
+        return np.real(wofz(z)) / (sigma * np.sqrt(2 * np.pi))
 
 
 def lorentzianSpace(f0, gamma, numOfPoints):
