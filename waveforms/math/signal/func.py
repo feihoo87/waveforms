@@ -164,7 +164,7 @@ def lorentzianGaussian(x, x0, gamma, sigma):
                         method='fft')
 
 
-def Voigt(x, x0, gamma, sigma):
+def Voigt(x, x0, sigma, gamma):
     """Voigt profile
 
     The Voigt profile (named after Woldemar Voigt) is a probability distribution
@@ -174,7 +174,9 @@ def Voigt(x, x0, gamma, sigma):
     See also
     https://en.wikipedia.org/wiki/Voigt_profile
     """
-    return voigt_profile(x - x0, sigma, gamma)
+    if sigma == 0 and gamma == 0:
+        return np.where(x == x0, 1.0, 0)
+    return voigt_profile(x - x0, sigma, gamma) / voigt_profile(0, sigma, gamma)
     from scipy.special import wofz
     if gamma == 0:
         return gaussian(x, x0, sigma) / sigma / np.sqrt(2 * np.pi)
@@ -202,18 +204,12 @@ def lorentzianSpace(f0, gamma, numOfPoints):
 
 def peaks(x, peaks, background=0):
     """
-    peaks: list of (center, width, amp, shape)
-           shape should be either 'gaussian' or 'lorentzian'
-    background: a float, complex or ndarray with the same shape of `x`
+    peaks: list of (center, sigma, gamma, amp)
+    background: a float or ndarray with the same shape of `x`
     """
     ret = np.zeros_like(x)
-    for center, width, amp, shape in peaks:
-        if shape == 'gaussian':
-            ret += amp * gaussian(x, center, width)
-        elif shape == 'lorentzian':
-            ret += amp * lorentzian(x, center, width)
-        else:
-            ret += amp * lorentzianAmp(x, center, width)
+    for center, sigma, gamma, amp in peaks:
+        ret += amp * Voigt(x, center, sigma, gamma)
 
     return ret + background
 
