@@ -111,9 +111,29 @@ def poly_fit(x_data, y_data, degree=20, selectors=[]):
     return a, [np.min(x_data), np.max(x_data)], mask
 
 
+def polyfit(x, y, deg=2):
+    xmin, xmax = np.min(x), np.max(x)
+    ymin, ymax = np.min(y), np.max(y)
+    ax, bx = 2 / (xmax - xmin), (xmin + xmax) / (xmin - xmax)
+    ay, by = 2 / (ymax - ymin), (ymin + ymax) / (ymin - ymax)
+
+    xx = ax * x + bx
+    yy = ay * y + by
+
+    X = np.array([xx**n for n in range(deg + 1)])
+    a = np.linalg.inv(X @ X.T) @ X @ yy
+    p = np.poly1d([a[0]])
+    b = np.poly1d([ax, bx])
+    for i in range(1, deg + 1):
+        p = p + b * a[i]
+        b = b * np.poly1d([ax, bx])
+    p = (p - by) / ay
+    return p.coef
+
+
 def inv_poly(x, a, lim=None):
     """
-    Find the root of polynomial.
+    Find the real roots of polynomial.
 
     Parameters
     ----------
