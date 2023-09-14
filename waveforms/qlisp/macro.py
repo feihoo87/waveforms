@@ -86,8 +86,9 @@ def _VZ_P(st, phaseList):
 
 
 def _VZ_rfUnitary(st, phaseList):
-    (_, theta, phi), qubit = st
-    return [(('rfUnitary', theta, phi - phaseList[0]), qubit)], phaseList
+    (_, theta, phi, *with_params), qubit = st
+    return [(('rfUnitary', theta, phi - phaseList[0], *with_params), qubit)
+            ], phaseList
 
 
 def _VZ_clear(st, phaseList):
