@@ -229,19 +229,19 @@ def _filter(expr, low, high):
     return ret
 
 
-def _apply(x, Type, shift, *args):
-    return _baseFunc[Type](x - shift, *args)
+def _apply(function_lib, func_id, x, shift, *args):
+    return function_lib[func_id](x - shift, *args)
 
 
-def _calc(wav, x):
+def _calc(wav, x, function_lib):
     lru_cache = {}
 
     def _calc_m(t, x):
         ret = 1
         for mt, n in zip(*t):
             if mt not in lru_cache:
-                Type, *args, shift = mt
-                lru_cache[mt] = _apply(x, Type, shift, *args)
+                func_id, *args, shift = mt
+                lru_cache[mt] = _apply(function_lib, func_id, x, shift, *args)
             if n == 1:
                 ret = ret * lru_cache[mt]
             else:
@@ -356,18 +356,23 @@ class Waveform:
         else:
             return min(self.stop, self._tail())
 
-    def sample(self, sample_rate=None, out=None, chunk_size=None):
+    def sample(self,
+               sample_rate=None,
+               out=None,
+               chunk_size=None,
+               function_lib=None):
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
             raise ValueError('Waveform is not initialized')
         if chunk_size is None:
             x = np.arange(self.start, self.stop, 1 / sample_rate)
-            return self.__call__(x, out=out)
+            return self.__call__(x, out=out, function_lib=function_lib)
         else:
-            return self._sample_iter(sample_rate, chunk_size, out)
+            return self._sample_iter(sample_rate, chunk_size, out,
+                                     function_lib)
 
-    def _sample_iter(self, sample_rate, chunk_size, out):
+    def _sample_iter(self, sample_rate, chunk_size, out, function_lib):
         start = self.start
         start_n = 0
         length = chunk_size / sample_rate
@@ -381,9 +386,11 @@ class Waveform:
                 size = chunk_size
             x = np.linspace(start, stop, size, endpoint=False)
             if out is not None:
-                yield self.__call__(x, out=out[start_n:])
+                yield self.__call__(x,
+                                    out=out[start_n:],
+                                    function_lib=function_lib)
             else:
-                yield self.__call__(x)
+                yield self.__call__(x, function_lib=function_lib)
             start = stop
             start_n += chunk_size
 
@@ -646,15 +653,15 @@ class Waveform:
     def __lshift__(self, time):
         return self >> (-time)
 
-    def _calc_parts(self, x):
+    def _calc_parts(self, x, function_lib):
         range_list = np.searchsorted(x, self.bounds)
         parts = []
         start, stop = 0, 0
         dtype = float
         for i, stop in enumerate(range_list):
             if start < stop and self.seq[i] != _zero:
-                part = np.clip(_calc(self.seq[i], x[start:stop]), self.min,
-                               self.max)
+                part = np.clip(_calc(self.seq[i], x[start:stop], function_lib),
+                               self.min, self.max)
                 if (isinstance(part, complex) or isinstance(part, np.ndarray)
                         and isinstance(part[0], complex)):
                     dtype = complex
@@ -722,10 +729,17 @@ class Waveform:
         for start, stop, part in parts:
             out[start:stop] += part
 
-    def __call__(self, x, frag=False, out=None, accumulate=False):
+    def __call__(self,
+                 x,
+                 frag=False,
+                 out=None,
+                 accumulate=False,
+                 function_lib=None):
+        if function_lib is None:
+            function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
-            return self.__call__(np.array([x]))[0]
-        parts, dtype = self._calc_parts(x)
+            return self.__call__(np.array([x]), function_lib=function_lib)[0]
+        parts, dtype = self._calc_parts(x, function_lib)
         if not frag:
             if out is None:
                 out = np.zeros_like(x, dtype=dtype)
@@ -825,11 +839,11 @@ class WaveVStack(Waveform):
         self.stop = None
         self.sample_rate = None
 
-    def __call__(self, x, frag=False, out=None):
+    def __call__(self, x, frag=False, out=None, function_lib=None):
         assert frag is False, 'WaveVStack does not support frag mode'
         out = np.zeros_like(x, dtype=complex)
         for w in self.wlist:
-            w(x, False, out, accumulate=True)
+            w(x, False, out, accumulate=True, function_lib=function_lib)
         return out.real
 
     def simplify(self):
