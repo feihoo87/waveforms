@@ -75,10 +75,13 @@ class BaseFile():
 
     def _compress(self):
         with open(self.path, 'rb+') as f:
-            header = _get_header(f)
+            try:
+                header = _get_header(f)
+            except:
+                return
             if header.get('format', FORMAT_RAW) == FORMAT_XZ:
                 return
-            header['format'] = FORMAT_RAW
+            header['format'] = FORMAT_XZ
             buffer = f.read()
             f.seek(0)
             f.write(_make_header(header))
@@ -90,10 +93,13 @@ class BaseFile():
 
     def _decompress(self):
         with open(self.path, 'rb+') as f:
-            header = _get_header(f)
+            try:
+                header = _get_header(f)
+            except:
+                return
             if header.get('format', FORMAT_RAW) == FORMAT_RAW:
                 return
-            header['format'] = FORMAT_XZ
+            header['format'] = FORMAT_RAW
             buffer = lzma.decompress(f.read(),
                                      format=lzma.FORMAT_RAW,
                                      filters=lzma_filters)
