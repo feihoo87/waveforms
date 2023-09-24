@@ -1,4 +1,6 @@
 import copy
+import math
+import operator
 import pickle
 import sys
 from typing import Any, Generator
@@ -292,13 +294,175 @@ def update_tree(result, updates):
     return result
 
 
-def query_tree(q, dct, prefix=[]):
+def queryref_tree(q, keys, dct, prefix=[], chain=None):
+    q = q[1:]
+    if q.startswith('.'):
+        while q.startswith('.'):
+            keys.pop()
+            q = q[1:]
+        q = '.'.join(keys + [q])
+
+    if chain is None:
+        chain = [q]
+    elif q in chain:
+        raise KeyError(f'Circular reference: {chain+[q]}')
+
+    return query_tree(q, dct, prefix=prefix, chain=chain + [q])
+
+
+def query_tree(q, dct, prefix=[], chain=None):
+    ret = dct
     keys = q.split('.')
     for i, key in enumerate(keys):
-        if key not in dct:
+        if key not in ret:
             return (NOTSET, '.'.join(prefix + keys[:i + 1]))
-        dct = dct[key]
-    return dct
+        ret = ret[key]
+    if isinstance(ret, str):
+        if ret.startswith('$'):
+            return queryref_tree(ret, keys, dct, prefix=prefix, chain=chain)
+        elif ret.startswith('&'):
+            return eval_expr(ret[1:], Env(dct,
+                                          keys,
+                                          prefix=prefix,
+                                          chain=chain))
+    return ret
+
+
+class Env():
+
+    def __init__(self, dct=None, keys=None, prefix=[], chain=None):
+        self.dct = dct if dct is not None else {}
+        self.keys = keys if keys is not None else []
+        self.chain = chain
+        self.prefix = prefix
+
+    def get(self, name):
+        return queryref_tree(name[1:],
+                             self.keys,
+                             self.dct,
+                             prefix=self.prefix,
+                             chain=self.chain)
+
+
+internal_functions = {
+    '**': operator.pow,
+    '+': operator.add,
+    '-': operator.sub,
+    '*': operator.mul,
+    '/': operator.truediv,
+    '//': operator.floordiv,
+    '%': operator.mod,
+    '&': operator.and_,
+    '|': operator.or_,
+    '^': operator.xor,
+    '~': operator.invert,
+    '<<': operator.lshift,
+    '>>': operator.rshift,
+    'getitem': operator.getitem,
+    'contains': operator.contains,
+    'not': operator.not_,
+    'getattr': getattr,
+    'abs': abs,
+    'min': min,
+    'max': max,
+    'sum': sum,
+    'len': len,
+    'any': any,
+    'all': all,
+    'ord': ord,
+    'chr': chr,
+    'bin': bin,
+    'oct': oct,
+    'hex': hex,
+    'int': int,
+    'round': round,
+    'real': lambda x: x.real,
+    'imag': lambda x: x.imag,
+    'sqrt': math.sqrt,
+    'sin': math.sin,
+    'cos': math.cos,
+    'tan': math.tan,
+    'asin': math.asin,
+    'acos': math.acos,
+    'atan': math.atan,
+    'atan2': math.atan2,
+    'sinh': math.sinh,
+    'cosh': math.cosh,
+    'tanh': math.tanh,
+    'asinh': math.asinh,
+    'acosh': math.acosh,
+    'atanh': math.atanh,
+    'ceil': math.ceil,
+    'floor': math.floor,
+    'trunc': math.trunc,
+    'log10': math.log10,
+    'log': math.log,
+    'exp': math.exp,
+}
+
+
+def eval_expr(expression, env=None, functions=None):
+    from pyparsing import (Forward, Literal, ParseResults, Suppress, Word,
+                           alphanums, delimitedList, infixNotation, oneOf,
+                           opAssoc, pyparsing_common)
+    if functions is None:
+        functions = internal_functions
+
+    def lookup(name):
+        return env.get(name)
+
+    def apply(fun, *args):
+        return functions[fun](*args)
+
+    def eval_expr(t):
+        if not isinstance(t, ParseResults):
+            return t
+        if t[0] == '-' and len(t) == 2:
+            return -t[1]
+        return apply(t[1], t[0], t[2])
+
+    # Define pyparsing grammar
+    expr = Forward()
+
+    complex_ = (pyparsing_common.number +
+                'j').setParseAction(lambda s, l, t: complex(t[0]))
+    number = pyparsing_common.number | complex_
+
+    const = oneOf('pi e').setParseAction(lambda s, l, t: {
+        'pi': math.pi,
+        'e': math.e
+    }.get(t[0]))
+
+    variable = Word("$", alphanums +
+                    "._").setParseAction(lambda s, l, t: lookup(t[0]))
+
+    bracket = Suppress('(') + expr + Suppress(')')
+    bracket.setParseAction(lambda s, l, t: t[0])
+
+    operand = const | variable | number | bracket
+
+    func = pyparsing_common.identifier
+    func_call = func + Suppress("(") + delimitedList(expr) + Suppress(")")
+    func_call.setParseAction(lambda s, l, t: apply(t[0], *t[1:]))
+
+    term = operand | func_call
+
+    expr << infixNotation(term, [
+        (Literal('**'), 2, opAssoc.RIGHT),
+        (Literal('~'), 1, opAssoc.RIGHT),
+        (Literal('-'), 1, opAssoc.RIGHT),
+        (oneOf('* / // %'), 2, opAssoc.LEFT),
+        (oneOf('+ -'), 2, opAssoc.LEFT),
+        (oneOf('>> <<'), 2, opAssoc.LEFT),
+        (Literal('&'), 2, opAssoc.LEFT),
+        (Literal('^'), 2, opAssoc.LEFT),
+        (Literal('|'), 2, opAssoc.LEFT),
+    ])
+
+    expr.setParseAction(lambda s, l, t: eval_expr(t[0]))
+
+    parsed = expr.parseString(expression, parseAll=True)
+    return parsed[0]
 
 
 def sorted_tree(dct, *, keys=None):
