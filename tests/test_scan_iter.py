@@ -3,7 +3,7 @@ import pytest
 
 from waveforms.scan.base import (BaseOptimizer, Begin, End, OptimizerConfig,
                                  StepStatus, scan_iters)
-from waveforms.storage.base_storage import Storage
+from waveforms.storage.base_dataset import BaseDataset
 
 
 class FindPeak(BaseOptimizer):
@@ -245,14 +245,14 @@ def test_scan_iter4():
             assert step.kwds[k] == args[k]
 
 
-def test_storage(spectrum_data):
+def test_base_dataset(spectrum_data):
     z = spectrum_data['z']
     iq = spectrum_data['iq']
     bias_list = spectrum_data['bias_list']
     freq_list = spectrum_data['freq_list']
 
-    data1 = Storage(save_kwds=False)
-    data2 = Storage(save_kwds=True)
+    data1 = BaseDataset(save_kwds=False)
+    data2 = BaseDataset(save_kwds=True)
 
     np.random.seed(1234)
     for step in scan_iters(
@@ -293,7 +293,7 @@ def test_storage(spectrum_data):
         assert np.allclose(data1.timestamps[key], data2.timestamps[key])
 
 
-def test_storage_future(spectrum_data):
+def test_base_dataset_future(spectrum_data):
     from concurrent.futures import ThreadPoolExecutor
 
     def init_thread():
@@ -317,7 +317,7 @@ def test_storage_future(spectrum_data):
     bias_list = spectrum_data['bias_list']
     freq_list = spectrum_data['freq_list']
 
-    data = Storage(save_kwds=False)
+    data = BaseDataset(save_kwds=False)
 
     for step in scan_iters(
         {

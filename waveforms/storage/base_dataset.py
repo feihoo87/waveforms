@@ -11,14 +11,14 @@ from ..scan.base import StepStatus, Tracker, _get_all_dependence
 _NODEFAULT = object()
 
 
-class Storage(Tracker):
+class BaseDataset(Tracker):
     """
     A tracker that stores the results of the steps.
 
     Parameters
     ----------
-    storage : dict
-        The storage of the results.
+    data : dict
+        The data of the results.
     shape : tuple
         The shape of the results.
     ctime : datetime.datetime
@@ -29,7 +29,7 @@ class Storage(Tracker):
 
     def __init__(
             self,
-            storage: dict = None,
+            data: dict = None,
             shape: tuple = (),
             save_kwds: bool | Sequence[str] = True,
             frozen_keys: tuple = (),
@@ -37,12 +37,12 @@ class Storage(Tracker):
     ):
         self.ctime = datetime.utcnow()
         self.mtime = datetime.utcnow()
-        self.storage = storage if storage is not None else {}
+        self.data = data if data is not None else {}
         self.cache = {}
         self.pos = {}
         self.timestamps = {}
         self.iteration = {}
-        self._init_keys = list(self.storage.keys())
+        self._init_keys = list(self.data.keys())
         self._frozen_keys = frozen_keys
         self._ignores = ignores
         self._key_levels = ()
@@ -88,7 +88,7 @@ class Storage(Tracker):
                     and iters[0].shape[1] == len(keys)):
                 iters = iters[0]
                 for i, key in enumerate(keys):
-                    self.storage[key] = iters[:, i]
+                    self.data[key] = iters[:, i]
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
                 continue
@@ -107,18 +107,18 @@ class Storage(Tracker):
                 if level not in self.dims:
                     self.dims[level] = ()
                 self.dims[level] = self.dims[level] + (key, )
-                if key not in self.storage and isinstance(
-                        iter, (list, range, ndarray)):
+                if key not in self.data and isinstance(iter,
+                                                       (list, range, ndarray)):
                     if key.startswith('__'):
                         continue
-                    self.storage[key] = iter
+                    self.data[key] = iter
                     self._frozen_keys = self._frozen_keys + (key, )
                     self._init_keys.append(key)
 
         for key, value in constants.items():
             if key.startswith('__'):
                 continue
-            self.storage[key] = value
+            self.data[key] = value
             self._init_keys.append(key)
             self.vars_dims[key] = ()
 
@@ -144,7 +144,7 @@ class Storage(Tracker):
              store=False,
              **options):
         """
-        Feed the results of the step to the storage.
+        Feed the results of the step to the dataset.
 
         Parameters
         ----------
@@ -196,8 +196,8 @@ class Storage(Tracker):
             if self.vars_dims.get(k, ()) == () and k not in dataframe:
                 continue
             self.count += 1
-            if k not in self.storage:
-                self.storage[k] = [v]
+            if k not in self.data:
+                self.data[k] = [v]
                 if k in self.vars_dims:
                     self.pos[k] = tuple([pos[i]] for i in self.vars_dims[k])
                 else:
@@ -216,7 +216,7 @@ class Storage(Tracker):
                         l.append(i)
                 self.timestamps[k].append(now.timestamp())
                 self.iteration[k].append(iteration)
-                self.storage[k].append(v)
+                self.data[k].append(v)
 
     def flush(self, block=False):
         with self._lock:
@@ -268,11 +268,11 @@ class Storage(Tracker):
         if (data_shape, data_count) == (shape, count):
             return data
         try:
-            tmp = np.asarray(self.storage[key])
+            tmp = np.asarray(self.data[key])
             if data_shape != shape:
                 data = np.full(shape + tmp.shape[1:], np.nan, dtype=tmp.dtype)
         except:
-            tmp = self.storage[key]
+            tmp = self.data[key]
             if data_shape != shape:
                 data = np.full(shape, np.nan, dtype=object)
         try:
@@ -286,38 +286,38 @@ class Storage(Tracker):
         i = bisect.bisect_left(self.iteration[key], skip)
         pos = tuple(p[i:] for p in self.pos[key])
         iteration = self.iteration[key][i:]
-        data = self.storage[key][i:]
+        data = self.data[key][i:]
         return data, iteration, pos
 
     def keys(self):
         """
-        Get the keys of the storage.
+        Get the keys of the dataset.
         """
         self.flush()
-        return self.storage.keys()
+        return self.data.keys()
 
     def values(self):
         """
-        Get the values of the storage.
+        Get the values of the dataset.
         """
         self.flush()
-        return [self[k] for k in self.storage]
+        return [self[k] for k in self.data]
 
     def items(self):
         """
-        Get the items of the storage.
+        Get the items of the dataset.
         """
         self.flush()
         return list(zip(self.keys(), self.values()))
 
     def get(self, key, default=_NODEFAULT, skip=None, block=False):
         """
-        Get the value of the storage.
+        Get the value of the dataset.
         """
         self.flush(block)
         if key in self._init_keys:
-            return self.storage[key]
-        elif key in self.storage:
+            return self.data[key]
+        elif key in self.data:
             if skip is None:
                 return self._get_array(key, self.shape, self.count)
             else:
@@ -332,9 +332,9 @@ class Storage(Tracker):
 
     def __getstate__(self):
         self.flush()
-        storage = dict(self.items())
+        data = dict(self.items())
         return {
-            'storage': storage,
+            'data': data,
             'pos': self.pos,
             'timestamps': self.timestamps,
             'iteration': self.iteration,
