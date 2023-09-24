@@ -2,6 +2,7 @@ import math
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.colors import LogNorm
 from matplotlib.ticker import EngFormatter, LogFormatterSciNotation
 from scipy.interpolate import griddata
 
@@ -9,9 +10,9 @@ from scipy.interpolate import griddata
 def good_for_logscale(x, threshold=4):
     if np.any(x <= 0):
         return False
-    mid = (np.min(x) + np.max(x)) / 2
-    a = np.count_nonzero(x <= mid)
-    b = np.count_nonzero(x >= mid)
+    mid = (np.nanmin(x) + np.nanmax(x)) / 2
+    a = np.count_nonzero(np.nan_to_num(x <= mid, nan=0))
+    b = np.count_nonzero(np.nan_to_num(x >= mid, nan=0))
     if a / b > threshold:
         return True
     return False
@@ -28,6 +29,9 @@ def equal_linspace(x):
 
 
 def as_1d_data(x, y, z):
+    x = np.asarray(x)
+    y = np.asarray(y)
+    z = np.asarray(z)
     if z.ndim == 1:
         return x, y, z
 
@@ -39,47 +43,39 @@ def as_1d_data(x, y, z):
 
 
 def griddata_logx_logy(x, y, z, shape=(401, 401)):
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.asarray(z)
+    x, y, z = as_1d_data(x, y, z)
     xspace = np.logspace(np.log10(x.min()), np.log10(x.max()), shape[0])
     yspace = np.logspace(np.log10(y.min()), np.log10(y.max()), shape[1])
     xgrid, ygrid = np.meshgrid(xspace, yspace)
     zgrid = griddata((x, y), z, (xgrid, ygrid), method='nearest')
-    return xgrid, ygrid, zgrid
+    return xspace, yspace, zgrid
 
 
 def griddata_logx_linear_y(x, y, z, shape=(401, 401)):
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.asarray(z)
+    x, y, z = as_1d_data(x, y, z)
     xspace = np.logspace(np.log10(x.min()), np.log10(x.max()), shape[0])
     yspace = np.linspace(y.min(), y.max(), shape[1])
     xgrid, ygrid = np.meshgrid(xspace, yspace)
     zgrid = griddata((x, y), z, (xgrid, ygrid), method='nearest')
-    return xgrid, ygrid, zgrid
+    return xspace, yspace, zgrid
 
 
 def griddata_linear_x_logy(x, y, z, shape=(401, 401)):
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.asarray(z)
+    x, y, z = as_1d_data(x, y, z)
     xspace = np.linspace(x.min(), x.max(), shape[0])
     yspace = np.logspace(np.log10(y.min()), np.log10(y.max()), shape[1])
     xgrid, ygrid = np.meshgrid(xspace, yspace)
     zgrid = griddata((x, y), z, (xgrid, ygrid), method='nearest')
-    return xgrid, ygrid, zgrid
+    return xspace, yspace, zgrid
 
 
 def griddata_linear_x_linear_y(x, y, z, shape=(401, 401)):
-    x = np.asarray(x)
-    y = np.asarray(y)
-    z = np.asarray(z)
+    x, y, z = as_1d_data(x, y, z)
     xspace = np.linspace(x.min(), x.max(), shape[0])
     yspace = np.linspace(y.min(), y.max(), shape[1])
     xgrid, ygrid = np.meshgrid(xspace, yspace)
     zgrid = griddata((x, y), z, (xgrid, ygrid), method='nearest')
-    return xgrid, ygrid, zgrid
+    return xspace, yspace, zgrid
 
 
 def _get_log_ticks(x):
@@ -190,9 +186,9 @@ def plot_lines(x,
                y_unit,
                z_unit,
                ax,
-               xscale='auto',
-               yscale='auto',
-               zscale='auto',
+               xscale='linear',
+               yscale='linear',
+               zscale='linear',
                index=None,
                **kwds):
     z = np.asarray(z)
@@ -204,22 +200,6 @@ def plot_lines(x,
     if index is not None:
         y = y[index]
         z = z[index, :]
-
-    if xscale == 'auto':
-        if good_for_logscale(x):
-            xscale = 'log'
-        else:
-            xscale = 'linear'
-    if yscale == 'auto':
-        if good_for_logscale(y):
-            yscale = 'log'
-        else:
-            yscale = 'linear'
-    if zscale == 'auto':
-        if good_for_logscale(z):
-            zscale = 'log'
-        else:
-            zscale = 'linear'
 
     for i, l in enumerate(y):
         if y_unit:
@@ -253,12 +233,57 @@ def plot_img(x,
              xscale='linear',
              yscale='linear',
              zscale='linear',
+             resolution=None,
              **kwds):
     kwds.setdefault('origin', 'lower')
     kwds.setdefault('aspect', 'auto')
     kwds.setdefault('interpolation', 'nearest')
 
+    if zscale == 'log':
+        vmim = kwds.get('vmin', np.min(z))
+        vmax = kwds.get('vmax', np.max(z))
+        kwds.setdefault('norm', LogNorm(vmax=vmax, vmin=vmim))
     zlabel = f"{zlabel} [{z_unit}]" if z_unit else zlabel
+
+    band_area = False
+    if x.ndim == 1 and y.ndim == 2 and y.shape[1] == x.shape[0]:
+        x = np.asarray([x] * y.shape[0])
+        band_area = True
+    elif x.ndim == 2 and y.ndim == 1 and x.shape[0] == y.shape[0]:
+        y = np.asarray([y] * x.shape[1]).T
+        band_area = True
+    if band_area:
+        kwds.pop('origin', None)
+        kwds.pop('aspect', None)
+        kwds.pop('interpolation', None)
+        print(x.shape, y.shape, z.shape)
+        pc = ax.pcolormesh(x, y, z, **kwds)
+        xlabel = f"{xlabel} [{x_unit}]" if x_unit else xlabel
+        ylabel = f"{ylabel} [{y_unit}]" if y_unit else ylabel
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        cb = fig.colorbar(pc, ax=ax)
+        ax.set_xscale(xscale)
+        ax.set_yscale(yscale)
+        cb.set_label(zlabel)
+        return
+
+    if resolution is None:
+        resolution = (401, 401)
+    elif isinstance(resolution, int):
+        resolution = (resolution, resolution)
+
+    if (z.ndim == 1 or (xscale == 'linear' and not equal_linspace(x))
+            or (yscale == 'linear' and not equal_linspace(y))
+            or (xscale == 'log' and not equal_logspace(x))
+            or (yscale == 'log' and not equal_logspace(y))):
+        griddata = {
+            ('log', 'log'): griddata_logx_logy,
+            ('log', 'linear'): griddata_logx_linear_y,
+            ('linear', 'log'): griddata_linear_x_logy,
+            ('linear', 'linear'): griddata_linear_x_linear_y,
+        }[(xscale, yscale)]
+        x, y, z = griddata(x, y, z, resolution)
 
     if (xscale, yscale) == ('linear', 'linear'):
         dx, dy = x[1] - x[0], y[1] - y[0]
@@ -283,6 +308,36 @@ def plot_img(x,
     cb.set_label(zlabel)
 
 
+def plot_scatter(x,
+                 y,
+                 z,
+                 xlabel,
+                 ylabel,
+                 zlabel,
+                 x_unit,
+                 y_unit,
+                 z_unit,
+                 fig,
+                 ax,
+                 xscale='linear',
+                 yscale='linear',
+                 zscale='linear',
+                 **kwds):
+    if np.any(np.iscomplex(z)):
+        s = np.abs(z)
+        c = np.angle(z)
+    else:
+        s = np.abs(z)
+        c = z.real
+    ax.scatter(x, y, s=s, c=c, **kwds)
+    xlabel = f"{xlabel} [{x_unit}]" if x_unit else xlabel
+    ylabel = f"{ylabel} [{y_unit}]" if y_unit else ylabel
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_xscale(xscale)
+    ax.set_yscale(yscale)
+
+
 def autoplot(x,
              y,
              z,
@@ -299,6 +354,8 @@ def autoplot(x,
              yscale='auto',
              zscale='auto',
              max_lines=3,
+             scatter_lim=1000,
+             resolution=None,
              **kwds):
     """
     Plot a 2D array as a line plot or an image.
@@ -329,7 +386,44 @@ def autoplot(x,
     if ax is None:
         ax = fig.add_subplot(111)
 
-    if len(y) <= max_lines or len(x) <= max_lines or index is not None:
+    x = np.asarray(x)
+    y = np.asarray(y)
+    z = np.asarray(z)
+
+    if xscale == 'auto':
+        if good_for_logscale(x):
+            xscale = 'log'
+        else:
+            xscale = 'linear'
+    if yscale == 'auto':
+        if good_for_logscale(y):
+            yscale = 'log'
+        else:
+            yscale = 'linear'
+    if zscale == 'auto':
+        if good_for_logscale(z):
+            zscale = 'log'
+        else:
+            zscale = 'linear'
+
+    if x.shape == y.shape == z.shape and z.size < scatter_lim:
+        plot_scatter(x,
+                     y,
+                     z,
+                     xlabel,
+                     ylabel,
+                     zlabel,
+                     x_unit,
+                     y_unit,
+                     z_unit,
+                     fig,
+                     ax,
+                     xscale=xscale,
+                     yscale=yscale,
+                     zscale=zscale,
+                     **kwds)
+    elif z.ndim == 2 and (len(y) <= max_lines or len(x) <= max_lines
+                          or index is not None):
         plot_lines(x,
                    y,
                    z,
@@ -360,4 +454,5 @@ def autoplot(x,
                  zscale=zscale,
                  fig=fig,
                  ax=ax,
+                 resolution=resolution,
                  **kwds)
