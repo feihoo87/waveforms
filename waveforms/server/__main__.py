@@ -1,7 +1,7 @@
 import click
 
 
-@click.command()
+@click.command(name='server')
 @click.option('--executor',
               default='127.0.0.1',
               help='Executor address to use.')
@@ -30,22 +30,11 @@ def main(executor, port, host, db_url, data_path, debug, workers, timeout,
     """
     Main entry point for the server.
     """
-    from waveforms.server import create_app
+    import asyncio
 
-    app = create_app(
-        executor=executor,
-        port=port,
-        host=host,
-        db_url=db_url,
-        data_path=data_path,
-        debug=debug,
-        workers=workers,
-        timeout=timeout,
-        log_level=log_level,
-        log_file=log_file,
-        log_format=log_format,
-    )
-    app.run()
+    from .echo import main as echo_main
+
+    asyncio.run(echo_main())
 
 
 if __name__ == '__main__':

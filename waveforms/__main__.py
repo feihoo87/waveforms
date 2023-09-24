@@ -1,4 +1,6 @@
 import click
+
+from .server.__main__ import main as server
 from .visualization.__main__ import plot
 
 
@@ -14,6 +16,7 @@ def hello():
 
 
 main.add_command(plot)
+main.add_command(server)
 
 if __name__ == '__main__':
     main()
