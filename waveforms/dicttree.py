@@ -307,17 +307,17 @@ def queryref_tree(q, keys, dct, prefix=[], chain=None):
     elif q in chain:
         raise KeyError(f'Circular reference: {chain+[q]}')
 
-    return query_tree(q, dct, prefix=prefix, chain=chain + [q])
+    return query_tree(q, dct, prefix=prefix, eval=True, chain=chain + [q])
 
 
-def query_tree(q, dct, prefix=[], chain=None):
+def query_tree(q, dct, prefix=[], eval=True, chain=None):
     ret = dct
     keys = q.split('.')
     for i, key in enumerate(keys):
         if key not in ret:
             return (NOTSET, '.'.join(prefix + keys[:i + 1]))
         ret = ret[key]
-    if isinstance(ret, str):
+    if isinstance(ret, str) and eval:
         if ret.startswith('$'):
             return queryref_tree(ret, keys, dct, prefix=prefix, chain=chain)
         elif ret.startswith('&'):
