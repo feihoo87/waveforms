@@ -116,6 +116,9 @@ def bayesian_correction_in_subspace(state, correction_matrices, subspace):
         correction_matrices (np.array): A list of correction matrices.
         subspace (np.array, dtype=int): The basis of subspace.
 
+    See also:
+        https://doi.org/10.1103/PhysRevA.103.042605
+
     Returns:
         np.array: The corrected state.
 
