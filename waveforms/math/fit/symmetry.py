@@ -42,7 +42,6 @@ def _as_meshgrid(x, y, z):
                 grid_x, grid_y = np.meshgrid(xx, y)
                 x_, y_ = np.meshgrid(x, y)
                 points = np.array([x_.ravel(), y_.ravel()]).T
-                print(x.shape, y.shape, z.shape, points.shape)
                 z = griddata(points,
                              z.ravel(), (grid_x, grid_y),
                              method='linear')
@@ -100,7 +99,10 @@ def find_axis_of_symmetry(x, y, z=None):
     """
     x, y, z = _as_meshgrid(x, y, z)
 
-    c = fftconvolve(z, z, mode='same', axes=1).sum(axis=0)
+    if z.ndim == 2:
+        c = fftconvolve(z, z, mode='same', axes=1).sum(axis=0)
+    else:
+        c = fftconvolve(z, z, mode='same')
     i = np.argmax(c)
     x_center = len(c) / 2
     axis_of_symmetry_i = (i + x_center) / 2
