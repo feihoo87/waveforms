@@ -1,6 +1,35 @@
+import itertools
+import math
+
 import numpy as np
 
 from .fibheap import FibHeap, FibNode
+
+
+def input_state_set(n):
+    """
+    Input states for CTMP calibration.
+
+    Args:
+        n: number of qubits
+
+    Returns:
+        a (M x n) array, each row is a state
+        M is the smallest integer such that
+        comb(M, M // 2) >= n
+    """
+    r = 2
+    while True:
+        if math.comb(2 * r, r) >= n:
+            break
+        r += 1
+    ret = np.zeros((2 * r, n), dtype=np.int8)
+
+    for i, x in enumerate(itertools.combinations(range(2 * r), r=r)):
+        if i >= n:
+            break
+        ret[x, i] = 1
+    return ret
 
 
 def _generate_standrad_information(key, bayes_matrices):
@@ -199,3 +228,80 @@ def bayesian_correction(state,
     else:
         return bayesian_correction_in_subspace(state, correction_matrices,
                                                subspace)
+
+
+def string_to_operator(string: str):
+    ops = []
+    for s in string:
+        if s == 'I':
+            ops.append(np.eye(2))
+        elif s == '0':
+            ops.append(np.array([[1, 0], [0, 0]]))
+        elif s == '1':
+            ops.append(np.array([[0, 0], [0, 1]]))
+        # elif s == 'X':
+        #     ops.append(np.array([[0, 1], [1, 0]]))
+        # elif s == 'Y':
+        #     ops.append(np.array([[0, -1j], [1j, 0]]))
+        elif s == 'Z':
+            ops.append(np.array([[1, 0], [0, -1]]))
+        else:
+            raise ValueError(f"Unknown operator {s}")
+    return np.array(ops)
+
+
+def exception(state,
+              e_ops: np.ndarray | list[str],
+              correction_matrices: np.ndarray | None = None):
+    """Calculate the exceptions of the operators.
+
+    Consider a simple case when A is a tensor product of 2 x 2 stochastic matrices.
+    and observable operator has a tensor product form.
+
+    Args:
+        state (np.array, dtype=int): The bit string of the state. The shape
+            should be (..., shots, num_qubits).
+        e_ops (np.array): A list of operators. Each operator should be diagonal.
+        correction_matrices (np.array): A list of correction matrices.
+
+    See also:
+        https://doi.org/10.1103/PhysRevA.103.042605
+
+    Returns:
+        np.array: The exceptions of the operators.
+
+    Examples:
+        >>> state = np.random.randint(2, size = (101, 1024, 4))
+        >>> errors = [[0.05, 0.1], [0.02, 0.03], [0.01, 0.08], [0.02, 0.03]]
+        >>> correction_matrices = np.array([
+            np.linalg.inv(np.array([[1 - eps, eta], [eps, 1 - eta]]))
+            for eps, eta in errors
+        ])
+        >>> ops = ['0III', '0II1', 'ZIZZ']
+        >>> result = exception(state, ops, correction_matrices)
+        >>> result.shape
+        (101, 3)
+    """
+
+    *datashape, shots, num_qubits = state.shape
+    site_index = np.arange(num_qubits)
+
+    correction_matrices = np.asarray(correction_matrices)
+    if e_ops and isinstance(e_ops[0], str):
+        e_ops = [string_to_operator(s) for s in e_ops]
+    e_ops = np.asarray(e_ops)
+
+    num_qubits_, _, _ = correction_matrices.shape
+    assert num_qubits == num_qubits_
+
+    *n_ops, num_qubits_, _, _ = e_ops.shape
+    assert num_qubits == num_qubits_
+
+    if correction_matrices is None:
+        M = e_ops
+    else:
+        M = e_ops @ correction_matrices
+
+    return M[..., site_index, :,
+             state.reshape(-1, num_qubits)].sum(axis=-1).prod(axis=1).reshape(
+                 *datashape, shots, *n_ops).mean(axis=len(datashape))
