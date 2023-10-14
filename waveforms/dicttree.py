@@ -264,7 +264,7 @@ def merge(diff1, diff2, origin=None):
     return ret
 
 
-def print_diff(d, limit=None, offset=0, file=sys.stdout):
+def print_diff(d, limit=None, offset=0, file=sys.stdout, ignores=None):
     """
     Print a diff
 
@@ -273,10 +273,13 @@ def print_diff(d, limit=None, offset=0, file=sys.stdout):
         limit: the maximum number of lines to print
         offset: the offset of the first line
         file: the file to print to
+        ignores: ignore keys starting with this prefix
     """
     count = 0
     for i, (k, v) in enumerate(flattenDictIter(d)):
-        if i >= offset:
+        if count >= offset:
+            if ignores is not None and k.startswith(ignores):
+                continue
             print(f"{k:40}", v, file=file)
             count += 1
             if limit is not None and count >= limit:
