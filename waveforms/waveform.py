@@ -1474,6 +1474,7 @@ def t():
 
 
 def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
+    phase += pi * delta * (width + plateau)
     if plateau <= 0:
         return Waveform(seq=(_zero,
                              _basic_wave(DRAG, t0, freq, width, delta,
@@ -1482,23 +1483,24 @@ def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
                                                           NDIGITS), +inf))
     elif width <= 0:
         w = 2 * pi * (freq + delta)
-        return Waveform(seq=(_zero, _basic_wave(COS, w,
-                                                shift=t0 + phase / w), _zero),
-                        bounds=(round(t0,
-                                      NDIGITS), round(t0 + plateau,
-                                                      NDIGITS), +inf))
+        return Waveform(
+            seq=(_zero,
+                 _basic_wave(COS, w,
+                             shift=(phase + 2 * pi * delta * t0) / w), _zero),
+            bounds=(round(t0, NDIGITS), round(t0 + plateau, NDIGITS), +inf))
     else:
         w = 2 * pi * (freq + delta)
-        return Waveform(seq=(_zero,
-                             _basic_wave(DRAG, t0, freq, width, delta,
-                                         block_freq, phase),
-                             _basic_wave(COS, w, shift=t0 + phase / w),
-                             _basic_wave(DRAG, t0+plateau, freq, width, delta,
-                                         block_freq, phase), _zero),
-                        bounds=(round(t0,
-                                      NDIGITS), round(t0 + width / 2, NDIGITS),
-                                round(t0 + width / 2 + plateau, NDIGITS),
-                                round(t0 + width + plateau, NDIGITS), +inf))
+        return Waveform(
+            seq=(_zero,
+                 _basic_wave(DRAG, t0, freq, width, delta, block_freq, phase),
+                 _basic_wave(COS, w, shift=(phase + 2 * pi * delta * t0) / w),
+                 _basic_wave(DRAG, t0 + plateau, freq, width, delta,
+                             block_freq,
+                             phase - 2 * pi * delta * plateau), _zero),
+            bounds=(round(t0, NDIGITS), round(t0 + width / 2, NDIGITS),
+                    round(t0 + width / 2 + plateau,
+                          NDIGITS), round(t0 + width + plateau,
+                                          NDIGITS), +inf))
 
 
 def chirp(f0, f1, T, phi0=0, type='linear'):
