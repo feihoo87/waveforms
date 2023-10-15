@@ -414,7 +414,7 @@ class Waveform:
         return ret
 
     @staticmethod
-    def fromlist(l):
+    def fromlist(l, return_pointer=False):
 
         def _read(l, pos, size):
             try:
@@ -446,6 +446,8 @@ class Waveform:
             seq.append((tuple(t), tuple(amp)))
         w.seq = tuple(seq)
         w.bounds = tuple(bounds)
+        if return_pointer:
+            return w, pos
         return w
 
     def totree(self):
@@ -845,6 +847,23 @@ class WaveVStack(Waveform):
         for w in self.wlist:
             w(x, False, out, accumulate=True, function_lib=function_lib)
         return out.real
+
+    def tolist(self):
+        ret = [self.start, self.stop, self.sample_rate, len(self.wlist)]
+        for w in self.wlist:
+            ret.extend(w.tolist())
+        return ret
+
+    @staticmethod
+    def fromlist(l):
+        w = WaveVStack()
+        w.start, w.stop, w.sample_rate, n = l[:4]
+        l = l[4:]
+        for _ in range(n):
+            wav, pos = Waveform.fromlist(l, True)
+            w.wlist.append(wav)
+            l = l[pos:]
+        return w
 
     def simplify(self):
         wav = wave_sum(*self.wlist)
@@ -1474,7 +1493,7 @@ def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
                              _basic_wave(DRAG, t0, freq, width, delta,
                                          block_freq, phase),
                              _basic_wave(COS, w, shift=t0 + phase / w),
-                             _basic_wave(DRAG, t0, freq, width, delta,
+                             _basic_wave(DRAG, t0+plateau, freq, width, delta,
                                          block_freq, phase), _zero),
                         bounds=(round(t0,
                                       NDIGITS), round(t0 + width / 2, NDIGITS),
