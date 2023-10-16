@@ -34,8 +34,11 @@ jobs:
     - name: Test with pytest
       run: |
         coverage run --source=waveforms -m pytest --verbose tests/
-    - name: Coveralls GitHub Action
-      uses: coverallsapp/github-action@v2      
+    - name: Coveralls
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        coveralls --service=github   
     - name: Build package
       run: |
         pip install build setuptools wheel twine
