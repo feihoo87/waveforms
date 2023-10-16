@@ -286,13 +286,9 @@ def exception(state,
     *datashape, shots, num_qubits = state.shape
     site_index = np.arange(num_qubits)
 
-    correction_matrices = np.asarray(correction_matrices)
     if e_ops and isinstance(e_ops[0], str):
         e_ops = [string_to_operator(s) for s in e_ops]
     e_ops = np.asarray(e_ops)
-
-    num_qubits_, _, _ = correction_matrices.shape
-    assert num_qubits == num_qubits_
 
     *n_ops, num_qubits_, _, _ = e_ops.shape
     assert num_qubits == num_qubits_
@@ -300,6 +296,9 @@ def exception(state,
     if correction_matrices is None:
         M = e_ops
     else:
+        correction_matrices = np.asarray(correction_matrices)
+        num_qubits_, _, _ = correction_matrices.shape
+        assert num_qubits == num_qubits_
         M = e_ops @ correction_matrices
 
     return M[..., site_index, :,
