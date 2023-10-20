@@ -232,6 +232,16 @@ def bayesian_correction(state,
 
 def string_to_operator(string: str):
     ops = []
+    sign = 1
+    string = string.strip()
+    if string.startswith('+'):
+        string = string[1:]
+    if string.startswith('-'):
+        sign = -1
+        string = string[1:]
+    if string.startswith('i'):
+        string = string[1:]
+        sign *= 1j
     for s in string:
         if s == 'I':
             ops.append(np.eye(2))
@@ -247,6 +257,7 @@ def string_to_operator(string: str):
             ops.append(np.array([[1, 0], [0, -1]]))
         else:
             raise ValueError(f"Unknown operator {s}")
+    ops[0] = sign * ops[0]
     return np.array(ops)
 
 
@@ -302,5 +313,67 @@ def exception(state,
         M = e_ops @ correction_matrices
 
     return M[..., site_index, :,
-             state.reshape(-1, num_qubits)].sum(axis=-1).prod(axis=1).reshape(
-                 *datashape, shots, *n_ops).mean(axis=len(datashape))
+             state.reshape(-1, num_qubits).astype(np.int8)].sum(axis=-1).prod(
+                 axis=1).reshape(*datashape, shots,
+                                 *n_ops).mean(axis=len(datashape))
+
+
+def measure(op):
+    """
+    Measure the operator.
+
+    Covnert the operator to the form of 'I', 'Z' by
+    adding '-X/2' and 'Y/2' gates.
+    return the covnerted operator and the circuit.
+
+    Args:
+        op: the operator to be measured
+        the operator is a string of 'I', 'X', 'Y', 'Z'
+
+    Returns:
+        operator, circuit
+        the operator is a string of 'I', 'Z'
+        the circuit is a list of (gate, qubit_index)
+
+    Examples:
+        >>> measure('X')
+        ('Z', [('-Y/2', 0)])
+        >>> measure('Y')
+        ('Z', [('X/2', 0)])
+        >>> measure('Z')
+        ('Z', [])
+        >>> measure('I')
+        ('I', [])
+    """
+    e_op = []
+    circ = []
+
+    sign = 1
+    op = op.strip()
+    if op.startswith('+'):
+        op = op[1:]
+    if op.startswith('-'):
+        sign = -1
+        op = op[1:]
+    if op.startswith('i'):
+        op = op[1:]
+        sign *= 1j
+    if sign == -1:
+        e_op.append('-')
+    elif sign == 1j:
+        e_op.append('i')
+    elif sign == -1j:
+        e_op.append('-i')
+
+    for i, c in enumerate(op):
+        if c == 'X':
+            e_op.append('Z')
+            circ.append(('-Y/2', i))
+        elif c == 'Y':
+            e_op.append('Z')
+            circ.append(('X/2', i))
+        elif c in ['I', 'Z', '0', '1']:
+            e_op.append(c)
+        else:
+            raise ValueError(f"Unknown operator {c}")
+    return ''.join(e_op), circ

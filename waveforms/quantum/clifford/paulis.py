@@ -67,3 +67,36 @@ def imul_paulis(a: int, b: int):
     sign = (h.bit_count() * 2 + l.bit_count() + sign) & 3
 
     return (c << 2) | sign
+
+
+def string_to_matrices(string: str):
+    import numpy as np
+
+    ops = []
+    sign = 1
+    string = string.strip()
+    if string.startswith('+'):
+        string = string[1:]
+    if string.startswith('-'):
+        sign = -1
+        string = string[1:]
+    if string.startswith('i'):
+        string = string[1:]
+        sign *= 1j
+    for s in string:
+        if s == 'I':
+            ops.append(np.eye(2))
+        elif s == '0':
+            ops.append(np.array([[1, 0], [0, 0]]))
+        elif s == '1':
+            ops.append(np.array([[0, 0], [0, 1]]))
+        elif s == 'X':
+            ops.append(np.array([[0, 1], [1, 0]]))
+        elif s == 'Y':
+            ops.append(np.array([[0, -1j], [1j, 0]]))
+        elif s == 'Z':
+            ops.append(np.array([[1, 0], [0, -1]]))
+        else:
+            raise ValueError(f"Unknown operator {s}")
+    ops[0] = sign * ops[0]
+    return np.array(ops)
