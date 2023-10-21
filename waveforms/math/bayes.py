@@ -2,8 +2,10 @@ import itertools
 import math
 
 import numpy as np
+from scipy.linalg import logm
 
 from .fibheap import FibHeap, FibNode
+from .paulis import string_to_matrices
 
 
 def input_state_set(n):
@@ -230,40 +232,59 @@ def bayesian_correction(state,
                                                subspace)
 
 
-def string_to_operator(string: str):
-    ops = []
-    sign = 1
-    string = string.strip()
-    if string.startswith('+'):
-        string = string[1:]
-    if string.startswith('-'):
-        sign = -1
-        string = string[1:]
-    if string.startswith('i'):
-        string = string[1:]
-        sign *= 1j
-    for s in string:
-        if s == 'I':
-            ops.append(np.eye(2))
-        elif s == '0':
-            ops.append(np.array([[1, 0], [0, 0]]))
-        elif s == '1':
-            ops.append(np.array([[0, 0], [0, 1]]))
-        # elif s == 'X':
-        #     ops.append(np.array([[0, 1], [1, 0]]))
-        # elif s == 'Y':
-        #     ops.append(np.array([[0, -1j], [1j, 0]]))
-        elif s == 'Z':
-            ops.append(np.array([[1, 0], [0, -1]]))
+def get_error_rates(matrices, N):
+    rates1 = {}
+    rates2 = {}
+
+    for i, j in itertools.combinations(range(N), r=2):
+        if (i, j) in matrices:
+            G = logm(matrices[(i, j)])
+        elif (j, i) in matrices:
+            G = logm(matrices[(j, i)])
+            G = np.array([[G[0, 0], G[0, 2], G[0, 1], G[0, 3]],
+                          [G[2, 0], G[2, 2], G[2, 1], G[2, 3]],
+                          [G[1, 0], G[1, 2], G[1, 1], G[1, 3]],
+                          [G[3, 0], G[3, 2], G[3, 1], G[3, 3]]])
         else:
-            raise ValueError(f"Unknown operator {s}")
-    ops[0] = sign * ops[0]
-    return np.array(ops)
+            continue
+        G = np.clip(G, 0, np.inf)
+        rates2[(i, j)] = np.diag(G[::-1, :])
+        if i not in rates1:
+            rates1[i] = np.array([0.0, 0.0])
+        rates1[i] += np.array([G[2, 0] + G[3, 1], G[0, 2] + G[1, 3]
+                               ]) / (2 * (N - 1))
+
+    gamma = np.max(list(rates1.values()), axis=-1).sum() + np.max(
+        list(rates2.values()), axis=-1).sum()
+    return gamma, rates1, rates2
+
+
+def _sample_x(x, gamma, rates1, rates2=None):
+    a = 0
+    seed = np.random.random()
+    for q1, r in rates1.items():
+        a += r[x[q1]] / gamma
+        if a > seed:
+            x = x.copy()
+            x[q1] ^= 1
+            return x
+    if rates2 is not None:
+        for (q1, q2), r in rates2.items():
+            a += r[2 * x[q1] + x[q2]] / gamma
+            if a > seed:
+                x = x.copy()
+                x[q1] ^= 1
+                x[q2] ^= 1
+                return x
+    return x
 
 
 def exception(state,
               e_ops: np.ndarray | list[str],
-              correction_matrices: np.ndarray | None = None):
+              correction_matrices: np.ndarray | None = None,
+              gamma=None,
+              rates1=None,
+              rates2=None):
     """Calculate the exceptions of the operators.
 
     Consider a simple case when A is a tensor product of 2 x 2 stochastic matrices.
@@ -298,11 +319,27 @@ def exception(state,
     site_index = np.arange(num_qubits)
 
     if e_ops and isinstance(e_ops[0], str):
-        e_ops = [string_to_operator(s) for s in e_ops]
+        e_ops = [string_to_matrices(s, diag=True) for s in e_ops]
     e_ops = np.asarray(e_ops)
 
     *n_ops, num_qubits_, _, _ = e_ops.shape
     assert num_qubits == num_qubits_
+
+    if gamma is not None and rates1 is not None:
+        if rates2 is None:
+            pass
+        else:
+            alpha = np.random.poisson(gamma, (*datashape, shots))
+            state = state.reshape(-1, num_qubits)
+            for i, (n, s) in enumerate(zip(alpha.reshape(-1), state)):
+                for _ in range(n):
+                    s = _sample_x(s, gamma, rates1, rates2)
+                state[i] = s
+            state = state.reshape(*datashape, shots, num_qubits)
+            sign = (-1)**(alpha & 1)
+            return np.moveaxis(
+                (sign * e_ops[..., site_index, state].prod(axis=-1)).mean(axis=-1),
+                0, -1)
 
     if correction_matrices is None:
         M = e_ops
@@ -318,7 +355,7 @@ def exception(state,
                                  *n_ops).mean(axis=len(datashape))
 
 
-def measure(op):
+def measure(op: str):
     """
     Measure the operator.
 

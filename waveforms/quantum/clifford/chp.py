@@ -1,7 +1,7 @@
 import functools
 import random
-import collections
-from .paulis import imul_paulis
+
+from waveforms.math.paulis import imul_paulis
 
 
 def H(a, i):
@@ -33,35 +33,36 @@ def CZ(a, i, j):
     return (a << 2) | (sign & 3)
 
 
-def measure(stablizers, a):
+def measure(stablizers, i):
     """
     Measure a qubit.
 
     Args:
         stablizers: A list of stabilizers to measure the qubit in.
-        a: The index of the qubit to measure.
+        i: The index of the qubit to measure.
 
     Returns:
         A tuple of the form (stablizers, result), where stablizers are lists
         of stabilizers after measurement, and result is the result of the
         measurement.
     """
+    fist_noncommutative = None
     for p, stablizer in enumerate(stablizers):
-        if (stablizer >> 2 * a + 2) & 1:
-            break
-    else:
-        result = functools.reduce(imul_paulis, [
-            stablizer
-            for stablizer in stablizers if (stablizer >> 2 * a + 2 + 1) & 1
-        ], 0) & 3
-        result >>= 1
-        return result, stablizers
+        if (stablizer >> 2 * i + 2) & 1:
+            if fist_noncommutative is not None:
+                stablizers[p] = imul_paulis(stablizer, fist_noncommutative)
+            else:
+                fist_noncommutative = stablizer
+                stablizers[p] = (2 << 2 * i + 2)
 
-    for i, s in enumerate(stablizers):
-        if i != p and (s >> 2 * a + 2) & 1:
-            stablizers[i] = imul_paulis(s, stablizer)
-    stablizers[p] = (2 << 2 * a + 2)
-    return 2, stablizers
+    result = functools.reduce(imul_paulis, [
+        stablizer
+        for stablizer in stablizers if (stablizer >> 2 * i + 2 + 1) & 1
+    ], 0) & 3
+    result >>= 1
+    if fist_noncommutative is not None:
+        result += 2
+    return result, stablizers
 
 
 def run_circuit(circ, stablizers=None, state=None):
@@ -118,14 +119,17 @@ def run_circuit(circ, stablizers=None, state=None):
                                             stablizers, state)
         elif gate == 'M' or gate == 'Measure':
             flag, stablizers = measure(stablizers, *qubits)
-            state.append((qubits[0], flag))
+            if flag >= 2:
+                x = random.choices([0, 1], [0.5, 0.5])[0]
+                state.append(x)
+                if x != flag & 1:
+                    stablizers, state = run_circuit([('H', *qubits),
+                                                     ('P', *qubits),
+                                                     ('P', *qubits),
+                                                     ('H', *qubits)],
+                                                    stablizers, state)
+            else:
+                state.append(flag)
         else:
             raise ValueError(f"Unknown gate {gate}")
-    trans = 0
-    result = []
-    for q, b in state:
-        if b == 2:
-            trans ^= random.randint(0, 1)
-            b = 0
-        result.append(b ^ trans)
-    return stablizers, result
+    return stablizers, state
