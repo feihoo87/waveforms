@@ -233,6 +233,18 @@ def bayesian_correction(state,
 
 
 def get_error_rates(matrices, N):
+    """
+    Get the error rates from the stochastic matrices.
+
+    Args:
+        matrices: a dictionary of (4x4) stochastic matrices
+        N: number of qubits
+
+    Returns:
+        gamma: the total error rate
+        rates1: a dictionary of single-qubit error rates
+        rates2: a dictionary of two-qubit error rates
+    """
     rates1 = {}
     rates2 = {}
 
@@ -327,7 +339,18 @@ def exception(state,
 
     if gamma is not None and rates1 is not None:
         if rates2 is None:
-            pass
+            if correction_matrices is None:
+                correction_matrices = []
+                for i in range(num_qubits):
+                    r0, r1 = rates1.get(i, (0, 0))
+                    if r0 + r1 == 0:
+                        correction_matrices.append(np.eye(2))
+                    else:
+                        eps = r0 / (r0 + r1) * (1 - np.exp(-r0 - r1))
+                        eta = r1 / (r0 + r1) * (1 - np.exp(-r0 - r1))
+                        correction_matrices.append(
+                            np.linalg.inv(
+                                np.array([[1 - eps, eta], [eps, 1 - eta]])))
         else:
             alpha = np.random.poisson(gamma, (*datashape, shots))
             state = state.reshape(-1, num_qubits)
@@ -337,9 +360,9 @@ def exception(state,
                 state[i] = s
             state = state.reshape(*datashape, shots, num_qubits)
             sign = (-1)**(alpha & 1)
-            return np.moveaxis(
-                (sign * e_ops[..., site_index, state].prod(axis=-1)).mean(axis=-1),
-                0, -1)
+            return np.exp(2 * gamma) * np.moveaxis(
+                (sign * e_ops[..., site_index, state].prod(axis=-1)).mean(
+                    axis=-1), 0, -1)
 
     if correction_matrices is None:
         M = e_ops
