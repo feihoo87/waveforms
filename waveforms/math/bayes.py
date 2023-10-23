@@ -232,6 +232,40 @@ def bayesian_correction(state,
                                                subspace)
 
 
+def extract_matrices(input_states, output_states):
+    """
+    Extract stochastic matrices from input and output states.
+
+    Args:
+        input_states: a (N x n) array, each row is a state
+        output_states: a (N x M x n) array, each row is a state
+
+    Returns:
+        a dictionary of (4x4) stochastic matrices
+    """
+    num_qubits = input_states.shape[-1]
+    matrices = {}
+    for i, j in itertools.combinations(range(num_qubits), r=2):
+        x = input_states[:, [i, j]]
+        y = output_states[:, :, [i, j]]
+
+        data = [[], [], [], []]
+        for k, (input_state, output_state) in enumerate(zip(x, y)):
+            data[2 * input_state[0] + input_state[1]].extend(
+                list(2 * output_state[:, 0] + output_state[:, 1]))
+        mat = np.zeros((4, 4), dtype=float)
+        for k, d in enumerate(data):
+            N = len(d)
+            mat[:, k] = np.array([
+                np.count_nonzero(d) / N,
+                np.count_nonzero(np.array(d) - 1) / N,
+                np.count_nonzero(np.array(d) - 2) / N,
+                np.count_nonzero(np.array(d) - 3) / N
+            ])
+        matrices[(i, j)] = mat
+    return matrices
+
+
 def get_error_rates(matrices, N):
     """
     Get the error rates from the stochastic matrices.
