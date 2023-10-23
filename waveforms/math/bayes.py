@@ -266,13 +266,13 @@ def extract_matrices(input_states, output_states):
     return matrices
 
 
-def get_error_rates(matrices, N):
+def get_error_rates(matrices, num_qubits):
     """
     Get the error rates from the stochastic matrices.
 
     Args:
         matrices: a dictionary of (4x4) stochastic matrices
-        N: number of qubits
+        num_qubits: number of qubits
 
     Returns:
         gamma: the total error rate
@@ -282,7 +282,7 @@ def get_error_rates(matrices, N):
     rates1 = {}
     rates2 = {}
 
-    for i, j in itertools.combinations(range(N), r=2):
+    for i, j in itertools.combinations(range(num_qubits), r=2):
         if (i, j) in matrices:
             G = logm(matrices[(i, j)])
         elif (j, i) in matrices:
@@ -298,7 +298,7 @@ def get_error_rates(matrices, N):
         if i not in rates1:
             rates1[i] = np.array([0.0, 0.0])
         rates1[i] += np.array([G[2, 0] + G[3, 1], G[0, 2] + G[1, 3]
-                               ]) / (2 * (N - 1))
+                               ]) / (2 * (num_qubits - 1))
 
     gamma = np.max(list(rates1.values()), axis=-1).sum() + np.max(
         list(rates2.values()), axis=-1).sum()
