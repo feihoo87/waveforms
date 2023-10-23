@@ -255,13 +255,9 @@ def extract_matrices(input_states, output_states):
                 list(2 * output_state[:, 0] + output_state[:, 1]))
         mat = np.zeros((4, 4), dtype=float)
         for k, d in enumerate(data):
-            N = len(d)
-            mat[:, k] = np.array([
-                np.count_nonzero(d) / N,
-                np.count_nonzero(np.array(d) - 1) / N,
-                np.count_nonzero(np.array(d) - 2) / N,
-                np.count_nonzero(np.array(d) - 3) / N
-            ])
+            col = np.array(
+                [np.count_nonzero(np.array(d) == l) for l in range(4)])
+            mat[:, k] = col / col.sum()
         matrices[(i, j)] = mat
     return matrices
 
