@@ -1,5 +1,6 @@
 import itertools
 import math
+from collections import defaultdict
 
 import numpy as np
 from scipy.linalg import logm
@@ -236,12 +237,20 @@ def extract_matrices(input_states, output_states):
     """
     Extract stochastic matrices from input and output states.
 
+    The stochastic matrix A is defined as
+        P_out = A P_in
+    where P_in and P_out are the probability vectors of prepared states
+    and measured states, respectively. P_in and P_out are column vectors,
+    and the order of the basis is |00>, |01>, |10>, |11>. A is a (4x4)
+    stochastic matrix.
+
     Args:
         input_states: a (N x n) array, each row is a state
         output_states: a (N x M x n) array, each row is a state
 
     Returns:
         a dictionary of (4x4) stochastic matrices
+        the key is a tuple of two qubit indices
     """
     num_qubits = input_states.shape[-1]
     matrices = {}
@@ -275,30 +284,27 @@ def get_error_rates(matrices, num_qubits):
         rates1: a dictionary of single-qubit error rates
         rates2: a dictionary of two-qubit error rates
     """
-    rates1 = {}
+    rates1 = defaultdict(lambda: np.array([0.0, 0.0]))
     rates2 = {}
+    swap = np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
 
     for i, j in itertools.combinations(range(num_qubits), r=2):
         if (i, j) in matrices:
             G = logm(matrices[(i, j)])
         elif (j, i) in matrices:
-            G = logm(matrices[(j, i)])
-            G = np.array([[G[0, 0], G[0, 2], G[0, 1], G[0, 3]],
-                          [G[2, 0], G[2, 2], G[2, 1], G[2, 3]],
-                          [G[1, 0], G[1, 2], G[1, 1], G[1, 3]],
-                          [G[3, 0], G[3, 2], G[3, 1], G[3, 3]]])
+            G = swap @ logm(matrices[(j, i)]) @ swap
         else:
             continue
-        G = np.clip(G, 0, np.inf)
+        G = np.clip(G.real, 0, np.inf)
         rates2[(i, j)] = np.diag(G[::-1, :])
-        if i not in rates1:
-            rates1[i] = np.array([0.0, 0.0])
         rates1[i] += np.array([G[2, 0] + G[3, 1], G[0, 2] + G[1, 3]
+                               ]) / (2 * (num_qubits - 1))
+        rates1[j] += np.array([G[1, 0] + G[3, 2], G[0, 1] + G[2, 3]
                                ]) / (2 * (num_qubits - 1))
 
     gamma = np.max(list(rates1.values()), axis=-1).sum() + np.max(
         list(rates2.values()), axis=-1).sum()
-    return gamma, rates1, rates2
+    return gamma, dict(rates1), rates2
 
 
 def _sample_x(x, gamma, rates1, rates2=None):
