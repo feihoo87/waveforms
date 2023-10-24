@@ -388,6 +388,7 @@ def exception(state,
                             np.linalg.inv(
                                 np.array([[1 - eps, eta], [eps, 1 - eta]])))
         else:
+            e_ops = e_ops[..., [0,1],[0,1]]
             alpha = np.random.poisson(gamma, (*datashape, shots))
             state = state.reshape(-1, num_qubits)
             for i, (n, s) in enumerate(zip(alpha.reshape(-1), state)):
