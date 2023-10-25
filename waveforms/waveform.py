@@ -394,11 +394,12 @@ class Waveform:
             start = stop
             start_n += chunk_size
 
-    def tolist(self):
-        ret = [self.max, self.min, self.start, self.stop, self.sample_rate]
-
-        ret.append(len(self.bounds))
-        for seq, b in zip(self.seq, self.bounds):
+    @staticmethod
+    def _tolist(bounds, seq, ret=None):
+        if ret is None:
+            ret = []
+        ret.append(len(bounds))
+        for seq, b in zip(seq, bounds):
             ret.append(b)
             tlist, amplist = seq
             ret.append(len(amplist))
@@ -410,11 +411,10 @@ class Waveform:
                     ret.append(n)
                     ret.append(len(fun))
                     ret.extend(fun)
-
         return ret
 
     @staticmethod
-    def fromlist(l, return_pointer=False):
+    def _fromlist(l, pos=0):
 
         def _read(l, pos, size):
             try:
@@ -422,9 +422,7 @@ class Waveform:
             except:
                 raise ValueError('Invalid waveform format')
 
-        w = Waveform()
-        (w.max, w.min, w.start, w.stop, w.sample_rate,
-         nseg), pos = _read(l, 0, 6)
+        (nseg, ), pos = _read(l, pos, 1)
         bounds = []
         seq = []
         for _ in range(nseg):
@@ -444,10 +442,19 @@ class Waveform:
                     mt.append(fun)
                 t.append((tuple(mt), tuple(nlst)))
             seq.append((tuple(t), tuple(amp)))
-        w.seq = tuple(seq)
-        w.bounds = tuple(bounds)
-        if return_pointer:
-            return w, pos
+
+        return tuple(bounds), tuple(seq), pos
+
+    def tolist(self):
+        return self._tolist(
+            self.bounds, self.seq,
+            [self.max, self.min, self.start, self.stop, self.sample_rate])
+
+    @classmethod
+    def fromlist(cls, l):
+        w = cls()
+        (w.max, w.min, w.start, w.stop, w.sample_rate) = l[:5]
+        w.bounds, w.seq, pos = cls._fromlist(l, 5)
         return w
 
     def totree(self):
@@ -655,15 +662,16 @@ class Waveform:
     def __lshift__(self, time):
         return self >> (-time)
 
-    def _calc_parts(self, x, function_lib):
-        range_list = np.searchsorted(x, self.bounds)
+    @staticmethod
+    def _calc_parts(bounds, seq, x, function_lib, min=-inf, max=inf):
+        range_list = np.searchsorted(x, bounds)
         parts = []
         start, stop = 0, 0
         dtype = float
         for i, stop in enumerate(range_list):
-            if start < stop and self.seq[i] != _zero:
-                part = np.clip(_calc(self.seq[i], x[start:stop], function_lib),
-                               self.min, self.max)
+            if start < stop and seq[i] != _zero:
+                part = np.clip(_calc(seq[i], x[start:stop], function_lib), min,
+                               max)
                 if (isinstance(part, complex) or isinstance(part, np.ndarray)
                         and isinstance(part[0], complex)):
                     dtype = complex
@@ -671,63 +679,16 @@ class Waveform:
             start = stop
         return parts, dtype
 
-    def _merge_parts(self, parts, out):
-        lo = 0
-        for start, stop, part in parts:
-            i = bisect_left(out, (start, stop), lo, key=lambda x: x[0])
-            j = bisect_left(out, (start, stop), i, key=lambda x: x[1])
-            # assert start <= out[i][0]
-            # assert stop <= out[j][1]
-            if i == j:
-                start2, stop2, part2 = out[j]
-                if stop < start2:
-                    out.insert(i, (start, stop, part))
-                elif stop == start2:
-                    if isinstance(part, np.ndarray) and isinstance(
-                            part2, np.ndarray):
-                        out[j] = (start, stop2, np.hstack([part, part2]))
-                    elif isinstance(
-                            part, (int, float, complex)) and isinstance(
-                                part2,
-                                (int, float, complex)) and part == part2:
-                        out[i] = (start, stop2, part)
-                    else:
-                        out.insert(i, (start, stop, part))
-                else:
-                    match (isinstance(part, np.ndarray),
-                           isinstance(part2, np.ndarray)):
-                        case (True, True):
-                            out[j] = (start, stop2,
-                                      np.hstack([
-                                          part[:start2 - start],
-                                          part[start2 - start:stop - start] +
-                                          part2[:stop - start2],
-                                          part2[stop - start2:]
-                                      ]))
-                        case (True, False):
-                            out[j] = (stop, stop2, part2)
-                            part[start2 - start:] += part2
-                            out.insert(j, (start, stop, part))
-                        case (False, True):
-                            part2[:stop - start2] += part
-                            out.insert(j, (start, start2, part))
-                        case (False, False):
-                            out[j] = (stop, stop2, part2)
-                            out.insert(j, (start2, stop, part + part2))
-                            out.insert(j, (start, start2, part))
-            else:
-                for k in range(i, j):
-                    if isinstance(part, (int, float, complex)):
-                        out[k] = (out[k][0], out[k][1], out[k][2] + part)
-                    else:
-                        out[k] = (out[k][0], out[k][1],
-                                  out[k][2] + part[k - i])
+    @staticmethod
+    def _merge_parts(
+        parts: list[tuple[int, int, np.ndarray | int | float | complex]],
+        out: list[tuple[int, int, np.ndarray | int | float | complex]]
+    ) -> list[tuple[int, int, np.ndarray | int | float | complex]]:
+        # TODO: merge parts
+        raise NotImplementedError
 
-                out[i:j] = [(out[i][0], start, out[i][2]), (start, stop, part),
-                            (stop, out[j][1], out[j][2])]
-            lo = j
-
-    def _fill_parts(self, parts, out):
+    @staticmethod
+    def _fill_parts(parts, out):
         for start, stop, part in parts:
             out[start:stop] += part
 
@@ -741,7 +702,8 @@ class Waveform:
             function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
             return self.__call__(np.array([x]), function_lib=function_lib)[0]
-        parts, dtype = self._calc_parts(x, function_lib)
+        parts, dtype = self._calc_parts(self.bounds, self.seq, x, function_lib,
+                                        self.min, self.max)
         if not frag:
             if out is None:
                 out = np.zeros_like(x, dtype=dtype)
@@ -836,85 +798,162 @@ class Waveform:
 class WaveVStack(Waveform):
 
     def __init__(self, wlist: list[Waveform] = []):
-        self.wlist = wlist
+        self.wlist = [(w.bounds, w.seq) for w in wlist]
         self.start = None
         self.stop = None
         self.sample_rate = None
+        self.offset = 0
+        self.shift = 0
+        self.function_lib = None
 
     def __call__(self, x, frag=False, out=None, function_lib=None):
         assert frag is False, 'WaveVStack does not support frag mode'
-        out = np.zeros_like(x, dtype=complex)
-        for w in self.wlist:
-            w(x, False, out, accumulate=True, function_lib=function_lib)
+        out = np.full_like(x, self.offset, dtype=complex)
+        if self.shift != 0:
+            x = x - self.shift
+        if function_lib is None:
+            if self.function_lib is None:
+                function_lib = _baseFunc
+            else:
+                function_lib = self.function_lib
+        for bounds, seq in self.wlist:
+            parts, dtype = self._calc_parts(bounds, seq, x, function_lib)
+            self._fill_parts(parts, out)
         return out.real
 
     def tolist(self):
-        ret = [self.start, self.stop, self.sample_rate, len(self.wlist)]
-        for w in self.wlist:
-            ret.extend(w.tolist())
+        ret = [
+            self.start, self.stop, self.offset, self.shift, self.sample_rate,
+            len(self.wlist)
+        ]
+        for bounds, seq in self.wlist:
+            self._tolist(bounds, seq, ret)
         return ret
 
-    @staticmethod
-    def fromlist(l):
-        w = WaveVStack()
-        w.start, w.stop, w.sample_rate, n = l[:4]
-        l = l[4:]
+    @classmethod
+    def fromlist(cls, l):
+        w = cls()
+        w.start, w.stop, w.offset, w.shift, w.sample_rate, n = l[:6]
+        pos = 6
         for _ in range(n):
-            wav, pos = Waveform.fromlist(l, True)
-            w.wlist.append(wav)
-            l = l[pos:]
+            bounds, seq, pos = cls._fromlist(l, pos)
+            w.wlist.append((bounds, seq))
         return w
 
     def simplify(self):
-        wav = wave_sum(*self.wlist)
+        wav = wave_sum(self.wlist)
+        if self.offset != 0:
+            wav += self.offset
+        if self.shift != 0:
+            wav >>= self.shift
         wav.start = self.start
         wav.stop = self.stop
         wav.sample_rate = self.sample_rate
         return wav
 
+    @staticmethod
+    def _rshift(wlist, time):
+        if time == 0:
+            return wlist
+        return [(tuple(round(bound + time, NDIGITS) for bound in bounds),
+                 tuple(_shift(expr, time) for expr in seq))
+                for bounds, seq in wlist]
+
     def __rshift__(self, time):
-        return WaveVStack([w >> time for w in self.wlist])
+        ret = WaveVStack()
+        ret.wlist = self.wlist
+        ret.sample_rate = self.sample_rate
+        ret.start = self.start
+        ret.stop = self.stop
+        ret.shift = self.shift + time
+        ret.offset = self.offset
+        return ret
 
     def __add__(self, other):
+        ret = WaveVStack()
+        ret.wlist.extend(self.wlist)
         if isinstance(other, WaveVStack):
-            return WaveVStack(self.wlist + other.wlist)
+            if other.shift != self.shift:
+                ret.wlist = self._rshift(ret.wlist, self.shift)
+                ret.wlist.extend(self._rshift(other.wlist, other.shift))
+            else:
+                ret.wlist.extend(other.wlist)
+            ret.offset = self.offset + other.offset
         elif isinstance(other, Waveform):
-            return WaveVStack(self.wlist + [other])
+            other <<= self.shift
+            ret.wlist.append((other.bounds, other.seq))
         else:
-            return WaveVStack(self.wlist + [const(other)])
+            # ret.wlist.append(((+inf, ), (_const(1.0 * other), )))
+            ret.offset += other
+        return ret
 
     def __radd__(self, v):
         return self + v
 
     def __mul__(self, other):
         if isinstance(other, Waveform):
-            other = other.simplify()
-            return WaveVStack([w * other for w in self.wlist])
+            other = other.simplify() << self.shift
+            ret = WaveVStack([Waveform(*w) * other for w in self.wlist])
+            if self.offset != 0:
+                w = other * self.offset
+                ret.wlist.append((w.bounds, w.seq))
+            return ret
         else:
-            return WaveVStack([w * other for w in self.wlist])
+            ret = WaveVStack([Waveform(*w) * other for w in self.wlist])
+            ret.offset = self.offset * other
+            return ret
 
     def __rmul__(self, v):
         return self * v
 
+    def __eq__(self, other):
+        if self.wlist:
+            return False
+        else:
+            return zero() == other
+
     def _repr_latex_(self):
         return r"\sum_{i=1}^{" + f"{len(self.wlist)}" + r"}" + r"f_i(t)"
 
+    def __getstate__(self) -> tuple[dict, dict]:
+        dict, slots = super().__getstate__()
+        if dict['function_lib']:
+            try:
+                import dill
+                dict['function_lib'] = dill.dumps(dict['function_lib'])
+            except:
+                dict['function_lib'] = None
+        return dict, slots
 
-def wave_sum(*waves):
+    def __setstate__(self, state: tuple[dict, dict]) -> None:
+        dict, slots = state
+        if dict['function_lib']:
+            try:
+                import dill
+                dict['function_lib'] = dill.loads(dict['function_lib'])
+            except:
+                dict['function_lib'] = None
+        self.__dict__.update(dict)
+        self.__slots__ = slots
+
+
+def wave_sum(waves):
     if not waves:
-        return Waveform()
+        return zero()
 
-    bounds = list(waves[0].bounds)
-    seq = list(waves[0].seq)
+    waves = sorted(waves)
 
-    for wave in waves[1:]:
+    bounds, seq = waves[0]
+    bounds, seq = list(bounds), list(seq)
+
+    for bounds_, seq_ in waves[1:]:
         lo = 0
-        for b, s in zip(wave.bounds, wave.seq):
+        for b, s in zip(bounds_, seq_):
             i = bisect_left(bounds, b, lo)
             if bounds[i] != b:
                 bounds.insert(i, b)
                 seq.insert(i, seq[i])
-            for j in range(lo + 1, i + 1):
+            for j in range(lo + 1 if lo > 0 else 0, i + 1):
                 seq[j] = _add(seq[j], s)
             lo = i
 
