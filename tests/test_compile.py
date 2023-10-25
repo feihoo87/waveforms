@@ -153,11 +153,11 @@ def test_compile(lib, cfg):
     assert 'AWG.Z' in ret.waveforms
     for k, wav in ret.waveforms.items():
         assert k in ret2.waveforms
-        assert wav == ret2.waveforms[k]
+        assert wav.simplify() == ret2.waveforms[k].simplify()
         if k == 'AWG.Z':
-            assert wav != ret3.waveforms[k]
-            assert wav != ret4.waveforms[k]
-            assert ret3.waveforms[k] == ret4.waveforms[k]
+            assert wav.simplify() != ret3.waveforms[k].simplify()
+            assert wav.simplify() != ret4.waveforms[k].simplify()
+            assert ret3.waveforms[k].simplify() == ret4.waveforms[k].simplify()
         else:
-            assert wav == ret3.waveforms[k]
-            assert wav == ret4.waveforms[k]
+            assert wav.simplify() == ret3.waveforms[k].simplify()
+            assert wav.simplify() == ret4.waveforms[k].simplify()
