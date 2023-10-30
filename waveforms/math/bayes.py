@@ -307,24 +307,23 @@ def get_error_rates(matrices, num_qubits):
     return gamma, dict(rates1), rates2
 
 
-def _sample_x(x, gamma, rates1, rates2=None):
-    a = 0
+def _flip(x, gamma, rate1, *rates):
     seed = np.random.random()
-    for q1, r in rates1.items():
-        a += r[x[q1]] / gamma
-        if a > seed:
-            x = x.copy()
-            x[q1] ^= 1
-            return x
-    if rates2 is not None:
-        for (q1, q2), r in rates2.items():
-            a += r[2 * x[q1] + x[q2]] / gamma
-            if a > seed:
-                x = x.copy()
-                x[q1] ^= 1
-                x[q2] ^= 1
-                return x
-    return x
+    for qubit, r in rate1.items():
+        seed -= r[x[qubit]] / gamma
+        if seed < 0:
+            x[qubit] ^= 1
+            return
+    for order, rate in enumerate(rates, start=2):
+        for qubits, r in rate.items():
+            index = 0
+            for qubit in qubits:
+                index = (index << 1) + x[qubit]
+            seed -= r[index] / gamma
+            if seed < 0:
+                for qubit in qubits:
+                    x[qubit] ^= 1
+                return
 
 
 def exception(state,
@@ -390,11 +389,10 @@ def exception(state,
         else:
             e_ops = e_ops[..., [0, 1], [0, 1]]
             alpha = np.random.poisson(gamma, (*datashape, shots))
-            state = state.reshape(-1, num_qubits)
-            for i, (n, s) in enumerate(zip(alpha.reshape(-1), state)):
+            state = np.copy(state).reshape(-1, num_qubits)
+            for n, s in zip(alpha.reshape(-1), state):
                 for _ in range(n):
-                    s = _sample_x(s, gamma, rates1, rates2)
-                state[i] = s
+                    _flip(s, gamma, rates1, rates2)
             state = state.reshape(*datashape, shots, num_qubits)
             sign = (-1)**(alpha & 1)
             return np.exp(2 * gamma) * np.moveaxis(
