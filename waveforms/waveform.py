@@ -941,21 +941,42 @@ def wave_sum(waves):
     if not waves:
         return zero()
 
-    waves = sorted(waves)
-
     bounds, seq = waves[0]
+    if not waves[1:]:
+        return Waveform(bounds, seq)
     bounds, seq = list(bounds), list(seq)
 
     for bounds_, seq_ in waves[1:]:
-        lo = 0
-        for b, s in zip(bounds_, seq_):
-            i = bisect_left(bounds, b, lo)
-            if bounds[i] != b:
-                bounds.insert(i, b)
-                seq.insert(i, seq[i])
-            for j in range(lo + 1 if lo > 0 else 0, i + 1):
-                seq[j] = _add(seq[j], s)
-            lo = i
+        if len(bounds_) == 1:
+            for i, s in enumerate(seq):
+                seq[i] = _add(s, seq_[0])
+        elif len(bounds) == 1:
+            bounds = list(bounds_)
+            seq = [_add(seq[0], s) for s in seq_]
+        else:
+            lo = 0
+            for b, s in zip(bounds_, seq_):
+                i = bisect_left(bounds, b, lo=lo)
+                if bounds[i] > b:
+                    bounds.insert(i, b)
+                    if i == 0:
+                        seq.insert(i, s)
+                    else:
+                        seq.insert(i, _add(s, seq[i]))
+                    up = i - 1
+                else:
+                    up = i
+                for j in range(lo + 1, up + 1):
+                    seq[j] = _add(seq[j], s)
+                lo = i
+
+    i = 0
+    while i < len(bounds) - 1:
+        if seq[i] == seq[i + 1]:
+            del seq[i + 1]
+            del bounds[i + 1]
+        else:
+            i += 1
 
     return Waveform(tuple(bounds), tuple(seq))
 

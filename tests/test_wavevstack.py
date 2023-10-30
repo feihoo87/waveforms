@@ -84,3 +84,25 @@ def test_shift():
     wav2 = w2 << 1.4
     assert isinstance(wav2, WaveVStack)
     assert np.allclose(wav1(t), wav2(t))
+
+
+def test_simplify():
+    w1 = zero()
+    w2 = []
+    assert w1 == WaveVStack(w2).simplify()
+
+    for freq in np.linspace(6.1, 6.5, 11)*1e9:
+        pulse = square(1e-6) >> 95e-6
+        w1 += pulse * cos(2*pi*freq)
+        w2.append(pulse * cos(2*pi*freq))
+        assert w1 == WaveVStack(w2).simplify()
+    assert w1 == WaveVStack(w2).simplify()
+
+    for freq in np.linspace(6.1, 6.5, 3)*1e9:
+        pulse = square(1e-6) >> (95e-6 + np.random.randn()*1e-9)
+        w1 += pulse * cos(2*pi*freq)
+        w2.append(pulse * cos(2*pi*freq))
+        assert w1 == WaveVStack(w2).simplify()
+    w1 += cos(2*pi*freq*0.9)
+    w2.append(cos(2*pi*freq*0.9))
+    assert w1 == WaveVStack(w2).simplify()
