@@ -259,7 +259,9 @@ def _num_latex(num):
         return r"-\infty"
     elif num == np.inf:
         return r"\infty"
-    s = f"{num:g}"
+    if num.imag != 0:
+        return f"({_num_latex(num.real)}+{_num_latex(num.imag)}j)"
+    s = f"{num.real:g}"
     if "e" in s:
         a, n = s.split("e")
         n = float(n)
@@ -1130,29 +1132,37 @@ def _format_COSINE(shift, *args):
 
 
 def _format_ERF(shift, *args):
-    if shift != 0:
-        return '\\mathrm{erf}(\\frac{t-' + f"{shift:g}" + '}{' + f'{args[0]:g}' + '})'
+    if shift > 0:
+        return '\\mathrm{erf}(\\frac{t-' + f"{_num_latex(shift)}" + '}{' + f'{args[0]:g}' + '})'
+    elif shift < 0:
+        return '\\mathrm{erf}(\\frac{t+' + f"{_num_latex(-shift)}" + '}{' + f'{args[0]:g}' + '})'
     else:
         return '\\mathrm{erf}(\\frac{t}{' + f'{args[0]:g}' + '})'
 
 
 def _format_COSH(shift, *args):
-    if shift != 0:
-        return '\\cosh(\\frac{t-' + f"{shift:g}" + '}{' + f'{1/args[0]:g}' + '})'
+    if shift > 0:
+        return '\\cosh(\\frac{t-' + f"{_num_latex(shift)}" + '}{' + f'{1/args[0]:g}' + '})'
+    elif shift < 0:
+        return '\\cosh(\\frac{t+' + f"{_num_latex(-shift)}" + '}{' + f'{1/args[0]:g}' + '})'
     else:
         return '\\cosh(\\frac{t}{' + f'{1/args[0]:g}' + '})'
 
 
 def _format_SINH(shift, *args):
-    if shift != 0:
-        return '\\sinh(\\frac{t-' + f"{shift:g}" + '}{' + f'{args[0]:g}' + '})'
+    if shift > 0:
+        return '\\sinh(\\frac{t-' + f"{_num_latex(shift)}" + '}{' + f'{args[0]:g}' + '})'
+    elif shift < 0:
+        return '\\sinh(\\frac{t+' + f"{_num_latex(-shift)}" + '}{' + f'{args[0]:g}' + '})'
     else:
         return '\\sinh(\\frac{t}{' + f'{args[0]:g}' + '})'
 
 
 def _format_EXP(shift, *args):
-    if shift != 0:
-        return '\\exp(-' + f'{args[0]:g}' + '(t-' + f"{shift:g}" + '))'
+    if shift > 0:
+        return '\\exp(-' + f'{args[0]:g}' + '(t-' + f"{_num_latex(shift)}" + '))'
+    elif shift < 0:
+        return '\\exp(-' + f'{args[0]:g}' + '(t+' + f"{_num_latex(-shift)}" + '))'
     else:
         return '\\exp(-' + f'{args[0]:g}' + 't)'
 
