@@ -1,5 +1,6 @@
 import pickle
 from bisect import bisect_left
+from fractions import Fraction
 from itertools import chain, product
 from math import comb
 
@@ -254,14 +255,49 @@ def _calc(wav, x, function_lib):
     return ret
 
 
+def _test_spec_num(num, spec):
+    x = Fraction(num / spec).limit_denominator(1000000000)
+    if x.denominator <= 24:
+        return True, x, 1
+    x = Fraction(spec * num).limit_denominator(1000000000)
+    if x.denominator <= 24:
+        return True, x, -1
+    return False, x, 0
+
+
+def _spec_num_latex(num):
+    for spec, spec_latex in [(1, ''), (np.sqrt(2), '\\sqrt{2}'),
+                             (np.sqrt(3), '\\sqrt{3}'),
+                             (np.sqrt(5), '\\sqrt{5}'),
+                             (np.log(2), '\\log{2}'), (np.log(3), '\\log{3}'),
+                             (np.log(5), '\\log{5}'), (np.e, 'e'),
+                             (np.pi, '\\pi'), (np.pi**2, '\\pi^2'),
+                             (np.sqrt(np.pi), '\\sqrt{\\pi}')]:
+        flag, x, sign = _test_spec_num(num, spec)
+        if flag:
+            if sign < 0:
+                spec_latex = f"\\frac{{{1}}}{{{spec_latex}}}"
+            if x.denominator == 1:
+                if x.numerator == 1:
+                    return f"{spec_latex}"
+                else:
+                    return f"{x.numerator:g}{spec_latex}"
+            else:
+                if x.numerator < 0:
+                    return f"-\\frac{{{-x.numerator}}}{{{x.denominator}}}{spec_latex}"
+                else:
+                    return f"\\frac{{{x.numerator}}}{{{x.denominator}}}{spec_latex}"
+    return f"{num:g}"
+
+
 def _num_latex(num):
     if num == -np.inf:
         return r"-\infty"
     elif num == np.inf:
         return r"\infty"
     if num.imag != 0:
-        return f"({_num_latex(num.real)}+{_num_latex(num.imag)}j)"
-    s = f"{num.real:g}"
+        return f"\\left({_num_latex(num.real)}+{_num_latex(num.imag)}j\\right)"
+    s = _spec_num_latex(num.real)
     if "e" in s:
         a, n = s.split("e")
         n = float(n)
@@ -1124,11 +1160,11 @@ def _format_COSINE(shift, *args):
     elif phase[0] != '-':
         phase = '+' + phase
     if phase != '':
-        return f'\\cos\\left[2\\pi({freq}t{phase})\\right]'
+        return f'\\cos\\left[2\\pi\\left({freq}t{phase}\\right)\\right]'
     elif freq != '':
         return f'\\cos\\left(2\\pi\\times {freq}t\\right)'
     else:
-        return '\\cos(2\\pi t)'
+        return '\\cos\\left(2\\pi t\\right)'
 
 
 def _format_ERF(shift, *args):
