@@ -67,7 +67,7 @@ def _mul(x, y):
 
 
 def _add(x, y):
-    #x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
+    # x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
     t_list, v_list = list(x[0]), list(x[1])
     lo, hi = 0, len(t_list)
     for t, v in zip(*y):
@@ -203,16 +203,74 @@ def _exp_trig_Reduce(mtlist, v):
     return _mul(ret, trig)
 
 
-def _simplify(expr):
-    ret = _zero
+def _get_freq(t):
+    t2 = [[], []]
+    freq, shift = 0, 0
+    for mt, n in zip(*t):
+        if mt[0] == COS:
+            if freq != 0:
+                raise ValueError("run _exp_trig_Reduce first")
+            freq = mt[1]
+            shift = mt[-1]
+        else:
+            t2[0].append(mt)
+            t2[1].append(n)
+    t2 = (tuple(t2[0]), tuple(t2[1]))
+    return freq, shift, t2
+
+
+def _simplify(expr, eps):
+    d = {}
     for t, v in zip(*expr):
-        y = _exp_trig_Reduce(t, v)
-        ret = _add(ret, y)
+        for t, v in zip(*_exp_trig_Reduce(t, v)):
+            freq, shift, t = _get_freq(t)
+            v_r, v_i, shift_r, shift_i = v.real, v.imag, shift, shift
+            if (t, freq) in d:
+                v0_r, shift0_r, v0_i, shift0_i = d[(t, freq)]
+                if freq == 0:
+                    v_r, v_i = v.real + v0_r, v.imag + v0_i
+                else:
+                    a = v0_r * np.cos(freq * shift0_r) + v_r * np.cos(
+                        freq * shift_r)
+                    b = v0_r * np.sin(freq * shift0_r) + v_r * np.sin(
+                        freq * shift_r)
+                    shift_r = np.arctan2(b, a) / freq
+                    v_r = np.sqrt(a**2 + b**2)
+
+                    a = v0_i * np.cos(freq * shift0_i) + v_i * np.cos(
+                        freq * shift_i)
+                    b = v0_i * np.sin(freq * shift0_i) + v_i * np.sin(
+                        freq * shift_i)
+                    shift_i = np.arctan2(b, a) / freq
+                    v_i = np.sqrt(a**2 + b**2)
+            d[(t, freq)] = v_r, shift_r, v_i, shift_i
+    ret = _zero
+    for (t, freq), (v_r, shift_r, v_i, shift_i) in d.items():
+        if freq == 0 and abs(v) >= eps:
+            if v_i == 0:
+                ret = _add(ret, ((t, ), (v_r, )))
+            else:
+                ret = _add(ret, ((t, ), (v_r + 1j * v_i, )))
+        else:
+            if abs(v_i) < eps and abs(v_r) < eps:
+                continue
+            elif abs(v_i) < eps and abs(v_r) >= eps:
+                expr = (((((COS, freq, shift_r), ), (1, )), ), (v_r, ))
+            elif abs(v_i) >= eps and abs(v_r) < eps:
+                expr = (((((COS, freq, shift_i), ), (1, )), ), (v_i * 1j, ))
+            elif abs(v_i) >= eps and abs(v_r) >= eps:
+                expr = (((((COS, freq, shift_r), ), (1, )),
+                         (((COS, freq, shift_i), ), (1, ))), (v_r, v_i * 1j))
+            else:
+                pass  # Never reach here
+
+            expr = _mul(((t, ), (1, )), expr)
+            ret = _add(ret, expr)
     return ret
 
 
-def _filter(expr, low, high):
-    expr = _simplify(expr)
+def _filter(expr, low, high, eps):
+    expr = _simplify(expr, eps)
     ret = _zero
     for t, v in zip(*expr):
         for i, (mt, n) in enumerate(zip(*t)):
@@ -295,9 +353,13 @@ def _num_latex(num):
         return r"-\infty"
     elif num == np.inf:
         return r"\infty"
-    if num.imag != 0:
+    if num.imag > 0:
         return f"\\left({_num_latex(num.real)}+{_num_latex(num.imag)}j\\right)"
+    elif num.imag < 0:
+        return f"\\left({_num_latex(num.real)}-{_num_latex(-num.imag)}j\\right)"
     s = _spec_num_latex(num.real)
+    if s == '' and round(num.real) == 1:
+        return '1'
     if "e" in s:
         a, n = s.split("e")
         n = float(n)
@@ -363,7 +425,7 @@ class Waveform:
         self.stop = None
         self.sample_rate = None
 
-    def _head(self):
+    def _begin(self):
         for i, s in enumerate(self.seq):
             if s is not _zero:
                 if i == 0:
@@ -371,7 +433,7 @@ class Waveform:
                 return self.bounds[i - 1]
         return inf
 
-    def _tail(self):
+    def _end(self):
         N = len(self.bounds)
         for i, s in enumerate(self.seq[::-1]):
             if s is not _zero:
@@ -381,18 +443,18 @@ class Waveform:
         return -inf
 
     @property
-    def head(self):
+    def begin(self):
         if self.start is None:
-            return self._head()
+            return self._begin()
         else:
-            return max(self.start, self._head())
+            return max(self.start, self._begin())
 
     @property
-    def tail(self):
+    def end(self):
         if self.stop is None:
-            return self._tail()
+            return self._end()
         else:
-            return min(self.stop, self._tail())
+            return min(self.stop, self._end())
 
     def sample(self,
                sample_rate=None,
@@ -536,11 +598,11 @@ class Waveform:
         w.seq = tuple(seqs)
         return w
 
-    def simplify(self):
-        seq = [_simplify(self.seq[0])]
+    def simplify(self, eps=1e-15):
+        seq = [_simplify(self.seq[0], eps)]
         bounds = [self.bounds[0]]
         for expr, b in zip(self.seq[1:], self.bounds[1:]):
-            expr = _simplify(expr)
+            expr = _simplify(expr, eps)
             if expr == seq[-1]:
                 seq.pop()
                 bounds.pop()
@@ -548,10 +610,10 @@ class Waveform:
             bounds.append(b)
         return Waveform(tuple(bounds), tuple(seq))
 
-    def filter(self, low=0, high=inf):
+    def filter(self, low=0, high=inf, eps=1e-15):
         seq = []
         for expr in self.seq:
-            seq.append(_filter(expr, low, high))
+            seq.append(_filter(expr, low, high, eps))
         return Waveform(self.bounds, tuple(seq))
 
     def _comb(self, other, oper):
@@ -770,9 +832,8 @@ class Waveform:
             a = self.simplify()
             b = o.simplify()
             return a.seq == b.seq and a.bounds == b.bounds and (
-                a.max, a.min, a.start, a.stop,
-                a.sample_rate) == (b.max, b.min, b.start, b.stop,
-                                   b.sample_rate)
+                a.max, a.min, a.start, a.stop) == (b.max, b.min, b.start,
+                                                   b.stop)
         else:
             return False
 
@@ -878,12 +939,13 @@ class WaveVStack(Waveform):
             w.wlist.append((bounds, seq))
         return w
 
-    def simplify(self):
+    def simplify(self, eps=1e-15):
         wav = wave_sum(self.wlist)
         if self.offset != 0:
             wav += self.offset
         if self.shift != 0:
             wav >>= self.shift
+        wav = wav.simplify(eps)
         wav.start = self.start
         wav.stop = self.stop
         wav.sample_rate = self.sample_rate
@@ -1195,12 +1257,12 @@ def _format_SINH(shift, *args):
 
 
 def _format_EXP(shift, *args):
-    if shift > 0:
-        return '\\exp(-' + f'{args[0]:g}' + '(t-' + f"{_num_latex(shift)}" + '))'
-    elif shift < 0:
-        return '\\exp(-' + f'{args[0]:g}' + '(t+' + f"{_num_latex(-shift)}" + '))'
+    if _num_latex(shift) and shift > 0:
+        return '\\exp\\left(-' + f'{args[0]:g}' + '\\left(t-' + f"{_num_latex(shift)}" + '\\right)\\right)'
+    elif _num_latex(-shift) and shift < 0:
+        return '\\exp\\left(-' + f'{args[0]:g}' + '\\left(t+' + f"{_num_latex(-shift)}" + '\\right)\\right)'
     else:
-        return '\\exp(-' + f'{args[0]:g}' + 't)'
+        return '\\exp\\left(-' + f'{args[0]:g}' + 't\\right)'
 
 
 LINEAR = registerBaseFunc(lambda t: t, _format_LINEAR)
@@ -1400,7 +1462,7 @@ def gaussian(width, plateau=0.0):
     # std_sq2 = width / (4 * np.sqrt(np.log(2)))
     std_sq2 = width / 3.3302184446307908
     # std is set to give total pulse area same as a square
-    #std_sq2 = width/np.sqrt(np.pi)
+    # std_sq2 = width/np.sqrt(np.pi)
     if round(0.5 * plateau, NDIGITS) <= 0.0:
         return Waveform(bounds=(round(-0.75 * width,
                                       NDIGITS), round(0.75 * width,
