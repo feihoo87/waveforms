@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.special as special
+from scipy.signal import butter, lfilter, lfiltic
 
 from waveforms import *
 
@@ -41,9 +42,9 @@ def test_tolist():
 
     l = pulse.tolist()
     assert l == [
-        np.inf, -np.inf, None, None, None, 5, -2.5, 0, 12.5, 1, 1.0, 2, 1, 3,
-        2, 3.0028060219661246, 5, 1, 3, 4, 200, 0.0, 42.5, 0, 57.5, 1, 1.0, 2,
-        1, 3, 2, 3.0028060219661246, 50, 1, 3, 4, 200, 0.0, np.inf, 0
+        np.inf, -np.inf, None, None, None, None, 5, -2.5, 0, 12.5, 1, 1.0, 2,
+        1, 3, 2, 3.0028060219661246, 5, 1, 3, 4, 200, 0.0, 42.5, 0, 57.5, 1,
+        1.0, 2, 1, 3, 2, 3.0028060219661246, 50, 1, 3, 4, 200, 0.0, np.inf, 0
     ]
 
     assert Waveform.fromlist(l) == pulse
@@ -55,7 +56,7 @@ def test_totree():
     pulse = pulse * cos(200)
 
     t = pulse.totree()
-    assert t == ((np.inf, -np.inf, None, None, None),
+    assert t == ((np.inf, -np.inf, None, None, None, None),
                  ((-2.5, ()), (12.5, ((1.0, ((1, (2, 3.0028060219661246, 5)),
                                              (1, (4, 200, 0.0)))), )),
                   (42.5, ()), (57.5, ((1.0, ((1, (2, 3.0028060219661246, 50)),
@@ -158,3 +159,31 @@ def test_parser():
 
     assert w1 == w2
     assert w1 == w3
+
+
+def test_filters():
+    sample_rate = 1000
+
+    b, a = butter(3, 4.0, 'lowpass', fs=sample_rate)
+    init_x, init_y = [0], [0]
+    zi = lfiltic(b, a, init_y, init_x)
+
+    t = np.linspace(-1, 1, 2000, endpoint=False)
+
+    wav = step(0)
+    wav.sample_rate = sample_rate
+    wav.start = -1
+    wav.stop = 1
+    wav.filters = (b, a, init_x, init_y)
+
+    points = lfilter(b, a, np.heaviside(t, 1), zi=zi)[0]
+
+    assert np.allclose(wav.sample(), points)
+
+    l = wav.tolist()
+    wav2 = Waveform.fromlist(l)
+    assert np.allclose(wav2.sample(), points)
+
+    d = wav.totree()
+    wav3 = Waveform.fromtree(d)
+    assert np.allclose(wav3.sample(), points)

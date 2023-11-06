@@ -7,6 +7,7 @@ from math import comb
 import numpy as np
 import scipy.special as special
 from numpy import e, inf, pi
+from scipy.signal import lfilter, lfiltic
 
 NDIGITS = 15
 
@@ -414,7 +415,8 @@ def _wav_latex(wav):
 
 
 class Waveform:
-    __slots__ = ('bounds', 'seq', 'max', 'min', 'start', 'stop', 'sample_rate')
+    __slots__ = ('bounds', 'seq', 'max', 'min', 'start', 'stop', 'sample_rate',
+                 'filters', 'label')
 
     def __init__(self, bounds=(+inf, ), seq=(_zero, ), min=-inf, max=inf):
         self.bounds = bounds
@@ -424,6 +426,8 @@ class Waveform:
         self.start = None
         self.stop = None
         self.sample_rate = None
+        self.filters = None
+        self.label = None
 
     def _begin(self):
         for i, s in enumerate(self.seq):
@@ -460,21 +464,36 @@ class Waveform:
                sample_rate=None,
                out=None,
                chunk_size=None,
-               function_lib=None):
+               function_lib=None,
+               filters=None):
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
-            raise ValueError('Waveform is not initialized')
+            raise ValueError(
+                f'Waveform is not initialized. {self.start=}, {self.stop=}, {sample_rate=}'
+            )
+        if filters is None:
+            filters = self.filters
         if chunk_size is None:
             x = np.arange(self.start, self.stop, 1 / sample_rate)
-            return self.__call__(x, out=out, function_lib=function_lib)
+            sig = self.__call__(x, out=out, function_lib=function_lib)
+            if filters is not None:
+                b, a, initial_x, initial_y = filters
+                zi = lfiltic(b, a, np.asarray(initial_x),
+                             np.asarray(initial_y))
+                sig, zf = lfilter(b, a, sig, zi=zi)
+            return sig
         else:
             return self._sample_iter(sample_rate, chunk_size, out,
-                                     function_lib)
+                                     function_lib, filters)
 
-    def _sample_iter(self, sample_rate, chunk_size, out, function_lib):
+    def _sample_iter(self, sample_rate, chunk_size, out, function_lib,
+                     filters):
         start = self.start
         start_n = 0
+        if filters is not None:
+            b, a, initial_x, initial_y = filters
+            zi = lfiltic(b, a, np.asarray(initial_x), np.asarray(initial_y))
         length = chunk_size / sample_rate
         while start < self.stop:
             if start + length > self.stop:
@@ -486,11 +505,28 @@ class Waveform:
                 size = chunk_size
             x = np.linspace(start, stop, size, endpoint=False)
             if out is not None:
-                yield self.__call__(x,
-                                    out=out[start_n:],
-                                    function_lib=function_lib)
+                if filters is None:
+                    yield self.__call__(x,
+                                        out=out[start_n:],
+                                        function_lib=function_lib)
+                else:
+                    sig, zi = lfilter(b,
+                                      a,
+                                      self.__call__(x,
+                                                    function_lib=function_lib),
+                                      zi=zi)
+                    out[start_n:start_n + size] = sig
+                    yield sig
             else:
-                yield self.__call__(x, function_lib=function_lib)
+                if filters is None:
+                    yield self.__call__(x, function_lib=function_lib)
+                else:
+                    sig, zi = lfilter(b,
+                                      a,
+                                      self.__call__(x,
+                                                    function_lib=function_lib),
+                                      zi=zi)
+                    yield sig
             start = stop
             start_n += chunk_size
 
@@ -546,19 +582,42 @@ class Waveform:
         return tuple(bounds), tuple(seq), pos
 
     def tolist(self):
-        return self._tolist(
-            self.bounds, self.seq,
-            [self.max, self.min, self.start, self.stop, self.sample_rate])
+        l = [self.max, self.min, self.start, self.stop, self.sample_rate]
+        if self.filters is None:
+            l.append(None)
+        else:
+            # b, a, initial_x, initial_y = self.filters
+            l.append(True)
+            for x in self.filters:
+                l.append(len(x))
+                l.extend(list(x))
+
+        return self._tolist(self.bounds, self.seq, l)
 
     @classmethod
     def fromlist(cls, l):
         w = cls()
-        (w.max, w.min, w.start, w.stop, w.sample_rate) = l[:5]
-        w.bounds, w.seq, pos = cls._fromlist(l, 5)
+        pos = 6
+        (w.max, w.min, w.start, w.stop, w.sample_rate, filters) = l[:pos]
+        if filters is not None:
+            w.filters = []
+            for _ in range(4):
+                size = l[pos]
+                pos += 1
+                w.filters.append(l[pos:pos + size])
+                pos += size
+
+        w.bounds, w.seq, pos = cls._fromlist(l, pos)
         return w
 
     def totree(self):
-        header = (self.max, self.min, self.start, self.stop, self.sample_rate)
+        if self.filters is None:
+            header = (self.max, self.min, self.start, self.stop,
+                      self.sample_rate, None)
+        else:
+            header = (self.max, self.min, self.start, self.stop,
+                      self.sample_rate, tuple([tuple(x)
+                                               for x in self.filters]))
         body = []
 
         for seq, b in zip(self.seq, self.bounds):
@@ -578,7 +637,7 @@ class Waveform:
         w = Waveform()
         header, body = tree
 
-        (w.max, w.min, w.start, w.stop, w.sample_rate) = header
+        (w.max, w.min, w.start, w.stop, w.sample_rate, w.filters) = header
         bounds = []
         seqs = []
         for b, seq in body:
@@ -646,23 +705,6 @@ class Waveform:
 
     def __radd__(self, v):
         return const(v) + self
-
-    def append(self, other):
-        if not isinstance(other, Waveform):
-            raise TypeError('connect Waveform by other type')
-        if len(self.bounds) == 1:
-            self.bounds = other.bounds
-            self.seq = self.seq + other.seq[1:]
-            return
-
-        assert self.bounds[-2] <= other.bounds[
-            0], f"connect waveforms with overlaped domain {self.bounds}, {other.bounds}"
-        if self.bounds[-2] < other.bounds[0]:
-            self.bounds = self.bounds[:-1] + other.bounds
-            self.seq = self.seq + other.seq[1:]
-        else:
-            self.bounds = self.bounds[:-2] + other.bounds
-            self.seq = self.seq[:-1] + other.seq[1:]
 
     def __ior__(self, other):
         return self | other
@@ -903,6 +945,8 @@ class WaveVStack(Waveform):
         self.sample_rate = None
         self.offset = 0
         self.shift = 0
+        self.filters = None
+        self.label = None
         self.function_lib = None
 
     def __call__(self, x, frag=False, out=None, function_lib=None):
@@ -922,9 +966,21 @@ class WaveVStack(Waveform):
 
     def tolist(self):
         ret = [
-            self.start, self.stop, self.offset, self.shift, self.sample_rate,
-            len(self.wlist)
+            self.start,
+            self.stop,
+            self.offset,
+            self.shift,
+            self.sample_rate,
         ]
+        if self.filters is None:
+            ret.append(None)
+        else:
+            # b, a, initial_x, initial_y = self.filters
+            ret.append(True)
+            for x in self.filters:
+                ret.append(len(x))
+                ret.extend(list(x))
+        ret.append(len(self.wlist))
         for bounds, seq in self.wlist:
             self._tolist(bounds, seq, ret)
         return ret
@@ -932,8 +988,17 @@ class WaveVStack(Waveform):
     @classmethod
     def fromlist(cls, l):
         w = cls()
-        w.start, w.stop, w.offset, w.shift, w.sample_rate, n = l[:6]
+        w.start, w.stop, w.offset, w.shift, w.sample_rate, filters = l[:6]
         pos = 6
+        if filters is not None:
+            w.filters = []
+            for _ in range(4):
+                size = l[pos]
+                pos += 1
+                w.filters.append(l[pos:pos + size])
+                pos += size
+        n = l[pos]
+        pos += 1
         for _ in range(n):
             bounds, seq, pos = cls._fromlist(l, pos)
             w.wlist.append((bounds, seq))

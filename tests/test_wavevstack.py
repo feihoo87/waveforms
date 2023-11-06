@@ -1,5 +1,6 @@
 import numpy as np
 import scipy.special as special
+from scipy.signal import butter, lfilter, lfiltic
 
 from waveforms import *
 from waveforms.waveform import WaveVStack
@@ -29,10 +30,10 @@ def test_tolist():
 
     l = w.tolist()
     assert l == [
-        None, None, 0, 0, None, 4, 1, np.inf, 1, 1.0, 1, 1, 3, 4, 1, 0.0, 1,
-        np.inf, 1, 1.0, 1, 1, 3, 4, 2, 0.7853981633974483, 3, -2.25, 0, 2.25,
-        1, 1.0, 1, 1, 3, 2, 0.9008418065898374, 0, np.inf, 0, 1, np.inf, 4, 1,
-        0, -0.5, 1, 1, 2, 1, 0, 0.16666666666666666, 1, 2, 2, 1, 0,
+        None, None, 0, 0, None, None, 4, 1, np.inf, 1, 1.0, 1, 1, 3, 4, 1, 0.0,
+        1, np.inf, 1, 1.0, 1, 1, 3, 4, 2, 0.7853981633974483, 3, -2.25, 0,
+        2.25, 1, 1.0, 1, 1, 3, 2, 0.9008418065898374, 0, np.inf, 0, 1, np.inf,
+        4, 1, 0, -0.5, 1, 1, 2, 1, 0, 0.16666666666666666, 1, 2, 2, 1, 0,
         -0.08333333333333333, 1, 3, 2, 1, 0
     ]
 
@@ -91,18 +92,45 @@ def test_simplify():
     w2 = []
     assert w1 == WaveVStack(w2).simplify()
 
-    for freq in np.linspace(6.1, 6.5, 11)*1e9:
+    for freq in np.linspace(6.1, 6.5, 11) * 1e9:
         pulse = square(1e-6) >> 95e-6
-        w1 += pulse * cos(2*pi*freq)
-        w2.append(pulse * cos(2*pi*freq))
+        w1 += pulse * cos(2 * pi * freq)
+        w2.append(pulse * cos(2 * pi * freq))
         assert w1 == WaveVStack(w2).simplify()
     assert w1 == WaveVStack(w2).simplify()
 
-    for freq in np.linspace(6.1, 6.5, 3)*1e9:
-        pulse = square(1e-6) >> (95e-6 + np.random.randn()*1e-9)
-        w1 += pulse * cos(2*pi*freq)
-        w2.append(pulse * cos(2*pi*freq))
+    for freq in np.linspace(6.1, 6.5, 3) * 1e9:
+        pulse = square(1e-6) >> (95e-6 + np.random.randn() * 1e-9)
+        w1 += pulse * cos(2 * pi * freq)
+        w2.append(pulse * cos(2 * pi * freq))
         assert w1 == WaveVStack(w2).simplify()
-    w1 += cos(2*pi*freq*0.9)
-    w2.append(cos(2*pi*freq*0.9))
+    w1 += cos(2 * pi * freq * 0.9)
+    w2.append(cos(2 * pi * freq * 0.9))
     assert w1 == WaveVStack(w2).simplify()
+
+
+def test_filters():
+    sample_rate = 1000
+
+    b, a = butter(3, 4.0, 'lowpass', fs=sample_rate)
+    init_x, init_y = [0], [0]
+    zi = lfiltic(b, a, init_y, init_x)
+
+    t = np.linspace(-1, 1, 2000, endpoint=False)
+
+    wav = WaveVStack([step(0) << 0.5, -step(0)])
+    wav.sample_rate = sample_rate
+    wav.start = -1
+    wav.stop = 1
+    wav.filters = (b, a, init_x, init_y)
+
+    points = lfilter(b,
+                     a,
+                     np.heaviside(t + 0.5, 1) - np.heaviside(t, 1),
+                     zi=zi)[0]
+
+    assert np.allclose(wav.sample(), points, atol=1e-6)
+
+    l = wav.tolist()
+    wav2 = WaveVStack.fromlist(l)
+    assert np.allclose(wav2.sample(), points, atol=1e-6)
