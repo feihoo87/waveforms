@@ -5,7 +5,7 @@ from functools import lru_cache
 import ply.lex as lex
 import ply.yacc as yacc
 
-from . import waveform
+from . import multy_drag, waveform
 
 
 class _WaveLexer:
@@ -27,9 +27,9 @@ class _WaveLexer:
     literals = r'=()[]<>,.+-/*^'
     functions = [
         'D', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse', 'cut',
-        'drag', 'exp', 'gaussian', 'general_cosine', 'hanning', 'interp',
-        'mixing', 'one', 'poly', 'samplingPoints', 'sign', 'sin', 'sinc',
-        'sinh', 'square', 'step', 't', 'zero'
+        'drag', 'drag_sin', 'drag_sinx', 'exp', 'gaussian', 'general_cosine',
+        'hanning', 'interp', 'mixing', 'one', 'poly', 'samplingPoints', 'sign',
+        'sin', 'sinc', 'sinh', 'square', 'step', 't', 'zero'
     ]
     tokens = [
         'REAL', 'IMAG', 'INT', 'STRING', 'ID', 'LSHIFT', 'RSHIFT', 'POW',
@@ -110,7 +110,12 @@ class _WaveParser:
         return self.waveform.simplify()
 
     def getFunction(self, name):
-        return getattr(waveform, name)
+        for mod in [waveform, multy_drag]:
+            try:
+                return getattr(waveform, name)
+            except AttributeError:
+                pass
+        raise SyntaxError(f"Unknown function '{name}'")
 
     # ---- Begin the PLY parser ----
     start = 'main'

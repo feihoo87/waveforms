@@ -1,5 +1,6 @@
 from numpy import e, pi
 
+from .multy_drag import drag_sin, drag_sinx
 from .version import __version__
 from .waveform import (D, Waveform, WaveVStack, chirp, const, cos, cosh,
                        coshPulse, cosPulse, cut, drag, exp, function, gaussian,
