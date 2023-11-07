@@ -1,6 +1,6 @@
 import numpy as np
 import scipy.special as special
-from scipy.signal import butter, lfilter, lfiltic
+from scipy.signal import butter, lfilter, lfiltic, tf2sos
 
 from waveforms import *
 
@@ -165,8 +165,8 @@ def test_filters():
     sample_rate = 1000
 
     b, a = butter(3, 4.0, 'lowpass', fs=sample_rate)
-    init_x, init_y = [0], [0]
-    zi = lfiltic(b, a, init_y, init_x)
+    init_y = 0
+    zi = lfiltic(b, a, [init_y])
 
     t = np.linspace(-1, 1, 2000, endpoint=False)
 
@@ -174,7 +174,7 @@ def test_filters():
     wav.sample_rate = sample_rate
     wav.start = -1
     wav.stop = 1
-    wav.filters = (b, a, init_x, init_y)
+    wav.filters = (tf2sos(b, a), init_y)
 
     points = lfilter(b, a, np.heaviside(t, 1), zi=zi)[0]
 

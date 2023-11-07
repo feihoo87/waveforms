@@ -7,7 +7,7 @@ from math import comb
 import numpy as np
 import scipy.special as special
 from numpy import e, inf, pi
-from scipy.signal import lfilter, lfiltic
+from scipy.signal import sosfilt
 
 NDIGITS = 15
 
@@ -478,10 +478,11 @@ class Waveform:
             x = np.arange(self.start, self.stop, 1 / sample_rate)
             sig = self.__call__(x, out=out, function_lib=function_lib)
             if filters is not None:
-                b, a, initial_x, initial_y = filters
-                zi = lfiltic(b, a, np.asarray(initial_x),
-                             np.asarray(initial_y))
-                sig, zf = lfilter(b, a, sig, zi=zi)
+                sos, initial = filters
+                if initial:
+                    sig = sosfilt(sos, sig - initial) + initial
+                else:
+                    sig = sosfilt(sos, sig)
             return sig
         else:
             return self._sample_iter(sample_rate, chunk_size, out,
@@ -492,8 +493,9 @@ class Waveform:
         start = self.start
         start_n = 0
         if filters is not None:
-            b, a, initial_x, initial_y = filters
-            zi = lfiltic(b, a, np.asarray(initial_x), np.asarray(initial_y))
+            sos, initial = filters
+            # zi = sosfilt_zi(sos)
+            zi = np.zeros((sos.shape[0], 2))
         length = chunk_size / sample_rate
         while start < self.stop:
             if start + length > self.stop:
@@ -510,22 +512,28 @@ class Waveform:
                                         out=out[start_n:],
                                         function_lib=function_lib)
                 else:
-                    sig, zi = lfilter(b,
-                                      a,
+                    if initial:
+                        sig -= initial
+                    sig, zi = sosfilt(sos,
                                       self.__call__(x,
                                                     function_lib=function_lib),
                                       zi=zi)
+                    if initial:
+                        sig += initial
                     out[start_n:start_n + size] = sig
                     yield sig
             else:
                 if filters is None:
                     yield self.__call__(x, function_lib=function_lib)
                 else:
-                    sig, zi = lfilter(b,
-                                      a,
+                    if initial:
+                        sig -= initial
+                    sig, zi = sosfilt(sos,
                                       self.__call__(x,
                                                     function_lib=function_lib),
                                       zi=zi)
+                    if initial:
+                        sig += initial
                     yield sig
             start = stop
             start_n += chunk_size
@@ -586,11 +594,11 @@ class Waveform:
         if self.filters is None:
             l.append(None)
         else:
-            # b, a, initial_x, initial_y = self.filters
-            l.append(True)
-            for x in self.filters:
-                l.append(len(x))
-                l.extend(list(x))
+            sos, initial = self.filters
+            sos = list(sos.reshape(-1))
+            l.append(len(sos))
+            l.extend(sos)
+            l.append(initial)
 
         return self._tolist(self.bounds, self.seq, l)
 
@@ -598,14 +606,13 @@ class Waveform:
     def fromlist(cls, l):
         w = cls()
         pos = 6
-        (w.max, w.min, w.start, w.stop, w.sample_rate, filters) = l[:pos]
-        if filters is not None:
-            w.filters = []
-            for _ in range(4):
-                size = l[pos]
-                pos += 1
-                w.filters.append(l[pos:pos + size])
-                pos += size
+        (w.max, w.min, w.start, w.stop, w.sample_rate, sos_size) = l[:pos]
+        if sos_size is not None:
+            sos = np.array(l[pos:pos + sos_size]).reshape(-1, 6)
+            pos += sos_size
+            initial = l[pos]
+            pos += 1
+            w.filters = sos, initial
 
         w.bounds, w.seq, pos = cls._fromlist(l, pos)
         return w
@@ -616,8 +623,7 @@ class Waveform:
                       self.sample_rate, None)
         else:
             header = (self.max, self.min, self.start, self.stop,
-                      self.sample_rate, tuple([tuple(x)
-                                               for x in self.filters]))
+                      self.sample_rate, self.filters)
         body = []
 
         for seq, b in zip(self.seq, self.bounds):
@@ -965,7 +971,7 @@ class WaveVStack(Waveform):
         return out.real
 
     def tolist(self):
-        ret = [
+        l = [
             self.start,
             self.stop,
             self.offset,
@@ -973,30 +979,29 @@ class WaveVStack(Waveform):
             self.sample_rate,
         ]
         if self.filters is None:
-            ret.append(None)
+            l.append(None)
         else:
-            # b, a, initial_x, initial_y = self.filters
-            ret.append(True)
-            for x in self.filters:
-                ret.append(len(x))
-                ret.extend(list(x))
-        ret.append(len(self.wlist))
+            sos, initial = self.filters
+            sos = list(sos.reshape(-1))
+            l.append(len(sos))
+            l.extend(sos)
+            l.append(initial)
+        l.append(len(self.wlist))
         for bounds, seq in self.wlist:
-            self._tolist(bounds, seq, ret)
-        return ret
+            self._tolist(bounds, seq, l)
+        return l
 
     @classmethod
     def fromlist(cls, l):
         w = cls()
-        w.start, w.stop, w.offset, w.shift, w.sample_rate, filters = l[:6]
         pos = 6
-        if filters is not None:
-            w.filters = []
-            for _ in range(4):
-                size = l[pos]
-                pos += 1
-                w.filters.append(l[pos:pos + size])
-                pos += size
+        w.start, w.stop, w.offset, w.shift, w.sample_rate, sos_size = l[:pos]
+        if sos_size is not None:
+            sos = np.array(l[pos:pos + sos_size]).reshape(-1, 6)
+            pos += sos_size
+            initial = l[pos]
+            pos += 1
+            w.filters = sos, initial
         n = l[pos]
         pos += 1
         for _ in range(n):
