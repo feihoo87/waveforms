@@ -4,7 +4,7 @@ from typing import Sequence
 import numpy as np
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
 from scipy.optimize import curve_fit
-from scipy.signal import fftconvolve, lfilter, lfiltic
+from scipy.signal import fftconvolve, lfilter, lfiltic, zpk2sos, zpk2tf
 
 
 def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
@@ -99,7 +99,8 @@ def exp_decay_filter_old(amp, tau, sample_rate):
 
 def exp_decay_filter(amp: float | Sequence[float],
                      tau: float | Sequence[float],
-                     sample_rate: float) -> tuple[np.ndarray, np.ndarray]:
+                     sample_rate: float,
+                     output='ba') -> tuple[np.ndarray, np.ndarray]:
     """
     exp decay filter
 
@@ -122,6 +123,9 @@ def exp_decay_filter(amp: float | Sequence[float],
         amp (float): amplitude of the filter
         tau (float): decay time
         sample_rate (float): sampling rate
+        output (str): output type, 'ba' for numerator (b) and denominator (a)
+            polynomials, 'sos' for second-order sections, 'zpk' for zeros (z),
+            poles (p) and gain (k). See scipy.signal.lfilter for more.
 
     Returns:
         tuple: (b, a) array like, numerator (b) and denominator (a)
@@ -140,18 +144,17 @@ def exp_decay_filter(amp: float | Sequence[float],
                 n = n * np.poly1d([1, -1 / t_])
         numerator = numerator + n
     numerator = numerator + denominator
-    xi = numerator.roots
-    p = denominator.roots
 
-    b, a = np.poly1d([1.0]), np.poly1d([1.0])
-    for x in xi:
-        b = b * np.poly1d([1, -np.exp(-x / sample_rate)])
-    for p_ in p:
-        a = a * np.poly1d([1, -np.exp(-p_ / sample_rate)])
+    z = np.exp(-numerator.roots / sample_rate)
+    p = np.exp(-denominator.roots / sample_rate)
+    k = numerator(0) / denominator(0) * np.prod(1 - p) / np.prod(1 - z)
 
-    kd = numerator(0) * a(1) / denominator(0) / b(1)
-    b, a = b.coeffs.real * kd, a.coeffs.real
-    return b / a[0], a / a[0]
+    if output == 'sos':
+        return zpk2sos(z, p, k)
+    elif output == 'ba':
+        return zpk2tf(z, p, k)
+    elif output == 'zpk':
+        return z, p, k
 
 
 def reflection_filter(f, A, tau):
