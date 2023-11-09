@@ -87,7 +87,7 @@ def _mult_channel_play(ctx: Context, wav, ch: MultAWGChannel):
         ctx.waveforms[ch.Q.name].append(Q)
 
 
-def _capture(ctx: Context, cbit: int, info: Capture):
+def _capture(ctx: Context, cbit: int | str, info: Capture):
     hardware = ctx.get_ad_channel(info.qubit)
     ctx.measures[cbit] = Capture(info.qubit, info.cbit, info.time, info.signal,
                                  info.params, hardware)
@@ -257,32 +257,3 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
 
 def assembly_align_right(qlisp, ctx: Context, lib: Library):
     raise NotImplementedError()
-
-    _allocQubits(ctx, qlisp)
-
-    allQubits = set()
-
-    for gate, qubits in qlisp:
-        ctx.qlisp.append((gate, qubits))
-        if isinstance(qubits, (int, str)):
-            qubits = (ctx.qubit(qubits), )
-        else:
-            qubits = tuple(
-                [ctx.qubit(q) if isinstance(q, int) else q for q in qubits])
-        try:
-            call_opaque((gate, qubits), ctx, lib=lib)
-            allQubits.update(set(qubits))
-        except:
-            raise QLispError(f'assembly statement {(gate, qubits)} error.')
-    call_opaque(('Barrier', tuple(allQubits)), ctx, lib=lib)
-    for ch in ctx.biases:
-        ctx.biases[ch] = 0
-    _ctx_update_biases(ctx, ctx)
-    ctx.end = max(ctx.time.values())
-
-    code = QLispCode(cfg=ctx.cfg,
-                     qlisp=ctx.qlisp,
-                     waveforms=dict(ctx.waveforms),
-                     measures=dict(ctx.measures),
-                     end=ctx.end)
-    return code

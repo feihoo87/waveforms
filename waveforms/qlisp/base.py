@@ -6,7 +6,9 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Flag, auto
 from functools import cached_property
-from typing import Any, NamedTuple, Optional, Union
+from typing import Any, NamedTuple, Optional, Sequence, Union
+
+import numpy as np
 
 from ..waveform import Waveform
 
@@ -50,7 +52,7 @@ class QLispError(SyntaxError):
 
 class Capture(NamedTuple):
     qubit: str
-    cbit: int
+    cbit: int | str
     time: float
     signal: Signal
     params: dict
@@ -64,6 +66,8 @@ class AWGChannel(NamedTuple):
     size: int = -1
     amplitude: Optional[float] = None
     offset: Optional[float] = None
+    delay: float = 0
+    sos: Optional[np.ndarray] = None
     commandAddresses: tuple = ()
 
 
@@ -129,7 +133,7 @@ class ABCCompileConfigMixin(ABC):
         Args:
             name: Name of the gate.
             qubits: Qubits to which the gate is applied.
-        
+
         Returns:
             GateConfig for the given qubits.
             if the gate is not found, return None.
@@ -170,7 +174,7 @@ class Context():
     addressTable: dict = field(default_factory=dict)
     waveforms: dict[str, list[Waveform]] = field(
         default_factory=lambda: defaultdict(list))
-    measures: dict[int, Capture] = field(default_factory=dict)
+    measures: dict[int | str, Capture] = field(default_factory=dict)
     phases_ext: dict[str, dict[Union[int, str], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(lambda: 0)))
     biases: dict[str,
@@ -246,7 +250,7 @@ class QLispCode():
     cfg: ABCCompileConfigMixin = field(repr=False)
     qlisp: list = field(repr=True)
     waveforms: dict[str, Waveform] = field(repr=True)
-    measures: dict[int, list[Capture]] = field(repr=True)
+    measures: dict[int | str, list[Capture]] = field(repr=True)
     end: float = field(default=0, repr=True)
     signal: Signal = Signal.state
     shots: int = 1024
@@ -267,7 +271,7 @@ def create_context(ctx: Optional[Context] = None, **kw) -> Context:
             kw['cfg'] = ctx.cfg
         sub_ctx = Context(**kw)
         sub_ctx.time.update(ctx.time)
-        #sub_ctx.phases.update(ctx.phases)
+        # sub_ctx.phases.update(ctx.phases)
         sub_ctx.biases.update(ctx.biases)
         for k, v in ctx.phases_ext.items():
             sub_ctx.phases_ext[k].update(v)
