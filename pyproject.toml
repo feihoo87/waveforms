@@ -51,7 +51,8 @@ full = [
     "tenacity>=8.2.2",
 ]
 test = [
-    "pytest>=4.4.0"
+    "pytest>=7.4.0"
+    "pytest-asyncio>=0.21.1"
 ]
 docs = [
     "Sphinx",

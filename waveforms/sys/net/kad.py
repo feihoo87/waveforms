@@ -16,7 +16,21 @@ from typing import Any, NamedTuple
 
 import msgpack
 
-log = logging.getLogger(__name__)  # pylint: disable=invalid-name
+log = logging.getLogger(__name__)
+
+
+class Value(NamedTuple):
+    value: Any
+    ttl: float | None
+    ts: float
+
+    def outdated(self):
+        return self.ttl is not None and self.ttl < time.time() - self.ts
+
+    def __repr__(self):
+        fmt = "%a, %d %b %Y %H:%M:%S"
+        mt = time.strftime(fmt, time.localtime(self.ts))
+        return f"{self.value!r}, ttl={self.ttl}, last modified at {mt}"
 
 
 class IStorage(ABC):
@@ -26,31 +40,31 @@ class IStorage(ABC):
     """
 
     @abstractmethod
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: bytes, value):
         """
         Set a key to the given value.
         """
 
     @abstractmethod
-    def __getitem__(self, key):
+    def __getitem__(self, key: bytes):
         """
         Get the given key.  If item doesn't exist, return None.
         """
 
     @abstractmethod
-    def get(self, key, default=None):
+    def get(self, key: bytes, default=None):
         """
         Get given key.  If not found, return default.
         """
 
     @abstractmethod
-    def set(self, key, value, ttl=0):
+    def set(self, key: bytes, value, ttl: float = 0):
         """
         Set a key to the given value.
         """
 
     @abstractmethod
-    def iter_older_than(self, seconds_old):
+    def iter_older_than(self, seconds_old: float):
         """
         Return the an iterator over (key, value) tuples for items older
         than the given secondsOld.
@@ -63,27 +77,13 @@ class IStorage(ABC):
         """
 
 
-class Value(NamedTuple):
-    value: Any
-    ttl: float
-    ts: float
-
-    def outdated(self):
-        return self.ttl < time.time() - self.ts and self.ttl != 0
-
-    def __repr__(self):
-        fmt = "%a, %d %b %Y %H:%M:%S"
-        mt = time.strftime(fmt, time.localtime(self.ts))
-        return f"{self.value!r}, ttl={self.ttl}, last modified at {mt}"
-
-
 class ForgetfulStorage(IStorage):
 
-    def __init__(self, ttl=604800):
-        self._storage = {}
-        self.ttl = ttl
+    def __init__(self, ttl: float = 604800):
+        self._storage: dict[bytes, Value] = {}
+        self.ttl: float = ttl
 
-    def get(self, key):
+    def get(self, key: bytes):
         if key not in self._storage:
             return None
         value = self._storage[key]
@@ -93,7 +93,9 @@ class ForgetfulStorage(IStorage):
         else:
             return value.value
 
-    def set(self, key, value, ttl=0):
+    def set(self, key: bytes, value, ttl: float | None = None):
+        if ttl is None:
+            ttl = self.ttl
         self._storage[key] = Value(value, ttl, time.time())
 
     def __iter(self):
@@ -113,7 +115,7 @@ class ForgetfulStorage(IStorage):
         self.cull()
         return repr(self._storage)
 
-    def __contains__(self, key):
+    def __contains__(self, key: bytes):
         if key in self._storage:
             value = self._storage[key]
             if value.outdated():
@@ -124,22 +126,22 @@ class ForgetfulStorage(IStorage):
         else:
             return False
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: bytes, value):
         self.set(key, value, ttl=self.ttl)
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: bytes):
         return self.get(key)
 
     def __iter__(self):
         for key, value in self.__iter():
             yield key, value.value
 
-    def expire(self, key, ttl):
+    def expire(self, key: bytes, ttl: float):
         if key in self._storage:
             value = self._storage[key]
             self._storage[key] = Value(value.value, ttl, time.time())
 
-    def exists(self, key):
+    def exists(self, key: bytes):
         return self.__contains__(key)
 
     def keys(self, pattern="*"):
@@ -151,7 +153,7 @@ class ForgetfulStorage(IStorage):
             if prog.match(key):
                 yield key
 
-    def iter_older_than(self, t):
+    def iter_older_than(self, t: float):
         for key, value in self.__iter():
             if time.time() - value.ts >= t:
                 yield key, value.value
@@ -502,7 +504,6 @@ class RoutingTable:
         return list(map(itemgetter(1), heapq.nsmallest(k, nodes)))
 
 
-# pylint: disable=too-few-public-methods
 class SpiderCrawl:
     """
     Crawl the network and look for given 160-bit keys.
@@ -683,14 +684,12 @@ class MalformedMessage(Exception):
     """
 
 
-class KademliaProtocol(asyncio.DatagramProtocol):
+class RPCProtocol(asyncio.DatagramProtocol):
 
-    def __init__(self, source_node, storage, ksize, wait_timeout=5):
-        self.router = RoutingTable(self, ksize, source_node)
-        self.storage = storage
-        self.source_node = source_node
-        self._wait_timeout = wait_timeout
-        self._outstanding = {}
+    def __init__(self, wait_timeout: float = 5):
+        self._timeout = wait_timeout
+        self._outstanding: dict[bytes, tuple[asyncio.Future,
+                                             asyncio.TimerHandle]] = {}
         self.transport = None
 
     def connection_made(self, transport):
@@ -708,14 +707,14 @@ class KademliaProtocol(asyncio.DatagramProtocol):
 
         if datagram[:1] == b'\x00':
             # schedule accepting request and returning the result
-            self._accept_request(msg_id, data, address)
+            self.handle_request(msg_id, data, address)
         elif datagram[:1] == b'\x01':
-            self._accept_response(msg_id, data, address)
+            self.handle_response(msg_id, data, address)
         else:
             # otherwise, don't know the format, don't do anything
             log.debug("Received unknown message from %s, ignoring", address)
 
-    def _accept_response(self, msg_id, data, address):
+    def handle_response(self, msg_id, data, address):
         msgargs = (b64encode(msg_id), address)
         if msg_id not in self._outstanding:
             log.warning("received unknown message %s "
@@ -728,30 +727,64 @@ class KademliaProtocol(asyncio.DatagramProtocol):
         future.set_result((True, data))
         del self._outstanding[msg_id]
 
-    def _accept_request(self, msg_id, data, address):
+    def handle_request(self, msg_id, data, address):
         if not isinstance(data, list) or len(data) != 2:
             raise MalformedMessage("Could not read packet: %s" % data)
         funcname, args = data
 
-        if funcname not in ["ping", "store", "find_node", "find_value"]:
+        try:
+            func = getattr(self, f"on_{funcname}")
+        except AttributeError:
             msgargs = (self.__class__.__name__, funcname)
             log.warning("%s has no callable method "
                         "on_%s; ignoring request", *msgargs)
             return
 
-        func = getattr(self, "on_%s" % funcname, None)
-        response = func(address, *args)
+        try:
+            response = func(address, *args)
+        except Exception as e:
+            log.exception(e)
+
         log.debug("sending response %s for msg id %s to %s", response,
                   b64encode(msg_id), address)
         txdata = b'\x01' + msg_id + msgpack.packb(response)
         self.transport.sendto(txdata, address)
 
-    def _timeout(self, msg_id):
-        args = (b64encode(msg_id), self._wait_timeout)
+    def rpc_call(self, name, address, *args):
+        msg_id = sha1(os.urandom(32)).digest()
+        data = msgpack.packb([name, args])
+        if len(data) > 8192:
+            raise MalformedMessage("Total length of function "
+                                   "name and arguments cannot exceed 8K")
+        txdata = b'\x00' + msg_id + data
+        log.debug("calling remote function %s on %s (msgid %s)", name, address,
+                  b64encode(msg_id))
+        self.transport.sendto(txdata, address)
+
+        loop = asyncio.get_event_loop()
+        if hasattr(loop, 'create_future'):
+            future = loop.create_future()
+        else:
+            future = asyncio.Future()
+        timeout = loop.call_later(self._timeout, self.rpc_cancel, msg_id)
+        self._outstanding[msg_id] = (future, timeout)
+        return future
+
+    def rpc_cancel(self, msg_id):
+        args = (b64encode(msg_id), self._timeout)
         log.error("Did not receive reply for msg "
                   "id %s within %i seconds", *args)
         self._outstanding[msg_id][0].set_result((False, None))
         del self._outstanding[msg_id]
+
+
+class KademliaProtocol(RPCProtocol):
+
+    def __init__(self, source_node, storage, ksize, wait_timeout=5):
+        super().__init__(wait_timeout)
+        self.router = RoutingTable(self, ksize, source_node)
+        self.storage = storage
+        self.source_node = source_node
 
     def get_refresh_ids(self):
         """
@@ -793,62 +826,42 @@ class KademliaProtocol(asyncio.DatagramProtocol):
             return self.on_find_node(sender, nodeid, key)
         return {'value': value}
 
-    def rpc_func(self, name, address, *args):
-        msg_id = sha1(os.urandom(32)).digest()
-        data = msgpack.packb([name, args])
-        if len(data) > 8192:
-            raise MalformedMessage("Total length of function "
-                                   "name and arguments cannot exceed 8K")
-        txdata = b'\x00' + msg_id + data
-        log.debug("calling remote function %s on %s (msgid %s)", name, address,
-                  b64encode(msg_id))
-        self.transport.sendto(txdata, address)
-
-        loop = asyncio.get_event_loop()
-        if hasattr(loop, 'create_future'):
-            future = loop.create_future()
-        else:
-            future = asyncio.Future()
-        timeout = loop.call_later(self._wait_timeout, self._timeout, msg_id)
-        self._outstanding[msg_id] = (future, timeout)
-        return future
-
     async def ping(self, address, source_node_id):
-        return await self.rpc_func('ping', address, source_node_id)
+        return await self.rpc_call('ping', address, source_node_id)
 
     async def store(self, address, source_node_id, key, value):
-        return await self.rpc_func('store', address, source_node_id, key,
+        return await self.rpc_call('store', address, source_node_id, key,
                                    value)
 
     async def find_node(self, address, source_node_id, node_to_find_id):
-        return await self.rpc_func('find_node', address, source_node_id,
+        return await self.rpc_call('find_node', address, source_node_id,
                                    node_to_find_id)
 
     async def find_value(self, address, source_node_id, node_to_find_id):
-        return await self.rpc_func('find_value', address, source_node_id,
+        return await self.rpc_call('find_value', address, source_node_id,
                                    node_to_find_id)
 
     async def call_find_node(self, node_to_ask, node_to_find):
         address = (node_to_ask.ip, node_to_ask.port)
         result = await self.find_node(address, self.source_node.id,
                                       node_to_find.id)
-        return self.handle_call_response(result, node_to_ask)
+        return self.handle_rpc_result(result, node_to_ask)
 
     async def call_find_value(self, node_to_ask, node_to_find):
         address = (node_to_ask.ip, node_to_ask.port)
         result = await self.find_value(address, self.source_node.id,
                                        node_to_find.id)
-        return self.handle_call_response(result, node_to_ask)
+        return self.handle_rpc_result(result, node_to_ask)
 
     async def call_ping(self, node_to_ask):
         address = (node_to_ask.ip, node_to_ask.port)
         result = await self.ping(address, self.source_node.id)
-        return self.handle_call_response(result, node_to_ask)
+        return self.handle_rpc_result(result, node_to_ask)
 
     async def call_store(self, node_to_ask, key, value):
         address = (node_to_ask.ip, node_to_ask.port)
         result = await self.store(address, self.source_node.id, key, value)
-        return self.handle_call_response(result, node_to_ask)
+        return self.handle_rpc_result(result, node_to_ask)
 
     def welcome_if_new(self, node):
         """
@@ -878,7 +891,7 @@ class KademliaProtocol(asyncio.DatagramProtocol):
                 asyncio.ensure_future(self.call_store(node, key, value))
         self.router.add_contact(node)
 
-    def handle_call_response(self, result, node):
+    def handle_rpc_result(self, result, node):
         """
         If we get a response, add the node to the routing table.  If
         we get no response, make sure it's removed from the routing table.
@@ -893,7 +906,6 @@ class KademliaProtocol(asyncio.DatagramProtocol):
         return result
 
 
-# pylint: disable=too-many-instance-attributes
 class Server:
     """
     High level view of a node instance.  This is the object that should be
@@ -948,11 +960,11 @@ class Server:
         # finally, schedule refreshing table
         self.refresh_table()
 
-    def refresh_table(self):
+    def refresh_table(self, interval=3600):
         log.debug("Refreshing routing table")
         asyncio.ensure_future(self._refresh_table())
         loop = asyncio.get_event_loop()
-        self.refresh_loop = loop.call_later(3600, self.refresh_table)
+        self.refresh_loop = loop.call_later(interval, self.refresh_table)
 
     async def _refresh_table(self):
         """
@@ -1048,7 +1060,8 @@ class Server:
         if not nearest:
             log.warning("There are no known neighbors to set key %s",
                         dkey.hex())
-            return False
+            self.storage[dkey] = value
+            return True
 
         spider = NodeSpiderCrawl(self.protocol, node, nearest, self.ksize,
                                  self.alpha)
@@ -1091,7 +1104,7 @@ class Server:
         log.info("Loading state from %s", fname)
         with open(fname, 'rb') as file:
             data = pickle.load(file)
-        svr = Server(data['ksize'], data['alpha'], data['id'])
+        svr = cls(data['ksize'], data['alpha'], data['id'])
         await svr.listen(port, interface)
         if data['neighbors']:
             await svr.bootstrap(data['neighbors'])
@@ -1118,5 +1131,4 @@ def check_dht_value_type(value):
     Checks to see if the type of the value is a valid type for
     placing in the dht.
     """
-    typeset = [int, float, bool, str, bytes]
-    return type(value) in typeset  # pylint: disable=unidiomatic-typecheck
+    return isinstance(value, (int, float, bool, str, bytes))
