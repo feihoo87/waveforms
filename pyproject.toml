@@ -44,6 +44,7 @@ full = [
     "blinker>=1.4",
     "cryptography>=3.4.7",
     "matplotlib>=3.4.1",
+    "msgpack>=1.0.5",
     "portalocker>=1.4.0",
     "SQLAlchemy>=1.4.11",
     "scikit-learn>=0.24.1",
