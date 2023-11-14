@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import heapq
 import logging
@@ -5,14 +7,16 @@ import os
 import pickle
 import random
 import re
+import secrets
 import time
+import uuid
 from abc import ABC, abstractmethod
 from base64 import b64encode
 from collections import Counter, OrderedDict
 from hashlib import sha1
 from itertools import chain
 from operator import itemgetter
-from typing import Any, NamedTuple
+from typing import Any, Coroutine, NamedTuple
 
 import msgpack
 
@@ -159,13 +163,13 @@ class ForgetfulStorage(IStorage):
                 yield key, value.value
 
 
-async def gather_dict(dic):
+async def gather_dict(dic: dict[bytes, Coroutine]):
     cors = list(dic.values())
     results = await asyncio.gather(*cors)
     return dict(zip(dic.keys(), results))
 
 
-def digest(string):
+def digest(string: str | bytes) -> bytes:
     if not isinstance(string, bytes):
         string = str(string).encode('utf8')
     return sha1(string).digest()
@@ -198,8 +202,9 @@ class Node:
     This class should generally not be instantiated directly, as it is a low
     level construct mostly used by the router.
     """
+    __slots__ = ('id', 'ip', 'port', 'long_id')
 
-    def __init__(self, node_id, ip=None, port=None):
+    def __init__(self, node_id: bytes, ip=None, port=None):
         """
         Create a Node instance.
         Args:
@@ -239,7 +244,7 @@ class NodeHeap:
     A heap of nodes ordered by distance to a given node.
     """
 
-    def __init__(self, node, maxsize):
+    def __init__(self, node: Node, maxsize: int):
         """
         Constructor.
         @param node: The node to measure all distnaces from.
@@ -442,9 +447,9 @@ class RoutingTable:
         self.flush()
 
     def flush(self):
-        self.buckets = [KBucket(0, 2**160, self.ksize)]
+        self.buckets: list[KBucket] = [KBucket(0, 2**160, self.ksize)]
 
-    def split_bucket(self, index):
+    def split_bucket(self, index: int):
         one, two = self.buckets[index].split()
         self.buckets[index] = one
         self.buckets.insert(index + 1, two)
@@ -509,7 +514,7 @@ class SpiderCrawl:
     Crawl the network and look for given 160-bit keys.
     """
 
-    def __init__(self, protocol, node, peers, ksize, alpha):
+    def __init__(self, protocol: KademliaProtocol, node, peers, ksize, alpha):
         """
         Create a new C{SpiderCrawl}er.
         Args:
@@ -563,7 +568,7 @@ class SpiderCrawl:
 
 class ValueSpiderCrawl(SpiderCrawl):
 
-    def __init__(self, protocol, node, peers, ksize, alpha):
+    def __init__(self, protocol: KademliaProtocol, node, peers, ksize, alpha):
         SpiderCrawl.__init__(self, protocol, node, peers, ksize, alpha)
         # keep track of the single nearest node without value - per
         # section 2.3 so we can set the key there if found
@@ -927,7 +932,8 @@ class Server:
         self.ksize = ksize
         self.alpha = alpha
         self.storage = storage or ForgetfulStorage()
-        self.node = Node(node_id or digest(random.getrandbits(255)))
+        self.node = Node(node_id
+                         or uuid.uuid1().bytes[4:] + secrets.token_bytes(8))
         self.transport = None
         self.protocol = None
         self.refresh_loop = None
@@ -946,7 +952,7 @@ class Server:
     def _create_protocol(self):
         return self.protocol_class(self.node, self.storage, self.ksize)
 
-    async def listen(self, port, interface='0.0.0.0'):
+    async def listen(self, port, interface='0.0.0.0', interval=300):
         """
         Start listening on the given port.
         Provide interface="::" to accept ipv6 address
@@ -958,15 +964,16 @@ class Server:
                  port)
         self.transport, self.protocol = await listen
         # finally, schedule refreshing table
-        self.refresh_table()
+        self.refresh_table(interval)
 
-    def refresh_table(self, interval=3600):
+    def refresh_table(self, interval=300):
         log.debug("Refreshing routing table")
-        asyncio.ensure_future(self._refresh_table())
-        loop = asyncio.get_event_loop()
-        self.refresh_loop = loop.call_later(interval, self.refresh_table)
+        asyncio.ensure_future(self._refresh_table(interval))
+        loop = asyncio.get_running_loop()
+        self.refresh_loop = loop.call_later(interval, self.refresh_table,
+                                            interval)
 
-    async def _refresh_table(self):
+    async def _refresh_table(self, interval=300):
         """
         Refresh buckets that haven't had any lookups in the last hour
         (per section 2.3 of the paper).
@@ -983,7 +990,7 @@ class Server:
         await asyncio.gather(*results)
 
         # now republish keys older than one hour
-        for dkey, value in self.storage.iter_older_than(3600):
+        for dkey, value in self.storage.iter_older_than(interval):
             await self.set_digest(dkey, value)
 
     def bootstrappable_neighbors(self):
@@ -1086,7 +1093,8 @@ class Server:
             'ksize': self.ksize,
             'alpha': self.alpha,
             'id': self.node.id,
-            'neighbors': self.bootstrappable_neighbors()
+            'neighbors': self.bootstrappable_neighbors(),
+            'storage': self.storage
         }
         if not data['neighbors']:
             log.warning("No known neighbors, so not writing to cache.")
@@ -1095,7 +1103,7 @@ class Server:
             pickle.dump(data, file)
 
     @classmethod
-    async def load_state(cls, fname, port, interface='0.0.0.0'):
+    async def load_state(cls, fname, port, interface='0.0.0.0', interval=300):
         """
         Load the state of this node (the alpha/ksize/id/immediate neighbors)
         from a cache file with the given fname and then bootstrap the node
@@ -1104,13 +1112,13 @@ class Server:
         log.info("Loading state from %s", fname)
         with open(fname, 'rb') as file:
             data = pickle.load(file)
-        svr = cls(data['ksize'], data['alpha'], data['id'])
-        await svr.listen(port, interface)
+        svr = cls(data['ksize'], data['alpha'], data['id'], data['storage'])
+        await svr.listen(port, interface, interval)
         if data['neighbors']:
             await svr.bootstrap(data['neighbors'])
         return svr
 
-    def save_state_regularly(self, fname, frequency=600):
+    def save_state_regularly(self, fname, frequency=300):
         """
         Save the state of node with a given regularity to the given
         filename.
