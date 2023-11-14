@@ -1098,7 +1098,7 @@ class Server:
         }
         if not data['neighbors']:
             log.warning("No known neighbors, so not writing to cache.")
-            return
+            # return
         with open(fname, 'wb') as file:
             pickle.dump(data, file)
 

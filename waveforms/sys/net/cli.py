@@ -71,15 +71,15 @@ def server(interface, port, dht_only, dht_interface, dht_port, bootstrap,
             state_file = pathlib.Path(state_file)
 
         if state_file.exists():
-            node = Server.load_state(state_file, dht_port, dht_interface,
-                                     interval)
+            node = await Server.load_state(state_file, dht_port, dht_interface,
+                                           interval)
         else:
             node = Server()
             state_file.parent.mkdir(parents=True, exist_ok=True)
             await node.listen(dht_port, dht_interface, interval)
-            if bootstrap:
-                addr, p = bootstrap.split(':')
-                await node.bootstrap([(addr, int(p))])
+        if bootstrap:
+            addr, p = bootstrap.split(':')
+            await node.bootstrap([(addr, int(p))])
 
         loop = asyncio.get_running_loop()
         loop.call_later(min(interval / 2, 30), node.save_state_regularly,
