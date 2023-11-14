@@ -3,6 +3,8 @@ import operator
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib import cm
+from matplotlib.colors import Normalize
 
 layout_example = {
     'qubits': {
@@ -200,7 +202,7 @@ def circle_half_directed_link_path(pos1, pos2, r1, r2, width, n=20):
                       xx2[:-1]]), np.hstack([yy2[-1], yy1, a.imag, yy2[:-1]])
 
 
-def draw(layout, ax=None):
+def draw(layout, ax=None, qubit_cbar=True, coupler_cbar=True):
     if ax is None:
         ax = plt.gca()
 
@@ -247,6 +249,45 @@ def draw(layout, ax=None):
     ax.axis('equal')
     ax.set_axis_off()
 
+    if qubit_cbar and layout['__colorbar__']['qubit']['norm'] is not None:
+        cbar = plt.colorbar(cm.ScalarMappable(
+            norm=layout['__colorbar__']['qubit']['norm'],
+            cmap=layout['__colorbar__']['qubit']['cmap']),
+                            ax=ax,
+                            location='bottom',
+                            orientation='horizontal',
+                            pad=0.01,
+                            shrink=0.5)
+        cbar.set_label(layout['__colorbar__']['qubit']['label'])
+    if coupler_cbar and layout['__colorbar__']['coupler']['norm'] is not None:
+        cbar = plt.colorbar(cm.ScalarMappable(
+            norm=layout['__colorbar__']['coupler']['norm'],
+            cmap=layout['__colorbar__']['coupler']['cmap']),
+                            ax=ax,
+                            location='bottom',
+                            orientation='horizontal',
+                            pad=0.01,
+                            shrink=0.5)
+        cbar.set_label(layout['__colorbar__']['coupler']['label'])
+
+
+def get_norm(params, elms, vmin=None, vmax=None):
+    data = []
+    for elm in elms:
+        if elm in params:
+            if isinstance(params[elm], (int, float)):
+                data.append(params[elm])
+            elif 'value' in params[elm] and params[elm]['value'] is not None:
+                data.append(params[elm]['value'])
+    if data:
+        if vmin is None:
+            vmin = min(data)
+        if vmax is None:
+            vmax = max(data)
+        return Normalize(vmin=vmin, vmax=vmax)
+    else:
+        return None
+
 
 def fill_layout(layout,
                 params,
@@ -257,16 +298,37 @@ def fill_layout(layout,
                 qubit_color=None,
                 coupler_color=None,
                 qubit_cmap='hot',
-                qubit_vmax=0.0,
-                qubit_vmin=1.0,
+                qubit_vmax=None,
+                qubit_vmin=None,
                 coupler_cmap='binary',
-                coupler_vmax=0.0,
-                coupler_vmin=1.0,
+                coupler_vmax=None,
+                coupler_vmin=None,
                 bounder_color='k',
                 lw=0.5):
 
     qubit_cmap = plt.get_cmap(qubit_cmap)
-    coupler_cmap = plt.get_cmap(qubit_cmap)
+    coupler_cmap = plt.get_cmap(coupler_cmap)
+
+    qubit_norm = get_norm(params,
+                          layout['qubits'].keys(),
+                          vmin=qubit_vmin,
+                          vmax=qubit_vmax)
+    coupler_norm = get_norm(params,
+                            layout['couplers'].keys(),
+                            vmin=coupler_vmin,
+                            vmax=coupler_vmax)
+    layout['__colorbar__'] = {
+        'coupler': {
+            'cmap': coupler_cmap,
+            'norm': coupler_norm,
+            'label': ''
+        },
+        'qubit': {
+            'cmap': qubit_cmap,
+            'norm': qubit_norm,
+            'label': ''
+        }
+    }
 
     for qubit in layout['qubits']:
         layout['qubits'][qubit]['radius'] = qubit_size
@@ -280,7 +342,7 @@ def fill_layout(layout,
             elif 'value' in params[qubit] and params[qubit][
                     'value'] is not None:
                 layout['qubits'][qubit]['color'] = qubit_cmap(
-                    params[qubit]['value'])
+                    qubit_norm(params[qubit]['value']))
             else:
                 layout['qubits'][qubit]['color'] = qubit_color
                 if qubit_color is None:
@@ -313,7 +375,7 @@ def fill_layout(layout,
             elif 'value' in params[coupler] and params[coupler][
                     'value'] is not None:
                 layout['couplers'][coupler]['color'] = coupler_cmap(
-                    params[coupler]['value'])
+                    coupler_norm(params[coupler]['value']))
             else:
                 layout['couplers'][coupler]['color'] = coupler_color
                 if coupler_color is None:
