@@ -1,12 +1,15 @@
-from concurrent.futures import process
 import itertools
+import re
 from functools import partial, reduce
 
 import numpy as np
 
-from .mat import U, fSim, make_immutable, rfUnitary
+from waveforms.math.matricies import (CR, CX, CZ, SWAP, H, S, Sdag, SQiSWAP, T,
+                                      Tdag, U, fSim, iSWAP, make_immutable,
+                                      rfUnitary, sigmaI, sigmaX, sigmaY,
+                                      sigmaZ)
 
-__matrix_of_gates = {}
+_matrix_of_gates = {}
 
 
 def regesterGateMatrix(gate, mat, N=None, docs=''):
@@ -14,7 +17,7 @@ def regesterGateMatrix(gate, mat, N=None, docs=''):
         mat = make_immutable(mat)
     if N is None:
         N = round(np.log2(mat.shape[0]))
-    __matrix_of_gates[gate] = (mat, N, docs)
+    _matrix_of_gates[gate] = (mat, N, docs)
 
 
 def gate_name(gate):
@@ -26,17 +29,41 @@ def gate_name(gate):
         raise ValueError(f'Unexcept gate {gate}')
 
 
+def clifford_gate(gate: str):
+    match = re.match(r'^C(\d+)_(\d+)$', gate)
+    if match:
+        N, i = [int(num) for num in match.groups()]
+        return N, i
+    else:
+        return None
+
+
 def gate2mat(gate):
-    if isinstance(gate, str) and gate in __matrix_of_gates:
-        return __matrix_of_gates[gate][:2]
-    elif isinstance(gate, tuple) and gate[0] in __matrix_of_gates:
-        if callable(__matrix_of_gates[gate[0]][0]):
-            return __matrix_of_gates[gate[0]][0](
-                *gate[1:]), __matrix_of_gates[gate[0]][1]
+    if isinstance(gate, str) and gate in _matrix_of_gates:
+        if callable(_matrix_of_gates[gate][0]):
+            return _matrix_of_gates[gate][0](), _matrix_of_gates[gate][1]
+        else:
+            return _matrix_of_gates[gate][:2]
+    elif isinstance(gate, tuple) and gate[0] in _matrix_of_gates:
+        if callable(_matrix_of_gates[gate[0]][0]):
+            return _matrix_of_gates[gate[0]][0](
+                *gate[1:]), _matrix_of_gates[gate[0]][1]
         else:
             raise ValueError(
                 f"Could not call {gate[0]}(*{gate[1:]}), `{gate[0]}` is not callable."
             )
+    elif clifford_gate(gate):
+        N, i = clifford_gate(gate)
+        if N == 1:
+            from ...math.group.clifford.group import \
+                one_qubit_clifford_matricies
+            return one_qubit_clifford_matricies[i]
+        elif N == 2:
+            from ...math.group.clifford.group import \
+                two_qubit_clifford_matricies
+            return two_qubit_clifford_matricies[i]
+        else:
+            raise ValueError(f'Unexcept gate {gate}')
     elif gate_name(gate) == 'C':
         U, N = gate2mat(gate[1])
         ret = np.eye(2 * U.shape[0], dtype=complex)
@@ -152,6 +179,8 @@ def applySeq(seq, psi0=None):
         psi, unitary_process, psi0 = _set_vector_to_rho(psi)
 
     for gate, *qubits in seq:
+        if len(qubits) == 1 and isinstance(qubits[0], tuple):
+            qubits = qubits[0]
         M = max(qubits)
         if M >= N:
             psi = reduce(np.kron, itertools.repeat(psi0, times=M - N + 1), psi)
@@ -203,6 +232,8 @@ def seq2mat(seq, U=None):
     unitary_process = lambda U0, U: U @ U0
 
     for gate, *qubits in seq:
+        if len(qubits) == 1 and isinstance(qubits[0], tuple):
+            qubits = qubits[0]
         M = max(qubits)
         if M >= N:
             U = reduce(np.kron, itertools.repeat(I, times=M - N + 1), U)
@@ -221,7 +252,7 @@ regesterGateMatrix('U', U, 1)
 regesterGateMatrix('u1', lambda p: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('u2', lambda phi, lam: U(np.pi / 2, phi, lam), 1)
 regesterGateMatrix('u3', U, 1)
-regesterGateMatrix('P', lambda p: U(theta=0, phi=0, lambda_=p), 1)
+regesterGateMatrix('P', lambda p=np.pi / 2: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('rfUnitary', rfUnitary, 1)
 regesterGateMatrix('R', lambda phi: rfUnitary(np.pi / 2, phi), 1)
 regesterGateMatrix('Rx', partial(rfUnitary, phi=0), 1)
@@ -231,48 +262,36 @@ regesterGateMatrix('fSim', fSim, 2)
 regesterGateMatrix('Cphase', lambda phi: fSim(theta=0, phi=phi), 2)
 
 # one qubit
-regesterGateMatrix('I', np.array([[1, 0], [0, 1]]))
-regesterGateMatrix('X', np.array([[0, -1j], [-1j, 0]]))
-regesterGateMatrix('Y', np.array([[0, -1], [1, 0]]))
+regesterGateMatrix('I', sigmaI())
+regesterGateMatrix('X', -1j * sigmaX())
+regesterGateMatrix('Y', -1j * sigmaY())
 regesterGateMatrix('X/2', np.array([[1, -1j], [-1j, 1]]) / np.sqrt(2))
 regesterGateMatrix('Y/2', np.array([[1, -1], [1, 1]]) / np.sqrt(2))
 regesterGateMatrix('-X/2', np.array([[1, 1j], [1j, 1]]) / np.sqrt(2))
 regesterGateMatrix('-Y/2', np.array([[1, 1], [-1, 1]]) / np.sqrt(2))
-regesterGateMatrix('Z', np.array([[1, 0], [0, -1]]))
-regesterGateMatrix('S', np.array([[1, 0], [0, 1j]]))
-regesterGateMatrix('-S', np.array([[1, 0], [0, -1j]]))
-regesterGateMatrix('H', np.array([[1, 1], [1, -1]]) / np.sqrt(2))
+regesterGateMatrix('Z', sigmaZ())
+regesterGateMatrix('S', S)
+regesterGateMatrix('-S', Sdag)
+regesterGateMatrix('H', H)
 
 # non-clifford
-regesterGateMatrix('T',
-                   np.array([[1, 0], [0, 1 / np.sqrt(2) + 1j / np.sqrt(2)]]))
-regesterGateMatrix('-T',
-                   np.array([[1, 0], [0, 1 / np.sqrt(2) - 1j / np.sqrt(2)]]))
+regesterGateMatrix('T', T)
+regesterGateMatrix('-T', Tdag)
 regesterGateMatrix('W/2', rfUnitary(np.pi / 2, np.pi / 4))
 regesterGateMatrix('-W/2', rfUnitary(-np.pi / 2, np.pi / 4))
 regesterGateMatrix('V/2', rfUnitary(np.pi / 2, 3 * np.pi / 4))
 regesterGateMatrix('-V/2', rfUnitary(-np.pi / 2, 3 * np.pi / 4))
 
 # two qubits
-regesterGateMatrix(
-    'CZ', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]]))
-regesterGateMatrix(
-    'Cnot', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]))
-regesterGateMatrix(
-    'iSWAP',
-    np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]]))
-regesterGateMatrix(
-    'SWAP', np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]]))
-regesterGateMatrix(
-    'CR',
-    np.array([[1, 1j, 0, 0], [1j, 1, 0, 0], [0, 0, 1, -1j], [0, 0, -1j, 1]]) /
-    np.sqrt(2))
+regesterGateMatrix('CZ', CZ)
+regesterGateMatrix('Cnot', CX)
+regesterGateMatrix('CX', CX)
+regesterGateMatrix('iSWAP', iSWAP)
+regesterGateMatrix('SWAP', SWAP)
+regesterGateMatrix('CR', CR)
 
 # non-clifford
-regesterGateMatrix(
-    'SQiSWAP',
-    np.array([[1, 0, 0, 0], [0, 1 / np.sqrt(2), 1j / np.sqrt(2), 0],
-              [0, 1j / np.sqrt(2), 1 / np.sqrt(2), 0], [0, 0, 0, 1]]))
+regesterGateMatrix('SQiSWAP', SQiSWAP)
 
 if __name__ == '__main__':
     # Porter-Thomas distribution

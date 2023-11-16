@@ -1,59 +1,37 @@
 import operator
 from functools import lru_cache, reduce
 from itertools import chain, combinations, product, repeat
-from typing import Optional
 
 import numpy as np
 from scipy import linalg, optimize
 from scipy.sparse import coo_matrix, csc_matrix
 from scipy.sparse.linalg import inv, lsqr
 
+from waveforms.math.matricies import (sigmaI, sigmaM, sigmaP, sigmaX, sigmaY,
+                                      sigmaZ)
+from waveforms.qlisp.simulator.simple import _matrix_of_gates
+
 from ..cache import cache
 from .math import dagger, normalize, randomUnitary, unitary2v, v2unitary
 
 __base_op = {
-    'I': np.array([[1, 0], [0, 1]], dtype=complex),
-    'X': np.array([[0, -1j], [-1j, 0]], dtype=complex),
-    'Y': np.array([[0, -1], [1, 0]], dtype=complex),
-    'X/2': np.array([[1, -1j], [-1j, 1]], dtype=complex) / np.sqrt(2),
-    'Y/2': np.array([[1, -1], [1, 1]], dtype=complex) / np.sqrt(2),
-    '-X/2': np.array([[1, 1j], [1j, 1]], dtype=complex) / np.sqrt(2),
-    '-Y/2': np.array([[1, 1], [-1, 1]], dtype=complex) / np.sqrt(2),
-    'Z': np.array([[1, 0], [0, -1]], dtype=complex),
-    'S': np.array([[1, 0], [0, 1j]], dtype=complex),
-    '-S': np.array([[1, 0], [0, -1j]], dtype=complex),
-    'H': np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2),
-
-    # non-clifford
-    'T': np.array([[1, 0], [0, 1 / np.sqrt(2) + 1j / np.sqrt(2)]]),
-    '-T': np.array([[1, 0], [0, 1 / np.sqrt(2) - 1j / np.sqrt(2)]]),
+    gate: mat
+    for gate, (mat, *_) in _matrix_of_gates.items()
+    if isinstance(mat, np.ndarray)
 }
 
-__base_op_2 = {
-    # two qubits
-    'CZ':
-    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]],
-             dtype=complex),
-    'CNOT':
-    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
-             dtype=complex),
-    'iSWAP':
-    np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]],
-             dtype=complex),
-}
-
-__base_op['Sigma_x'] = 1j * __base_op['X']
-__base_op['Sigma_y'] = 1j * __base_op['Y']
-__base_op['Sigma_z'] = __base_op['Z']
-__base_op['Sigma_p'] = (__base_op['Sigma_x'] - 1j * __base_op['Sigma_y']) / 2
-__base_op['Sigma_m'] = (__base_op['Sigma_x'] + 1j * __base_op['Sigma_y']) / 2
+__base_op['sigmaX'] = sigmaX()
+__base_op['sigmaY'] = sigmaY()
+__base_op['sigmaZ'] = sigmaZ()
+__base_op['sigmaP'] = sigmaP()
+__base_op['sigmaM'] = sigmaM()
 
 qst_gates = ['-Y/2', 'X/2', 'I']
 ocqst_gates = ['I', 'X/2', 'Y/2', '-X/2', '-Y/2', 'X']
 qpt_init_gates = ['I', 'X', 'Y/2', 'X/2']
-pauli_basis = ['I', 'Sigma_x', 'Sigma_y', 'Sigma_z']
-real_pauli_basis = ['I', 'Sigma_x', 'Y', 'Z']
-raise_lower_basis = ['I', 'Sigma_p', 'Sigma_m', 'Sigma_z']
+pauli_basis = ['I', 'sigmaX', 'sigmaY', 'sigmaZ']
+real_pauli_basis = ['I', 'sigmaX', 'Y', 'Z']
+raise_lower_basis = ['I', 'sigmaP', 'sigmaM', 'sigmaZ']
 
 
 def tensorMatrix(transform):
@@ -206,7 +184,7 @@ def _qst_mle(diags, UUds: list[tuple[np.ndarray, np.ndarray]],
     diags - measured probabilities (diagonal elements) after acting
             on the state with each of the unitaries from the qst
             protocol.
-    UUds - list of unitary pairs (U, U^\dagger)
+    UUds - list of unitary pairs (U, U^\\dagger)
     rho0 - initial density matrix
     F - fidelity of the measurement
     """

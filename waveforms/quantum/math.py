@@ -1,17 +1,12 @@
 from functools import reduce
 from itertools import chain, product
-from typing import Optional, Union
 
 import numpy as np
-import scipy.sparse as sp
 from scipy.linalg import eigh, expm, logm, sqrtm
-from waveforms.math import (fit_circle, fit_cross_point, fit_pole, getFTMatrix,
-                            lin_fit)
+
+from waveforms.math.matricies import (BellPhiM, BellPhiP, BellPsiM, BellPsiP,
+                                      sigmaI, sigmaX, sigmaY, sigmaZ)
 from waveforms.math.signal import decay, oscillation
-from waveforms.qlisp.simulator.mat import (BellPhiM, BellPhiP, BellPsiM,
-                                           BellPsiP, U, Unitary2Angles, fSim,
-                                           issparse, make_immutable, rfUnitary,
-                                           sigmaI, sigmaX, sigmaY, sigmaZ)
 
 # Paulis
 s0, s1, s2, s3 = sigmaI(), sigmaX(), sigmaY(), sigmaZ()
@@ -35,7 +30,7 @@ def sigma(j: int, N: int = 1) -> np.ndarray:
     return tensor(s[x] for x in idx)
 
 
-def basis(x: Union[int, str], dim: int = 2) -> np.ndarray:
+def basis(x: int | str, dim: int = 2) -> np.ndarray:
     '''
     Returns a single element of a state vector.  Each component is
     either a digit (0,1,2,...) representing the computational basis,
@@ -269,7 +264,7 @@ def randomState(N: int) -> np.ndarray:
     return normalize(psi)
 
 
-def randomDensity(N: int, rank: Optional[int] = None) -> np.ndarray:
+def randomDensity(N: int, rank: int | None = None) -> np.ndarray:
     """Generates a random density matrix.  The distribution does not
     necessarily mean anything.  N is the dimension and rank is the
     number of non-zero eigenvalues."""

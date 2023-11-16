@@ -33,6 +33,8 @@ sigmaI = lambda: make_immutable(np.eye(2, dtype=complex))
 sigmaX = lambda: make_immutable(np.array([[0, 1], [1, 0]], dtype=complex))
 sigmaY = lambda: make_immutable(np.array([[0, -1j], [1j, 0]], dtype=complex))
 sigmaZ = lambda: make_immutable(np.array([[1, 0], [0, -1]], dtype=complex))
+sigmaP = lambda: make_immutable(np.array([[0, 0], [0, 1]], dtype=complex))
+sigmaM = lambda: make_immutable(np.array([[0, 1], [0, 0]], dtype=complex))
 
 # Bell states
 BellPhiP = lambda: make_immutable(
@@ -45,6 +47,38 @@ BellPsiM = lambda: make_immutable(
     np.array([0, 1, -1, 0], dtype=complex) / np.sqrt(2))
 phiplus, phiminus = BellPhiP(), BellPhiM()
 psiplus, psiminus = BellPsiP(), BellPsiM()
+
+# Clifford gates
+H = make_immutable(np.array([[1, 1], [1, -1]], dtype=complex) / np.sqrt(2))
+S = make_immutable(np.array([[1, 0], [0, 1j]], dtype=complex))
+Sdag = make_immutable(np.array([[1, 0], [0, -1j]], dtype=complex))
+
+# T gates
+T = make_immutable(
+    np.array([[1, 0], [0, np.exp(1j * np.pi / 4)]], dtype=complex))
+Tdag = make_immutable(
+    np.array([[1, 0], [0, np.exp(-1j * np.pi / 4)]], dtype=complex))
+
+# two qubit gates
+CX = make_immutable(
+    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
+             dtype=complex))
+CZ = make_immutable(
+    np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]],
+             dtype=complex))
+iSWAP = make_immutable(
+    np.array([[1, 0, 0, 0], [0, 1j, 0, 0], [0, 0, 1j, 0], [0, 0, 0, 1]],
+             dtype=complex))
+SWAP = make_immutable(
+    np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]],
+             dtype=complex))
+SQiSWAP = make_immutable(
+    np.array([[1, 0, 0, 0], [0, 1 / np.sqrt(2), 1j / np.sqrt(2), 0],
+              [0, 1j / np.sqrt(2), 1 / np.sqrt(2), 0], [0, 0, 0, 1]],
+             dtype=complex))
+CR = make_immutable(
+    np.array([[1, 1j, 0, 0], [1j, 1, 0, 0], [0, 0, 1, -1j], [0, 0, -1j, 1]],
+             dtype=complex) / np.sqrt(2))
 
 ##########################################################
 

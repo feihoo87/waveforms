@@ -1,4 +1,4 @@
-from ...qlisp.simulator import seq2mat as _seq2mat
+from ...qlisp.simulator.simple import seq2mat as _seq2mat
 from .mat import normalize
 
 

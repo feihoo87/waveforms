@@ -2,7 +2,8 @@ import random
 
 import numpy as np
 
-from .circuit.simulator import seq2mat
+from waveforms.qlisp.simulator.simple import seq2mat
+
 from .clifford import cliffordOrder
 from .clifford.clifford import (generateTwoQubitCliffordSequence, inv,
                                 mat2index, mul)

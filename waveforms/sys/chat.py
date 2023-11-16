@@ -15,7 +15,8 @@ import tenacity
 import tiktoken
 from IPython import get_ipython
 from IPython.display import Markdown, display
-from openai.error import APIError, RateLimitError, Timeout, ServiceUnavailableError, APIConnectionError
+from openai.error import (APIConnectionError, APIError, RateLimitError,
+                          ServiceUnavailableError, Timeout)
 from scipy import spatial
 
 logger = logging.getLogger(__name__)
@@ -528,11 +529,11 @@ class Conversation():
         self._pool.shutdown()
 
     def _validate_title(self, title: str) -> str:
-        rstr = f"[\\/:*?\"<>|\n\r\t]+"
-        title = re.sub(rstr, " ", title)
+        title.replace('\\/:.*?%&#\"\'<>{}|\n\r\t_', ' ')
         title = title.strip()
-        if len(title) > 100:
-            title = title[:100]
+        title = '_'.join(title.split())
+        if len(title) > 70:
+            title = title[:70]
         while title[-1] in ' .。,，-_':
             title = title[:-1]
         return title
@@ -682,5 +683,6 @@ def list_chat():
     display(Markdown('\n'.join(rows)))
 
 
-ipy.register_magic_function(chat, 'cell', magic_name='chat')
-ipy.events.register('post_run_cell', autosave_completion)
+if ipy is not None:
+    ipy.register_magic_function(chat, 'cell', magic_name='chat')
+    ipy.events.register('post_run_cell', autosave_completion)

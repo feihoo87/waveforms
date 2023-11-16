@@ -3,12 +3,15 @@ from functools import partial, reduce
 
 import numpy as np
 
-from .mat import U, fSim, make_immutable, rfUnitary
+from waveforms.math.matricies import (CR, CX, CZ, SWAP, H, S, Sdag, SQiSWAP, T,
+                                      Tdag, U, fSim, iSWAP, make_immutable,
+                                      rfUnitary, sigmaI, sigmaX, sigmaY,
+                                      sigmaZ)
 
 try:
     import tensornetwork as tn
 except ImportError:
-    pass
+    tn = None
 
 __matrix_of_gates = {}
 
@@ -131,7 +134,7 @@ def seq2mat(seq):
 
 
 def apply_gate(qubit_edges, gate, operating_qubits):
-    if 'tn' not in globals():
+    if tn is None:
         raise ImportError('Please install tensornetwork first.')
 
     op = tn.Node(gate)
@@ -141,7 +144,7 @@ def apply_gate(qubit_edges, gate, operating_qubits):
 
 
 def circuit_network(circ):
-    if 'tn' not in globals():
+    if tn is None:
         raise ImportError('Please install tensornetwork first.')
 
     N = 0
@@ -176,7 +179,7 @@ def circuit_network(circ):
 
 
 def apply_circuit(circ, qubits=None, init_state=None):
-    if 'tn' not in globals():
+    if tn is None:
         raise ImportError('Please install tensornetwork first.')
 
     all_nodes, left_edges, right_edges, N = circuit_network(circ)
@@ -201,7 +204,7 @@ def apply_circuit(circ, qubits=None, init_state=None):
 
 
 def circuit2mat(circ):
-    if 'tn' not in globals():
+    if tn is None:
         raise ImportError('Please install tensornetwork first.')
 
     all_nodes, left_edges, right_edges, N = circuit_network(circ)
@@ -219,48 +222,36 @@ regesterGateMatrix('Rz', lambda p: U(theta=0, phi=0, lambda_=p), 1)
 regesterGateMatrix('fSim', fSim, 2)
 
 # one qubit
-regesterGateMatrix('I', np.array([[1, 0], [0, 1]]))
-regesterGateMatrix('X', np.array([[0, -1j], [-1j, 0]]))
-regesterGateMatrix('Y', np.array([[0, -1], [1, 0]]))
+regesterGateMatrix('I', sigmaI())
+regesterGateMatrix('X', -1j * sigmaX())
+regesterGateMatrix('Y', -1j * sigmaY())
 regesterGateMatrix('X/2', np.array([[1, -1j], [-1j, 1]]) / np.sqrt(2))
 regesterGateMatrix('Y/2', np.array([[1, -1], [1, 1]]) / np.sqrt(2))
 regesterGateMatrix('-X/2', np.array([[1, 1j], [1j, 1]]) / np.sqrt(2))
 regesterGateMatrix('-Y/2', np.array([[1, 1], [-1, 1]]) / np.sqrt(2))
-regesterGateMatrix('Z', np.array([[1, 0], [0, -1]]))
-regesterGateMatrix('S', np.array([[1, 0], [0, 1j]]))
-regesterGateMatrix('-S', np.array([[1, 0], [0, -1j]]))
-regesterGateMatrix('H', np.array([[1, 1], [1, -1]]) / np.sqrt(2))
+regesterGateMatrix('Z', sigmaZ())
+regesterGateMatrix('S', S)
+regesterGateMatrix('-S', Sdag)
+regesterGateMatrix('H', H)
 
 # non-clifford
-regesterGateMatrix('T',
-                   np.array([[1, 0], [0, 1 / np.sqrt(2) + 1j / np.sqrt(2)]]))
-regesterGateMatrix('-T',
-                   np.array([[1, 0], [0, 1 / np.sqrt(2) - 1j / np.sqrt(2)]]))
+regesterGateMatrix('T', T)
+regesterGateMatrix('-T', Tdag)
 regesterGateMatrix('W/2', rfUnitary(np.pi / 2, np.pi / 4))
 regesterGateMatrix('-W/2', rfUnitary(-np.pi / 2, np.pi / 4))
 regesterGateMatrix('V/2', rfUnitary(np.pi / 2, 3 * np.pi / 4))
 regesterGateMatrix('-V/2', rfUnitary(-np.pi / 2, 3 * np.pi / 4))
 
 # two qubits
-regesterGateMatrix(
-    'CZ', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]]))
-regesterGateMatrix(
-    'Cnot', np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]]))
-regesterGateMatrix(
-    'iSWAP',
-    np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]]))
-regesterGateMatrix(
-    'SWAP', np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]]))
-regesterGateMatrix(
-    'CR',
-    np.array([[1, 1j, 0, 0], [1j, 1, 0, 0], [0, 0, 1, -1j], [0, 0, -1j, 1]]) /
-    np.sqrt(2))
+regesterGateMatrix('CZ', CZ)
+regesterGateMatrix('Cnot', CX)
+regesterGateMatrix('CX', CX)
+regesterGateMatrix('iSWAP', iSWAP)
+regesterGateMatrix('SWAP', SWAP)
+regesterGateMatrix('CR', CR)
 
 # non-clifford
-regesterGateMatrix(
-    'SQiSWAP',
-    np.array([[1, 0, 0, 0], [0, 1 / np.sqrt(2), 1j / np.sqrt(2), 0],
-              [0, 1j / np.sqrt(2), 1 / np.sqrt(2), 0], [0, 0, 0, 1]]))
+regesterGateMatrix('SQiSWAP', SQiSWAP)
 
 if __name__ == '__main__':
     # Porter-Thomas distribution

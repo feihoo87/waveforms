@@ -6,6 +6,8 @@ from numpy import pi
 
 from waveforms.cache import cache
 
+from ...matricies import U
+
 
 def cliffordOrder(n: int) -> int:
     """
@@ -109,33 +111,6 @@ def twoQubitCliffordSequence(n):
         n -= 10944
         i, j = np.unravel_index(n, (24, 24))
         return ((i, 'SWAP'), (j, 'SWAP'))
-
-
-def U(theta, phi, lambda_, delta=0):
-    """general unitary
-    
-    Any general unitary could be implemented in 2 pi/2-pulses on hardware
-
-    U(theta, phi, lambda_, delta) = \\
-        np.exp(1j * delta) * \\
-        U(0, 0, theta + phi + lambda_) @ \\
-        U(np.pi / 2, p2, -p2) @ \\
-        U(np.pi / 2, p1, -p1))
-
-    or  = \\
-        np.exp(1j * delta) * \\
-        U(0, 0, theta + phi + lambda_) @ \\
-        rfUnitary(np.pi / 2, p2 + pi / 2) @ \\
-        rfUnitary(np.pi / 2, p1 + pi / 2)
-    
-    where p1 = -lambda_ - pi / 2
-          p2 = pi / 2 - theta - lambda_
-    """
-    c, s = np.cos(theta / 2), np.sin(theta / 2)
-    a, b = (phi + lambda_) / 2, (phi - lambda_) / 2
-    d = np.exp(1j * delta)
-    return d * np.array([[c * np.exp(-1j * a), -s * np.exp(-1j * b)],
-                         [s * np.exp(1j * b), c * np.exp(1j * a)]])
 
 
 @cache()
