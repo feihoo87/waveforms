@@ -8,7 +8,9 @@ import numpy as np
 from waveforms.qlisp.simulator.simple import seq2mat
 
 from .._SU_n_ import SU
-from ..permutation_group import find_permutation, PermutationGroup
+from ..permutation_group import Cycles, PermutationGroup, find_permutation
+from .funtions import (one_qubit_clifford_mul_table, one_qubit_clifford_seq,
+                       one_qubit_clifford_seq_inv)
 
 _base = [SU(2)[i] for i in range(4)] + [-SU(2)[i] for i in range(4)]
 
@@ -47,7 +49,7 @@ def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
     return circ
 
 
-def expand_expr(perm):
+def expand_expr(perm: Cycles):
     perm.simplify()
     expr = perm._expr
     return itertools.chain.from_iterable([[c] * n for c, n in expr])
@@ -89,6 +91,13 @@ class CliffordGroup(PermutationGroup):
                                               two_qubit_gates, gate_list)
         super().__init__(list(generators.values()))
         self.reversed_map = {v: k for k, v in generators.items()}
+        self.gate_map = generators
+        self.gate_map_inv = {v: k for k, v in generators.items()}
+        for i in range(self.N):
+            [
+                self.circuit_to_permutation([(g, i)])
+                for g in one_qubit_clifford_seq
+            ]
 
     def matrix_to_circuit(self, mat):
         perm = self.matrix_to_permutation(mat)
@@ -101,3 +110,51 @@ class CliffordGroup(PermutationGroup):
         perm = find_permutation_for_Unitary(mat, self.N)
         perm = self.express(perm)
         return perm
+
+    def permutation_to_circuit(self, perm):
+        perm = self.express(perm)
+        return [self.reversed_map[c] for c in expand_expr(perm)]
+
+    def circuit_to_permutation(self, circuit):
+        perm = Cycles()
+        for gate in circuit:
+            if gate not in self.gate_map:
+                _, *qubits = gate
+                circ = [('I', i) for i in range(self.N) if i not in qubits]
+                circ.append(gate)
+                mat = seq2mat(circ)
+                self.gate_map[gate] = self.matrix_to_permutation(mat)
+                self.gate_map_inv[self.gate_map[gate]] = gate
+            perm = perm * self.gate_map[gate]
+        return self.express(perm)
+
+    def permutation_to_matrix(self, perm):
+        return seq2mat(self.permutation_to_circuit(perm))
+
+    def circuit_inv(self, circuit):
+        perm = self.circuit_to_permutation(circuit).inv()
+        return self.permutation_to_circuit(perm)
+
+    def circuit_simplify(self, circuit):
+        ret = []
+        stack = {}
+        for gate, *qubits in circuit:
+            if len(qubits) > 1:
+                for qubit in qubits:
+                    ret.append((stack.pop(qubit,
+                                          one_qubit_clifford_seq[0]), qubit))
+                ret.append((gate, *qubits))
+            else:
+                qubit, = qubits
+                i = one_qubit_clifford_seq_inv[stack.get(
+                    qubit, one_qubit_clifford_seq[0])]
+                j = one_qubit_clifford_seq_inv[gate]
+                stack[qubit] = one_qubit_clifford_seq[
+                    one_qubit_clifford_mul_table[i, j]]
+        for qubit, gate in stack.items():
+            ret.append((gate, qubit))
+        return ret
+
+    def circuit_fullsimplify(self, circuit):
+        perm = self.circuit_to_permutation(circuit)
+        return self.circuit_simplify(self.permutation_to_circuit(perm))

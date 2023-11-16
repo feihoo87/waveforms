@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import bisect
-import copy
 import functools
 import logging
 import math
 import operator
 import random
-import weakref
 from itertools import chain, combinations, product
-from typing import Callable, TypeVar
+from typing import Callable, Literal, TypeVar
 
 import numpy as np
 
@@ -27,7 +25,7 @@ class Cycles():
 
     def __init__(self, *cycles):
         self._mapping = {}
-        self._expr: list[Cycles] = []
+        self._expr: tuple[Cycles | Literal['-'], Cycles] | list[Cycles] = []
         self._order = None
         if len(cycles) == 0:
             self._cycles = ()
@@ -76,7 +74,9 @@ class Cycles():
             for a, b in zip(support, other.replace(self.replace(support)))
             if a != b
         }
-        return Cycles._from_sorted_mapping(mapping)
+        c = Cycles._from_sorted_mapping(mapping)
+        c._expr = (self, other)
+        return c
 
     def __rmul__(self, other: Cycles) -> Cycles:
         return other.__mul__(self)
@@ -128,6 +128,7 @@ class Cycles():
         c._support = self._support
         c._mapping = {v: k for k, v in self._mapping.items()}
         c._order = self._order
+        c._expr = ('-', self)
         return c
 
     @property
@@ -199,54 +200,24 @@ class Cycles():
         return self * x * self.inv() * x.inv()
 
     def simplify(self) -> Cycles:
-        return self
+        if isinstance(self._expr, list):
+            if self.is_identity():
+                pass
+            elif not self._expr:
+                self._expr = [[self, 1]]
+            return self
 
-
-class _ExCycles(Cycles):
-
-    def __mul__(self, other: Cycles) -> _ExCycles:
-        c = super().__mul__(other)
-        ret = _ExCycles()
-        if c == Cycles():
-            return ret
-        ret._cycles = c._cycles
-        ret._mapping = c._mapping
-        ret._support = c._support
-        ret._order = c._order
-        ret._expr = (self, other)
-        return ret
-
-    def __rmul__(self, other: Cycles) -> _ExCycles:
-        c = super().__rmul__(other)
-        ret = _ExCycles()
-        if c == Cycles():
-            return ret
-        ret._cycles = c._cycles
-        ret._mapping = c._mapping
-        ret._support = c._support
-        ret._order = c._order
-        ret._expr = (other, self)
-        return ret
-
-    def simplify(self) -> Cycles:
-        if isinstance(self._expr, tuple):
-            self._simplify()
-        return self
-
-    def _simplify(self):
         if isinstance(self._expr[0], str):
             self._simplify_inv()
         else:
             self._simplify_mul()
 
+        return self
+
     def _simplify_inv(self):
         self._expr[1].simplify()
-        if isinstance(self._expr[1], _ExCycles):
-            expr = self._expr[1]._expr
-        else:
-            expr = [[self._expr[1], 1]]
         ret = []
-        for g, n in expr:
+        for g, n in self._expr[1]._expr:
             if ret and ret[-1][0] == g:
                 ret[-1][1] = (ret[-1][1] + n) % g.order
                 if ret[-1][1] == 0:
@@ -258,14 +229,8 @@ class _ExCycles(Cycles):
     def _simplify_mul(self):
         self._expr[0].simplify()
         self._expr[1].simplify()
-        if isinstance(self._expr[0], _ExCycles):
-            ret = self._expr[0]._expr.copy()
-        else:
-            ret = [[self._expr[0], 1]]
-        if isinstance(self._expr[1], _ExCycles):
-            expr = self._expr[1]._expr
-        else:
-            expr = [[self._expr[1], 1]]
+        ret = [[g, n] for g, n in self._expr[0]._expr]
+        expr = self._expr[1]._expr
 
         for g, n in expr:
             if ret and ret[-1][0] == g:
@@ -275,16 +240,6 @@ class _ExCycles(Cycles):
             else:
                 ret.append([g, n])
         self._expr = ret
-
-    def inv(self) -> _ExCycles:
-        c = super().inv()
-        ret = _ExCycles()
-        ret._cycles = c._cycles
-        ret._mapping = c._mapping
-        ret._support = c._support
-        ret._order = c._order
-        ret._expr = ('-', self)
-        return ret
 
 
 def permute(expr: list | tuple | str | bytes | np.ndarray, perm: Cycles):
@@ -385,6 +340,7 @@ class PermutationGroup():
         self._strong_gens = []
         self._basic_orbits = []
         self._transversals: list[dict[int, Cycles]] = []
+        self._shape = ()
 
     def __repr__(self) -> str:
         return f"PermutationGroup({self.generators})"
@@ -471,13 +427,13 @@ class PermutationGroup():
         return self._support
 
     @property
-    def elements(self):
+    def elements(self) -> list[Cycles]:
         if self._elements == []:
             for g in self.generate():
                 bisect.insort(self._elements, g)
         return self._elements
 
-    def random(self, N=1):
+    def random(self, N=1) -> Cycles | list[Cycles]:
         """Return a random element of the group.
 
         If N > 1, return a list of N random elements.
@@ -588,6 +544,8 @@ class PermutationGroup():
 
         self._transversals = transversals
         self._basic_orbits = [sorted(x) for x in basic_orbits]
+        self._shape = tuple(
+            [len(coset.values()) for coset in reversed(self._transversals)])
 
     def order(self):
         if self._order is None:
@@ -620,7 +578,12 @@ class PermutationGroup():
         return self.order()
 
     def __getitem__(self, i):
-        return self.elements[i]
+        index = np.unravel_index(i, self._shape)
+        gens = [
+            list(coset.values())[i]
+            for i, coset in zip(index, reversed(self._transversals))
+        ]
+        return functools.reduce(operator.mul, gens)
 
     def __contains__(self, perm: Cycles):
         if perm in self.generators or perm.is_identity():
@@ -1000,7 +963,7 @@ def _strip(h: Cycles, base, orbits, transversals, j):
 def _orbit_transversal(
     generators: list[Cycles],
     alpha: int,
-    Identity: Cycles = _ExCycles(),
+    Identity: Cycles = Cycles(),
 ) -> tuple[list[tuple[int, Cycles]], dict[int, list[int]]]:
     r"""Computes a transversal for the orbit of ``alpha`` as a set.
 
