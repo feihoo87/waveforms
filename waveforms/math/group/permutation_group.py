@@ -6,7 +6,7 @@ import logging
 import math
 import operator
 import random
-from itertools import chain, combinations, product
+from itertools import chain, combinations, product, repeat
 from typing import Callable, Literal, TypeVar
 
 import numpy as np
@@ -119,6 +119,9 @@ class Cycles():
         else:
             return self.inv()**(-n)
 
+    def __invert__(self):
+        return self.inv()
+
     def inv(self):
         c = Cycles()
         if len(self._cycles) == 0:
@@ -128,7 +131,7 @@ class Cycles():
         c._support = self._support
         c._mapping = {v: k for k, v in self._mapping.items()}
         c._order = self._order
-        c._expr = ('-', self)
+        c._expr = (self, )
         return c
 
     @property
@@ -203,43 +206,39 @@ class Cycles():
         if isinstance(self._expr, list):
             if self.is_identity():
                 pass
-            elif not self._expr:
+            if not self._expr:
                 self._expr = [[self, 1]]
             return self
 
-        if isinstance(self._expr[0], str):
-            self._simplify_inv()
+        if len(self._expr) == 1:
+            # inv
+            self._expr[0].simplify()
+            ret = []
+            for g, n in reversed(self._expr[0]._expr):
+                if n and not g.is_identity():
+                    ret.append([g, g.order - n])
+            self._expr = ret
         else:
-            self._simplify_mul()
+            # mul
+            self._expr[0].simplify()
+            self._expr[1].simplify()
+            ret = [[g, n] for g, n in self._expr[0]._expr
+                   if n and not g.is_identity()]
+            for g, n in self._expr[1]._expr:
+                if ret and ret[-1][0] == g:
+                    ret[-1][1] = (ret[-1][1] + n) % g.order
+                    if ret[-1][1] == 0:
+                        ret.pop()
+                elif n and not g.is_identity():
+                    ret.append([g, n])
+            self._expr = ret
 
         return self
 
-    def _simplify_inv(self):
-        self._expr[1].simplify()
-        ret = []
-        for g, n in self._expr[1]._expr:
-            if ret and ret[-1][0] == g:
-                ret[-1][1] = (ret[-1][1] + n) % g.order
-                if ret[-1][1] == 0:
-                    ret.pop()
-            else:
-                ret.append([g, n])
-        self._expr = ret
-
-    def _simplify_mul(self):
-        self._expr[0].simplify()
-        self._expr[1].simplify()
-        ret = [[g, n] for g, n in self._expr[0]._expr]
-        expr = self._expr[1]._expr
-
-        for g, n in expr:
-            if ret and ret[-1][0] == g:
-                ret[-1][1] = (ret[-1][1] + n) % g.order
-                if ret[-1][1] == 0:
-                    ret.pop()
-            else:
-                ret.append([g, n])
-        self._expr = ret
+    def expand(self):
+        self.simplify()
+        for c, n in self._expr:
+            yield from repeat(c, n)
 
 
 def permute(expr: list | tuple | str | bytes | np.ndarray, perm: Cycles):

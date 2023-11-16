@@ -49,12 +49,6 @@ def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
     return circ
 
 
-def expand_expr(perm: Cycles):
-    perm.simplify()
-    expr = perm._expr
-    return itertools.chain.from_iterable([[c] * n for c, n in expr])
-
-
 def make_clifford_generators(N,
                              one_qubit_gates=('H', 'S'),
                              two_qubit_gates=('CZ', ),
@@ -94,14 +88,12 @@ class CliffordGroup(PermutationGroup):
         self.gate_map = generators
         self.gate_map_inv = {v: k for k, v in generators.items()}
         for i in range(self.N):
-            [
+            for g in one_qubit_clifford_seq:
                 self.circuit_to_permutation([(g, i)])
-                for g in one_qubit_clifford_seq
-            ]
 
     def matrix_to_circuit(self, mat):
         perm = self.matrix_to_permutation(mat)
-        return [self.reversed_map[c] for c in expand_expr(perm)]
+        return [self.reversed_map[c] for c in perm.expand()]
 
     def matrix_to_permutation(self, mat):
         assert mat.shape == (
@@ -113,7 +105,7 @@ class CliffordGroup(PermutationGroup):
 
     def permutation_to_circuit(self, perm):
         perm = self.express(perm)
-        return [self.reversed_map[c] for c in expand_expr(perm)]
+        return [self.reversed_map[c] for c in perm.expand()]
 
     def circuit_to_permutation(self, circuit):
         perm = Cycles()

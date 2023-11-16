@@ -195,3 +195,32 @@ def test_express():
     U = U * np.exp(-1j * np.angle(U[0, 0]))
 
     assert np.allclose(U, np.eye(U.shape[0]))
+
+
+def test_simplify():
+    group = SymmetricGroup(5)
+
+    lst1 = []
+    for i in range(100):
+        lst1.append(group.random())
+
+    perm = functools.reduce(operator.mul, lst1)
+    perm2 = perm.inv()
+
+    assert (perm * perm2).is_identity()
+
+    perm.simplify()
+
+    lst2 = []
+    for g, n in perm._expr:
+        for _ in range(n):
+            lst2.append(g)
+
+    assert functools.reduce(operator.mul, lst2) == perm
+
+    perm2 = group.express(perm2)
+    perm2.simplify()
+    for g, n in perm2._expr:
+        for _ in range(n):
+            lst2.append(g)
+    assert functools.reduce(operator.mul, lst2) == Cycles()
