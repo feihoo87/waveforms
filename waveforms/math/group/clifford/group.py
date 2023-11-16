@@ -5,12 +5,13 @@ from itertools import product
 
 import numpy as np
 
+from waveforms.cache import cache
 from waveforms.qlisp.simulator.simple import seq2mat
 
 from .._SU_n_ import SU
 from ..permutation_group import Cycles, PermutationGroup, find_permutation
-from .funtions import (one_qubit_clifford_mul_table, one_qubit_clifford_seq,
-                       one_qubit_clifford_seq_inv)
+from .funtions import (cliffordOrder, one_qubit_clifford_mul_table,
+                       one_qubit_clifford_seq, one_qubit_clifford_seq_inv)
 
 _base = [SU(2)[i] for i in range(4)] + [-SU(2)[i] for i in range(4)]
 
@@ -49,6 +50,7 @@ def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
     return circ
 
 
+@cache()
 def make_clifford_generators(N,
                              one_qubit_gates=('H', 'S'),
                              two_qubit_gates=('CZ', ),
@@ -90,6 +92,9 @@ class CliffordGroup(PermutationGroup):
         for i in range(self.N):
             for g in one_qubit_clifford_seq:
                 self.circuit_to_permutation([(g, i)])
+
+    def __len__(self):
+        return cliffordOrder(self.N)
 
     def matrix_to_circuit(self, mat):
         perm = self.matrix_to_permutation(mat)

@@ -10,6 +10,7 @@ from waveforms.math.matricies import (CR, CX, CZ, SWAP, H, S, Sdag, SQiSWAP, T,
                                       sigmaZ)
 
 _matrix_of_gates = {}
+_clifford_groups = {}
 
 
 def regesterGateMatrix(gate, mat, N=None, docs=''):
@@ -55,15 +56,20 @@ def gate2mat(gate):
     elif clifford_gate(gate):
         N, i = clifford_gate(gate)
         if N == 1:
-            from ...math.group.clifford.group import \
+            from waveforms.math.group.clifford.funtions import \
                 one_qubit_clifford_matricies
-            return one_qubit_clifford_matricies[i]
+            return one_qubit_clifford_matricies[i], N
         elif N == 2:
-            from ...math.group.clifford.group import \
+            from waveforms.math.group.clifford.funtions import \
                 two_qubit_clifford_matricies
-            return two_qubit_clifford_matricies[i]
+            return two_qubit_clifford_matricies[i], N
         else:
-            raise ValueError(f'Unexcept gate {gate}')
+            from waveforms.math.group import CliffordGroup
+
+            if N not in _clifford_groups:
+                _clifford_groups[N] = CliffordGroup(N)
+            perm = _clifford_groups[N][i]
+            return _clifford_groups[N].permutation_to_matrix(perm), N
     elif gate_name(gate) == 'C':
         U, N = gate2mat(gate[1])
         ret = np.eye(2 * U.shape[0], dtype=complex)
