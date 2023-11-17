@@ -206,7 +206,7 @@ class Cycles():
         if isinstance(self._expr, list):
             if self.is_identity():
                 pass
-            if not self._expr:
+            elif not self._expr:
                 self._expr = [[self, 1]]
             return self
 
