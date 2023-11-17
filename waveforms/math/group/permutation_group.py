@@ -264,7 +264,9 @@ def permute(expr: list | tuple | str | bytes | np.ndarray, perm: Cycles):
 
 def _ne(a, b):
     if isinstance(a, np.ndarray):
-        return not np.allclose(a, b)
+        if isinstance(b, np.ndarray):
+            return not np.allclose(a, b)
+        return True
     else:
         return a != b
 
