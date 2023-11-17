@@ -1,9 +1,10 @@
 import math
+
 import numpy as np
 
 
 def _SUn_generator(n, i):
-    assert n > 1 and 0 <= i < 2**n
+    assert n > 1 and 0 <= i < n**2
 
     if i == 0:
         return np.eye(n, dtype=np.int8), 1
@@ -36,8 +37,8 @@ class _SUGroup():
         self.n = n
 
     def __getitem__(self, i: int):
-        if not 0 <= i < 2**self.n:
-            raise IndexError(f"i must be in [0, {2**self.n-1}]")
+        if not 0 <= i < self.n**2:
+            raise IndexError(f"i must be in [0, {self.n**2-1}]")
         mat, A = _SUn_generator(self.n, i)
         return A * mat
 
