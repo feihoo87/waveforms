@@ -55,6 +55,40 @@ one_qubit_clifford_seq = [
     ("u3", 6 / 6 * pi,  3 / 6 * pi,  0 / 6 * pi)
 ] #yapf: disable
 
+one_qubit_clifford_seq2 = [
+    # Paulis
+    [],                              # I
+    ['H', 'S', 'S', 'H'],            # X
+    ['H', 'S', 'S', 'H', 'S', 'S'],  # Y
+    ['S', 'S'],                      # Z
+
+    # 2 pi / 3 rotations
+    ['S', 'S', 'H', 'S', 'S', 'S'],
+    ['H', 'S', 'S', 'S'],
+    ['S', 'S', 'H', 'S'],
+    ['H', 'S'],
+    ['S', 'S', 'S', 'H'],
+    ['S', 'H'],
+    ['S', 'S', 'S', 'H', 'S', 'S'],
+    ['S', 'H', 'S', 'S'],
+
+    # pi / 2 rotations
+    ['S', 'S', 'S', 'H', 'S', 'S', 'S'], #  X/2
+    ['S', 'H', 'S'],                     # -X/2
+    ['S', 'S', 'H'],                     #  Y/2
+    ['H', 'S', 'S'],                     # -Y/2
+    ['S'],                               #  Z/2
+    ['S', 'S', 'S'],                     # -Z/2
+
+    # Hadamard-like
+    ['S', 'S', 'H', 'S', 'S'],
+    ['H'],
+    ['S', 'S', 'S', 'H', 'S'],
+    ['S', 'H', 'S', 'S', 'S'],
+    ['H', 'S', 'S', 'H', 'S'],
+    ['H', 'S', 'S', 'H', 'S', 'S', 'S']
+] #yapf: disable
+
 one_qubit_clifford_seq_inv = {
     g: i
     for i, g in enumerate(one_qubit_clifford_seq)
