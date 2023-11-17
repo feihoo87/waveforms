@@ -1,19 +1,19 @@
 import itertools
 import random
 from functools import reduce
-from itertools import product
+from itertools import islice, product
 
 import numpy as np
 
 from waveforms.cache import cache
 from waveforms.qlisp.simulator.simple import seq2mat
 
+from ...paulis import encode_paulis
 from .._SU_n_ import SU
 from ..permutation_group import Cycles, PermutationGroup, find_permutation
+from .chp import CZ, H, P
 from .funtions import (cliffordOrder, one_qubit_clifford_mul_table,
                        one_qubit_clifford_seq, one_qubit_clifford_seq_inv)
-
-_base = [SU(2)[i] for i in range(4)] + [-SU(2)[i] for i in range(4)]
 
 
 def make_circuit(gate, N):
@@ -28,12 +28,12 @@ def find_permutation_for_Unitary(U, N):
     init = []
     final = []
 
-    for index in product(range(8), repeat=N):
-        if all(i == 0 or i == 4 for i in index):
-            continue
-        op = reduce(np.kron, [_base[i] for i in index])
+    for s in islice(product([SU(2)[i] for i in range(4)], repeat=N), 1, None):
+        op = reduce(np.kron, s)
         init.append(op)
         final.append(U @ op @ U.T.conj())
+        init.append(-op)
+        final.append(U @ (-op) @ U.T.conj())
     return find_permutation(init, final)
 
 
@@ -50,41 +50,39 @@ def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
     return circ
 
 
-@cache()
-def make_clifford_generators(N,
-                             one_qubit_gates=('H', 'S'),
-                             two_qubit_gates=('CZ', ),
-                             gate_list=None):
-    if gate_list is None:
-        gate_list = []
+def make_clifford_generators(N, graph=None):
+    if graph is None:
+        graph = []
+        for i in range(N - 1):
+            graph.append((i, i + 1))
 
-        for q in range(N):
-            for gate in one_qubit_gates:
-                gate_list.append((gate, q))
-
-        for q in range(N - 1):
-            for gate in two_qubit_gates:
-                gate_list.append((gate, q, q + 1))
+    stablizers = []
+    for s in islice(product('IXYZ', repeat=N), 1, None):
+        n = encode_paulis(''.join(s))
+        stablizers.append(n)
+        stablizers.append(n | 2)
 
     generators = {}
 
-    for gate in gate_list:
-        U = seq2mat(make_circuit(gate, N))
-        generators[gate] = find_permutation_for_Unitary(U, N)
+    for i in range(N):
+        generators[('H', i)] = find_permutation(stablizers,
+                                                [H(s, i) for s in stablizers])
+        generators[('S', i)] = find_permutation(stablizers,
+                                                [P(s, i) for s in stablizers])
+
+    for i, j in graph:
+        generators[('CZ', i,
+                    j)] = find_permutation(stablizers,
+                                           [CZ(s, i, j) for s in stablizers])
 
     return generators
 
 
 class CliffordGroup(PermutationGroup):
 
-    def __init__(self,
-                 N,
-                 one_qubit_gates=('H', 'S'),
-                 two_qubit_gates=('CZ', ),
-                 gate_list=None):
+    def __init__(self, N, graph=None):
         self.N = N
-        generators = make_clifford_generators(N, one_qubit_gates,
-                                              two_qubit_gates, gate_list)
+        generators = make_clifford_generators(N, graph)
         super().__init__(list(generators.values()))
         self.reversed_map = {v: k for k, v in generators.items()}
         self.gate_map = generators
