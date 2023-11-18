@@ -134,9 +134,56 @@ one_qubit_clifford_mul_table = np.array([
 ], dtype=np.int8) #yapf: disable
 
 
-@lru_cache()
-def _one_qubit_clifford_index(gate):
-    pass
+_one_qubit_clifford_index = {
+    (0, 0, 0): 0,
+    (0, 0, 1): 16,
+    (0, 0, 2): 3,
+    (0, 0, 3): 17,
+    (0, 1, 0): 16,
+    (0, 1, 1): 3,
+    (0, 1, 2): 17,
+    (0, 1, 3): 0,
+    (0, 2, 0): 3,
+    (0, 2, 1): 17,
+    (0, 2, 2): 0,
+    (0, 2, 3): 16,
+    (0, 3, 0): 17,
+    (0, 3, 1): 0,
+    (0, 3, 2): 16,
+    (0, 3, 3): 3,
+    (1, 0, 0): 14,
+    (1, 0, 1): 8,
+    (1, 0, 2): 19,
+    (1, 0, 3): 9,
+    (1, 1, 0): 6,
+    (1, 1, 1): 20,
+    (1, 1, 2): 7,
+    (1, 1, 3): 13,
+    (1, 2, 0): 18,
+    (1, 2, 1): 10,
+    (1, 2, 2): 15,
+    (1, 2, 3): 11,
+    (1, 3, 0): 4,
+    (1, 3, 1): 12,
+    (1, 3, 2): 5,
+    (1, 3, 3): 21,
+    (2, 0, 0): 2,
+    (2, 0, 1): 22,
+    (2, 0, 2): 1,
+    (2, 0, 3): 23,
+    (2, 1, 0): 23,
+    (2, 1, 1): 2,
+    (2, 1, 2): 22,
+    (2, 1, 3): 1,
+    (2, 2, 0): 1,
+    (2, 2, 1): 23,
+    (2, 2, 2): 2,
+    (2, 2, 3): 22,
+    (2, 3, 0): 22,
+    (2, 3, 1): 1,
+    (2, 3, 2): 23,
+    (2, 3, 3): 2,
+}
 
 
 def one_qubit_clifford_index(gate):
@@ -151,20 +198,29 @@ def one_qubit_clifford_index(gate):
                 return one_qubit_clifford_index(
                     ('U', theta, phi - pi / 2, pi / 2 - phi))
             case ('u3', theta, phi, lam) | ('U', theta, phi, lam):
-                theta = np.mod(theta / (2 * pi))
-                if theta == np.pi / 2:
+                theta_i = round(4 * np.mod(theta / (2 * pi), 1), 12)
+                if np.mod(theta_i, 1) > 1e-9:
+                    return -1
+                theta_i = round(theta_i)
+                if theta_i == 1:
                     pass
-                elif theta == 0:
+                elif theta_i == 0:
                     phi, lam = phi + lam, 0
-                elif theta == np.pi:
+                elif theta_i == 2:
                     phi, lam = phi - lam, 0
-                elif theta == 3 * np.pi / 2:
-                    theta = np.pi / 2
+                elif theta_i == 3:
+                    theta_i = 1
                     phi, lam = phi + pi, lam + pi
                 else:
                     return -1
-                phi = np.mod(phi, 2 * pi)
-                lam = np.mod(lam, 2 * pi)
+                phi_i = round(4 * np.mod(phi / (2 * pi), 1), 12)
+                lam_i = round(4 * np.mod(lam / (2 * pi), 1), 12)
+                if np.mod(phi_i, 1) < 1e-9 and np.mod(lam_i, 1) < 1e-9:
+                    return _one_qubit_clifford_index[theta_i,
+                                                     round(phi_i),
+                                                     round(lam_i)]
+                else:
+                    return -1
             case ('u2', phi, lam):
                 return one_qubit_clifford_index(('U', pi / 2, phi, lam))
             case ('u1', lam) | ('Rz', lam) | ('P', lam):
