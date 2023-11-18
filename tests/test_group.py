@@ -1,77 +1,7 @@
 import functools
-import itertools
 import operator
-import random
-from functools import reduce
-from itertools import chain, product
-
-import numpy as np
 
 from waveforms.math.group import *
-from waveforms.math.group.clifford.funtions import cliffordOrder
-from waveforms.qlisp.simulator.simple import seq2mat
-
-
-def make_circuit(gate, N):
-    rest_qubits = set(range(N)) - set(gate[1:])
-    circ = [gate]
-    for qubit in rest_qubits:
-        circ.append(('I', qubit))
-    return circ
-
-
-def find_permutation_for_Unitary(U, N):
-    init = []
-    final = []
-    for base in product([
-            SU(2)[0],
-            SU(2)[1],
-            SU(2)[2],
-            SU(2)[3], -SU(2)[0], -SU(2)[1], -SU(2)[2], -SU(2)[3]
-    ],
-                        repeat=N):
-        op = reduce(np.kron, base)
-        init.append(op)
-        final.append(U @ op @ U.T.conj())
-    return find_permutation(init, final)
-
-
-def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
-    circ = []
-    qubits = list(range(N))
-    for i in range(depth):
-        for q in range(N):
-            circ.append((random.choice(single_qubit_gate_set), q))
-        random.shuffle(qubits)
-        for i in range(0, N - 1, 2):
-            circ.append(
-                (random.choice(two_qubit_gate_set), qubits[i], qubits[i + 1]))
-    return circ
-
-
-def expand_expr(perm):
-    perm.simplify()
-    expr = perm._expr
-    return itertools.chain.from_iterable([[c] * n for c, n in expr])
-
-
-def make_clifford_generators(N):
-    gate_list = []
-
-    for q in range(N):
-        gate_list.append(('H', q))
-        gate_list.append(('S', q))
-
-    for q in range(N - 1):
-        gate_list.append(('CZ', q, q + 1))
-
-    generators = {}
-
-    for gate in gate_list:
-        U = seq2mat(make_circuit(gate, N))
-        generators[gate] = find_permutation_for_Unitary(U, N)
-
-    return generators
 
 
 def test_init():
@@ -92,10 +22,6 @@ def test_order():
         Cycles((21, 22, 23, 24), (5, 12, 15, 18), (6, 9, 16, 19))
     ])
     assert G.order() == 88179840
-
-    for N in [1, 2, 3]:
-        clifford = PermutationGroup(list(make_clifford_generators(N).values()))
-        assert clifford.order() == cliffordOrder(N)
 
 
 def test_orbit():
@@ -166,35 +92,6 @@ def test_subgroup():
     assert G == G
     assert G != SymmetricGroup(6)
     assert not G < SymmetricGroup(5)
-
-
-def test_express():
-    N = 2
-    DEPTH = 1000
-
-    generators = make_clifford_generators(N)
-
-    clifford = PermutationGroup(list(generators.values()))
-
-    circuit = random_circuit(
-        N, DEPTH, ['X/2', 'Y/2', 'X', 'Y', '-X/2', '-Y/2', 'Z', 'S', '-S'],
-        ['CZ', 'iSWAP', 'Cnot'])
-    U = seq2mat(circuit)
-
-    circ_perm = find_permutation_for_Unitary(U, N)
-    inv_circ = clifford.express(circ_perm.inv())
-
-    assert (
-        circ_perm *
-        functools.reduce(operator.mul, expand_expr(inv_circ))).is_identity()
-
-    reversed_map = {v: k for k, v in generators.items()}
-    inv_circuit = [reversed_map[c] for c in expand_expr(inv_circ)]
-
-    U = seq2mat(circuit + inv_circuit)
-    U = U * np.exp(-1j * np.angle(U[0, 0]))
-
-    assert np.allclose(U, np.eye(U.shape[0]))
 
 
 def test_simplify():

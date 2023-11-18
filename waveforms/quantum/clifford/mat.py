@@ -2,20 +2,7 @@ from itertools import count, product
 
 import numpy as np
 
-
-def normalize(mat):
-    """
-    将第一个非零的矩阵元相位转成 0，以保证仅相差一个全局相位的矩阵具有相同的表示。
-    优先处理对角元，再依次处理下三角阵。
-    """
-    assert mat.shape[0] == mat.shape[1]
-    for i in range(mat.shape[0]):
-        for j in range(mat.shape[0] - i):
-            if np.abs(mat[j + i, j]) > 1e-3:
-                mat = mat * np.abs(mat[j + i, j]) / mat[j + i, j]
-                return mat
-    return 0 * mat
-
+from waveforms.math.matricies import synchronize_global_phase
 
 # 相位规范化后，2 比特 Clifford 群元的矩阵元仅可能取以下值
 elms = [
@@ -39,7 +26,7 @@ def mat2num(mat, norm=True):
 
     # 仅相隔一个全局相位的操作等价，故令第一个非零的矩阵元相位为 0，保证操作与矩阵一一对应
     if norm:
-        mat = normalize(mat)
+        mat = synchronize_global_phase(mat)
 
     absData, phaseData = 0, 0
     for index, (i, j) in zip(count(start=0, step=2), product(range(4),

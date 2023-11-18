@@ -1,5 +1,6 @@
+from waveforms.math.matricies import synchronize_global_phase
+
 from ...qlisp.simulator.simple import seq2mat as _seq2mat
-from .mat import normalize
 
 
 def twoQubitGate(gates):
@@ -46,4 +47,4 @@ def seq2mat(seq):
     else:
         qubits = (0, 1)
 
-    return normalize(_seq2mat(seq2qlisp(seq, qubits)))
+    return synchronize_global_phase(_seq2mat(seq2qlisp(seq, qubits)))

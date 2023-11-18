@@ -1,5 +1,5 @@
 import operator
-from functools import reduce
+from functools import lru_cache, reduce
 
 import numpy as np
 from numpy import pi
@@ -23,36 +23,36 @@ def cliffordOrder(n: int) -> int:
 
 one_qubit_clifford_seq = [
     # Paulis
-    ("u3", 0 / 6 * pi,  0 / 6 * pi,  0 / 6 * pi), # I
-    ("u3", 6 / 6 * pi, -6 / 6 * pi,  0 / 6 * pi), # X
-    ("u3", 6 / 6 * pi,  0 / 6 * pi,  0 / 6 * pi), # Y
-    ("u3", 0 / 6 * pi,  3 / 6 * pi,  3 / 6 * pi), # Z
+    ("u3", 0   ,  0   ,  0   ), # I
+    ("u3", pi  , -pi  ,  0   ), # X
+    ("u3", pi  ,  0   ,  0   ), # Y
+    ("u3", 0   ,  pi/2,  pi/2), # Z
 
     # 2 pi / 3 rotations
-    ("u3", 3 / 6 * pi, -3 / 6 * pi,  0 / 6 * pi),
-    ("u3", 3 / 6 * pi, -3 / 6 * pi,  6 / 6 * pi),
-    ("u3", 3 / 6 * pi,  3 / 6 * pi,  0 / 6 * pi),
-    ("u3", 3 / 6 * pi,  3 / 6 * pi, -6 / 6 * pi),
-    ("u3", 3 / 6 * pi,  0 / 6 * pi,  3 / 6 * pi),
-    ("u3", 3 / 6 * pi,  0 / 6 * pi, -3 / 6 * pi),
-    ("u3", 3 / 6 * pi, -6 / 6 * pi,  3 / 6 * pi),
-    ("u3", 3 / 6 * pi,  6 / 6 * pi, -3 / 6 * pi),
+    ("u3", pi/2, -pi/2,  0   ),
+    ("u3", pi/2, -pi/2,  pi  ),
+    ("u3", pi/2,  pi/2,  0   ),
+    ("u3", pi/2,  pi/2, -pi  ),
+    ("u3", pi/2,  0   ,  pi/2),
+    ("u3", pi/2,  0   , -pi/2),
+    ("u3", pi/2, -pi  ,  pi/2),
+    ("u3", pi/2,  pi  , -pi/2),
 
     # pi / 2 rotations
-    ("u3", 3 / 6 * pi, -3 / 6 * pi,  3 / 6 * pi), #  X/2
-    ("u3", 3 / 6 * pi,  3 / 6 * pi, -3 / 6 * pi), # -X/2
-    ("u3", 3 / 6 * pi,  0 / 6 * pi,  0 / 6 * pi), #  Y/2
-    ("u3", 3 / 6 * pi,  6 / 6 * pi, -6 / 6 * pi), # -Y/2
-    ("u3", 0 / 6 * pi,  0 / 6 * pi,  3 / 6 * pi), #  Z/2
-    ("u3", 0 / 6 * pi,  0 / 6 * pi, -3 / 6 * pi), # -Z/2
+    ("u3", pi/2, -pi/2,  pi/2), #  X/2
+    ("u3", pi/2,  pi/2, -pi/2), # -X/2
+    ("u3", pi/2,  0   ,  0   ), #  Y/2
+    ("u3", pi/2,  pi  , -pi  ), # -Y/2
+    ("u3", 0   ,  0   ,  pi/2), #  Z/2
+    ("u3", 0   ,  0   , -pi/2), # -Z/2
 
     # Hadamard-like
-    ("u3", 3 / 6 * pi, -6 / 6 * pi,  0 / 6 * pi),
-    ("u3", 3 / 6 * pi,  0 / 6 * pi,  6 / 6 * pi), # Hadamard
-    ("u3", 3 / 6 * pi,  3 / 6 * pi,  3 / 6 * pi),
-    ("u3", 3 / 6 * pi, -3 / 6 * pi, -3 / 6 * pi),
-    ("u3", 6 / 6 * pi, -3 / 6 * pi,  0 / 6 * pi),
-    ("u3", 6 / 6 * pi,  3 / 6 * pi,  0 / 6 * pi)
+    ("u3", pi/2, -pi  ,  0   ),
+    ("u3", pi/2,  0   ,  pi  ), # Hadamard
+    ("u3", pi/2,  pi/2,  pi/2),
+    ("u3", pi/2, -pi/2, -pi/2),
+    ("u3", pi  , -pi/2,  0   ),
+    ("u3", pi  ,  pi/2,  0   )
 ] #yapf: disable
 
 one_qubit_clifford_seq2 = [
@@ -96,6 +96,15 @@ one_qubit_clifford_seq_inv = {
 one_qubit_clifford_seq_inv['H'] = 19
 one_qubit_clifford_seq_inv['S'] = 16
 one_qubit_clifford_seq_inv['I'] = 0
+one_qubit_clifford_seq_inv['X'] = 1
+one_qubit_clifford_seq_inv['Y'] = 2
+one_qubit_clifford_seq_inv['Z'] = 3
+one_qubit_clifford_seq_inv['X/2'] = 12
+one_qubit_clifford_seq_inv['-X/2'] = 13
+one_qubit_clifford_seq_inv['Y/2'] = 14
+one_qubit_clifford_seq_inv['-Y/2'] = 15
+one_qubit_clifford_seq_inv['-S'] = 17
+one_qubit_clifford_seq_inv.update({f'C1_{i}': i for i in range(24)})
 
 one_qubit_clifford_mul_table = np.array([
     [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23],
@@ -123,6 +132,51 @@ one_qubit_clifford_mul_table = np.array([
     [22,17,16,23,13,20,21,12,15,18,19,14,7,4,11,8,2,1,9,10,5,6,0,3],
     [23,16,17,22,20,13,12,21,18,15,14,19,6,5,10,9,1,2,8,11,4,7,3,0],
 ], dtype=np.int8) #yapf: disable
+
+
+@lru_cache()
+def _one_qubit_clifford_index(gate):
+    pass
+
+
+def one_qubit_clifford_index(gate):
+    if gate in one_qubit_clifford_seq_inv:
+        return one_qubit_clifford_seq_inv[gate]
+    else:
+        match gate:
+            case ('R', phi):
+                return one_qubit_clifford_index(
+                    ('U', pi / 2, phi - pi / 2, pi / 2 - phi))
+            case ('rfUnitary', theta, phi):
+                return one_qubit_clifford_index(
+                    ('U', theta, phi - pi / 2, pi / 2 - phi))
+            case ('u3', theta, phi, lam) | ('U', theta, phi, lam):
+                theta = np.mod(theta / (2 * pi))
+                if theta == np.pi / 2:
+                    pass
+                elif theta == 0:
+                    phi, lam = phi + lam, 0
+                elif theta == np.pi:
+                    phi, lam = phi - lam, 0
+                elif theta == 3 * np.pi / 2:
+                    theta = np.pi / 2
+                    phi, lam = phi + pi, lam + pi
+                else:
+                    return -1
+                phi = np.mod(phi, 2 * pi)
+                lam = np.mod(lam, 2 * pi)
+            case ('u2', phi, lam):
+                return one_qubit_clifford_index(('U', pi / 2, phi, lam))
+            case ('u1', lam) | ('Rz', lam) | ('P', lam):
+                return one_qubit_clifford_index(('U', 0, 0, lam))
+            case 'P':
+                return 16
+            case ('Rx', theta):
+                return one_qubit_clifford_index(('U', theta, -pi / 2, pi / 2))
+            case ('Ry', theta):
+                return one_qubit_clifford_index(('U', theta, 0, 0))
+            case _:
+                return -1
 
 
 def twoQubitCliffordSequence(n):

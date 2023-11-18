@@ -16,14 +16,6 @@ from .funtions import (cliffordOrder, one_qubit_clifford_mul_table,
                        one_qubit_clifford_seq, one_qubit_clifford_seq_inv)
 
 
-def make_circuit(gate, N):
-    rest_qubits = set(range(N)) - set(gate[1:])
-    circ = [gate]
-    for qubit in rest_qubits:
-        circ.append(('I', qubit))
-    return circ
-
-
 def find_permutation_for_Unitary(U, N):
     init = []
     final = []
@@ -35,19 +27,6 @@ def find_permutation_for_Unitary(U, N):
         init.append(-op)
         final.append(U @ (-op) @ U.T.conj())
     return find_permutation(init, final)
-
-
-def random_circuit(N, depth, single_qubit_gate_set, two_qubit_gate_set):
-    circ = []
-    qubits = list(range(N))
-    for i in range(depth):
-        for q in range(N):
-            circ.append((random.choice(single_qubit_gate_set), q))
-        random.shuffle(qubits)
-        for i in range(0, N - 1, 2):
-            circ.append(
-                (random.choice(two_qubit_gate_set), qubits[i], qubits[i + 1]))
-    return circ
 
 
 def make_clifford_generators(N, graph=None):

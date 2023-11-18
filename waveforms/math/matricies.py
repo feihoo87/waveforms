@@ -67,7 +67,7 @@ CZ = make_immutable(
     np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, -1]],
              dtype=complex))
 iSWAP = make_immutable(
-    np.array([[1, 0, 0, 0], [0, 1j, 0, 0], [0, 0, 1j, 0], [0, 0, 0, 1]],
+    np.array([[1, 0, 0, 0], [0, 0, 1j, 0], [0, 1j, 0, 0], [0, 0, 0, 1]],
              dtype=complex))
 SWAP = make_immutable(
     np.array([[1, 0, 0, 0], [0, 0, 1, 0], [0, 1, 0, 0], [0, 0, 0, 1]],
@@ -173,3 +173,17 @@ def fSim(theta, phi):
         [0, -1j*s,     c,     0],
         [0,     0,     0,     p]
     ]) #yapf: disable
+
+
+def synchronize_global_phase(U):
+    """
+    将第一个非零的矩阵元相位转成 0，以保证仅相差一个全局相位的矩阵具有相同的表示。
+    优先处理对角元，再依次处理下三角阵。
+    """
+    assert U.shape[0] == U.shape[1]
+    for i in range(U.shape[0]):
+        for j in range(U.shape[0] - i):
+            if np.abs(U[j + i, j]) > 1e-9:
+                U = U * np.abs(U[j + i, j]) / U[j + i, j]
+                return U
+    return 0 * U
