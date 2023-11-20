@@ -70,21 +70,23 @@ def minimum_spanning_tree(
     """
     if not edges:
         return []
+    if len(edges) == 1:
+        return [(edges[0][0], edges[0][1])]
 
-    if isinstance(edges[0], tuple) and len(edges[0]) == 2:
-        edges = [(u, v, 1) for u, v in edges]
+    edges = [(u, v, 0 if len(w) == 0 else w[0]) for u, v, *w in edges]
 
+    # Create a set of nodes and map each node to an index
     nodes = set()
     for u, v, _ in edges:
         nodes.add(u)
         nodes.add(v)
-
     nodes = list(nodes)
     nodes_map = {n: i for i, n in enumerate(nodes)}
 
     edges = [(nodes_map[u], nodes_map[v], w) for u, v, w in edges]
-    edges.sort(key=lambda e: e[2])
 
+    # Kruskal's algorithm
+    edges.sort(key=lambda e: e[2])
     tree = []
     parent = list(range(len(nodes)))
     rank = [0] * len(nodes)
@@ -105,7 +107,7 @@ def minimum_spanning_tree(
         if rank[u] == rank[v]:
             rank[u] += 1
 
-    for u, v, w in edges:
+    for u, v, _ in edges:
         if find(u) != find(v):
             union(u, v)
             tree.append((nodes[u], nodes[v]))
