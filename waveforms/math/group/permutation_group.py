@@ -434,19 +434,29 @@ class PermutationGroup():
                 bisect.insort(self._elements, g)
         return self._elements
 
-    def random(self, N=1) -> Cycles | list[Cycles]:
+    def random(self, N=1, rng: random.Random = None) -> Cycles | list[Cycles]:
         """Return a random element of the group.
 
         If N > 1, return a list of N random elements.
+
+        Parameters
+        ==========
+        N : int
+            Number of random elements to return.
+        rng : random.Random
+            Random number generator to use. If None, the default RNG is used.
         """
         self.schreier_sims()
         transversals = self._transversals
         orbits = self._basic_orbits
+
+        if rng is None:
+            rng = random.Random()
         ret = []
         for _ in range(N):
             g = Cycles()
             for orbit, coset in zip(orbits, transversals):
-                g *= coset[random.choice(orbit)]
+                g *= coset[rng.choice(orbit)]
             ret.append(g)
         if N == 1:
             return ret[0]
