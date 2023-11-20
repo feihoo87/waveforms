@@ -1085,26 +1085,28 @@ class WaveVStack(Waveform):
     def _repr_latex_(self):
         return r"\sum_{i=1}^{" + f"{len(self.wlist)}" + r"}" + r"f_i(t)"
 
-    def __getstate__(self) -> tuple[dict, dict]:
-        dict, slots = super().__getstate__()
-        if dict['function_lib']:
+    def __getstate__(self) -> tuple:
+        function_lib = self.function_lib
+        if function_lib:
             try:
                 import dill
-                dict['function_lib'] = dill.dumps(dict['function_lib'])
+                function_lib = dill.dumps(function_lib)
             except:
-                dict['function_lib'] = None
-        return dict, slots
+                function_lib = None
+        return (self.wlist, self.start, self.stop, self.sample_rate,
+                self.offset, self.shift, self.filters, self.label,
+                function_lib)
 
-    def __setstate__(self, state: tuple[dict, dict]) -> None:
-        dict, slots = state
-        if dict['function_lib']:
+    def __setstate__(self, state: tuple) -> None:
+        (self.wlist, self.start, self.stop, self.sample_rate, self.offset,
+         self.shift, self.filters, self.label, function_lib) = state
+        if function_lib:
             try:
                 import dill
-                dict['function_lib'] = dill.loads(dict['function_lib'])
+                function_lib = dill.loads(function_lib)
             except:
-                dict['function_lib'] = None
-        self.__dict__.update(dict)
-        self.__slots__ = slots
+                function_lib = None
+        self.function_lib = function_lib
 
 
 def wave_sum(waves):
