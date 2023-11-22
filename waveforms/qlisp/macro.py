@@ -1,8 +1,11 @@
 from collections import defaultdict
 
-from numpy import mod, pi
+from numpy import cos, mod, pi
+
+from waveforms.math.matricies import U, Unitary2Angles
 
 from .base import QLispError, head
+from .simulator.simple import seq2mat
 
 
 def _lookup(name, env):
@@ -40,15 +43,37 @@ def call_macro(gate, st):
 def extend_control_gate(st, scope):
     # TODO
     gate, qubits = st
-    if isinstance(gate[1], str):
-        if gate[1] == 'Z':
+    _, unitary = gate
+    if isinstance(unitary, str):
+        if unitary == 'Z':
             return [('CZ', qubits)]
-        elif gate[1] == 'X':
+        elif unitary == 'X':
             return [('Cnot', qubits)]
-        else:
-            return [st]
+
+    # https://doi.org/10.1103/PhysRevA.52.3457
+
+    unitary = [(unitary, 0)]
+    c, t = qubits
+
+    W = seq2mat(unitary)
+    theta, phi, lam, delta = Unitary2Angles(W)
+
+    if abs(cos(phi + lam) + 1) < 1e-15:
+        return [
+            (('u3', pi / 2 - theta / 2, 0, -phi), t),
+            ('Cnot', c, t),
+            (('u3', theta / 2 - pi / 2, phi, 0), t),
+            (('Rz', delta - pi / 2), t),
+        ]
     else:
-        return [st]
+        return [
+            (('u3', theta / 2, 0, lam), t),
+            ('Cnot', c, t),
+            (('u3', -theta / 2, -(phi + lam) / 2, 0), t),
+            ('Cnot', c, t),
+            (('u3', 0, 0, (phi - lam) / 2), t),
+            (('Rz', delta), c),
+        ]
 
 
 def extend_macro(qlisp, lib, env=None):
