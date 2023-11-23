@@ -52,7 +52,7 @@ class QLispError(SyntaxError):
 
 class Capture(NamedTuple):
     qubit: str
-    cbit: int | str
+    cbit: tuple[str, int]
     time: float
     signal: Signal
     params: dict
@@ -174,7 +174,8 @@ class Context():
     addressTable: dict = field(default_factory=dict)
     waveforms: dict[str, list[Waveform]] = field(
         default_factory=lambda: defaultdict(list))
-    measures: dict[int | str, Capture] = field(default_factory=dict)
+    measures: dict[str, dict[int, Capture]] = field(
+        default_factory=lambda: defaultdict(dict))
     phases_ext: dict[str, dict[Union[int, str], float]] = field(
         default_factory=lambda: defaultdict(lambda: defaultdict(lambda: 0)))
     biases: dict[str,
@@ -250,7 +251,7 @@ class QLispCode():
     cfg: ABCCompileConfigMixin = field(repr=False)
     qlisp: list = field(repr=True)
     waveforms: dict[str, Waveform] = field(repr=True)
-    measures: dict[int | str, list[Capture]] = field(repr=True)
+    measures: dict[tuple[str, int], list[Capture]] = field(repr=True)
     end: float = field(default=0, repr=True)
     signal: Signal = Signal.state
     shots: int = 1024

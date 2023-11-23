@@ -87,10 +87,11 @@ def _mult_channel_play(ctx: Context, wav, ch: MultAWGChannel):
         ctx.waveforms[ch.Q.name].append(Q)
 
 
-def _capture(ctx: Context, cbit: int | str, info: Capture):
+def _capture(ctx: Context, cbit: tuple[str, int], info: Capture):
     hardware = ctx.get_ad_channel(info.qubit)
-    ctx.measures[cbit] = Capture(info.qubit, info.cbit, info.time, info.signal,
-                                 info.params, hardware)
+    name, index = cbit
+    ctx.measures[name][index] = Capture(info.qubit, cbit, info.time,
+                                        info.signal, info.params, hardware)
 
 
 def _execute(ctx: Context, cmd: tuple[tuple, tuple | str]):
@@ -247,10 +248,15 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
 
     waveforms = {ch: WaveVStack(waves) for ch, waves in ctx.waveforms.items()}
 
+    measures = {}
+    for var, m in ctx.measures.items():
+        for i, c in m.items():
+            measures[(var, i)] = c
+
     code = QLispCode(cfg=ctx.cfg,
                      qlisp=ctx.qlisp,
                      waveforms=waveforms,
-                     measures=dict(ctx.measures),
+                     measures=dict(sorted(measures.items())),
                      end=ctx.end)
     return code
 
