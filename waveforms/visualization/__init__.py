@@ -160,3 +160,29 @@ def plotALLXY(data, ax=None):
     ax.set_xticks(np.arange(len(ALLXYSeq)) * repeat + 0.5 * (repeat - 1))
     ax.set_xticklabels([','.join(seq) for seq in ALLXYSeq], rotation=60)
     ax.grid(which='major')
+
+
+def plot_mat(rho, title='$\\chi$', cmap='coolwarm'):
+    lim = np.abs(rho).max()
+    N = rho.shape[0]
+
+    fig = plt.figure(figsize=(6, 4))
+    fig.suptitle(title)
+
+    ax1 = plt.subplot(121)
+    cax1 = ax1.imshow(rho.real, vmin=-lim, vmax=lim, cmap=cmap)
+    ax1.set_title('Re')
+    ax1.set_xticks(np.arange(N))
+    ax1.set_yticks(np.arange(N))
+
+    ax2 = plt.subplot(122)
+    cax2 = ax2.imshow(rho.imag, vmin=-lim, vmax=lim, cmap=cmap)
+    ax2.set_title('Im')
+    ax2.set_xticks(np.arange(N))
+    ax2.set_yticks(np.arange(N))
+
+    plt.subplots_adjust(bottom=0.2, right=0.9, top=0.95)
+
+    cbar_ax = fig.add_axes([0.15, 0.15, 0.7, 0.05])
+    cb = fig.colorbar(cax1, cax=cbar_ax, orientation='horizontal')
+    plt.show()
