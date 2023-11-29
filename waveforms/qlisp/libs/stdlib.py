@@ -12,6 +12,18 @@ from ..library import Library
 
 EPS = 1e-9
 
+
+def extract_variable_and_index_if_match(s):
+    pattern = r'^(\w+)\[(\d+)\]$'
+    match = re.search(pattern, s)
+
+    if match:
+        name, index = match.groups()
+        return (name, int(index))
+    else:
+        return (s, 0)
+
+
 std = Library()
 std.qasmLib = {
     'qelib1.inc': Path(__file__).parent.parent / 'qasm' / 'libs' / 'qelib1.inc'
@@ -169,6 +181,20 @@ def crz(qubits, lambda_):
     yield ('Cnot', (c, t))
     yield (('u1', -lambda_ / 2), t)
     yield ('Cnot', (c, t))
+
+
+@std.gate(2)
+def sqiSWAP(qubits):
+    c, t = qubits
+
+    yield (('u3', pi / 2, 0, pi / 2), c)
+    yield (('u3', -pi / 2, 0, 0), t)
+    yield ('CZ', c, t)
+    yield (('u3', pi / 4, 0, pi), c)
+    yield (('u3', -pi / 4, 0, 0), t)
+    yield ('CZ', c, t)
+    yield (('u3', pi / 2, pi / 2, 0), c)
+    yield (('u3', pi / 2, 0, 0), t)
 
 
 @std.opaque('Delay')
@@ -350,16 +376,6 @@ def rfUnitary_BB1(ctx, qubits, theta, phi):
 def measure(ctx, qubits, cbit=None):
     from waveforms import cos, exp, pi, step
 
-    def extract_variable_and_index_if_match(s):
-        pattern = r'^(\w+)\[(\d+)\]$'
-        match = re.search(pattern, s)
-
-        if match:
-            name, index = match.groups()
-            return (name, int(index))
-        else:
-            return (s, 0)
-
     qubit, = qubits
 
     if cbit is None:
@@ -409,7 +425,7 @@ def measure(ctx, qubits, cbit=None):
     params = {k: v for k, v in ctx.params.items()}
     params['w'] = w
     params['weight'] = weight
-    if not (cbit[0] == 'state' and cbit[1] < 0):
+    if not (cbit[0] == 'result' and cbit[1] < 0):
         yield ('!capture', Capture(qubit, cbit, ctx.time[qubit], signal,
                                    params)), cbit
     yield ('!set_time', t + duration), qubit
