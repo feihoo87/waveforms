@@ -202,12 +202,14 @@ def circle_half_directed_link_path(pos1, pos2, r1, r2, width, n=20):
                       xx2[:-1]]), np.hstack([yy2[-1], yy1, a.imag, yy2[:-1]])
 
 
-def draw(layout, ax=None, qubit_cbar=True, coupler_cbar=True):
+def draw(layout, ax=None, qubit_cbar=True, coupler_cbar=True, origin='upper'):
     if ax is None:
         ax = plt.gca()
 
     for qubit in layout['qubits'].values():
         pos = qubit['pos']
+        if origin == 'upper':
+            pos = pos[0], -pos[1]
         path = circle_path(pos, qubit.get('radius', 0.5))
         plot_range(ax,
                    path,
@@ -222,6 +224,9 @@ def draw(layout, ax=None, qubit_cbar=True, coupler_cbar=True):
         q1, q2 = coupler['qubits']
         pos1 = layout['qubits'][q1]['pos']
         pos2 = layout['qubits'][q2]['pos']
+        if origin == 'upper':
+            pos1 = pos1[0], -pos1[1]
+            pos2 = pos2[0], -pos2[1]
         r1 = layout['qubits'][q1].get('radius', 0.5)
         r2 = layout['qubits'][q2].get('radius', 0.5)
         width = coupler.get('width', 0.5)
