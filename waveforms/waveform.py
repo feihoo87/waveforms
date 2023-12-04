@@ -9,110 +9,11 @@ import scipy.special as special
 from numpy import e, inf, pi
 from scipy.signal import sosfilt
 
-NDIGITS = 15
-
-_zero = ((), ())
-
-
-def _const(c):
-    if c == 0:
-        return _zero
-    return (((), ()), ), (c, )
-
-
-_one = _const(1.0)
-_half = _const(1 / 2)
-_two = _const(2.0)
-_pi = _const(pi)
-_two_pi = _const(2 * pi)
-_half_pi = _const(pi / 2)
-
-
-def _is_const(x):
-    return x == _zero or x[0] == (((), ()), )
-
-
-def _basic_wave(Type, *args, shift=0):
-    return ((((Type, *args, shift), ), (1, )), ), (1.0, )
-
-
-def _insert_type_value_pair(t_list, v_list, t, v, lo, hi):
-    i = bisect_left(t_list, t, lo, hi)
-    if i < hi and t_list[i] == t:
-        v += v_list[i]
-        if v == 0:
-            t_list.pop(i)
-            v_list.pop(i)
-            return i, hi - 1
-        else:
-            v_list[i] = v
-            return i, hi
-    else:
-        t_list.insert(i, t)
-        v_list.insert(i, v)
-        return i, hi + 1
-
-
-def _mul(x, y):
-    t_list, v_list = [], []
-    xt_list, xv_list = x
-    yt_list, yv_list = y
-    lo, hi = 0, 0
-    for (t1, t2), (v1, v2) in zip(product(xt_list, yt_list),
-                                  product(xv_list, yv_list)):
-        if v1 * v2 == 0:
-            continue
-        t = _add(t1, t2)
-        lo, hi = _insert_type_value_pair(t_list, v_list, t, v1 * v2, lo, hi)
-    return tuple(t_list), tuple(v_list)
-
-
-def _add(x, y):
-    # x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
-    t_list, v_list = list(x[0]), list(x[1])
-    lo, hi = 0, len(t_list)
-    for t, v in zip(*y):
-        lo, hi = _insert_type_value_pair(t_list, v_list, t, v, lo, hi)
-    return tuple(t_list), tuple(v_list)
-
-
-def _shift(x, time):
-    if _is_const(x):
-        return x
-
-    t_list = []
-
-    for pre_mtlist, nlist in x[0]:
-        mtlist = []
-        for Type, *args, shift in pre_mtlist:
-            mtlist.append((Type, *args, shift + time))
-        t_list.append((tuple(mtlist), nlist))
-    return tuple(t_list), x[1]
-
-
-def _pow(x, n):
-    if x == _zero:
-        return _zero
-    if n == 0:
-        return _one
-    if _is_const(x):
-        return _const(x[1][0]**n)
-
-    if len(x[0]) == 1:
-        t_list, v_list = [], []
-        for (mtlist, pre_nlist), v in zip(*x):
-            nlist = []
-            for m in pre_nlist:
-                nlist.append(n * m)
-            t_list.append((mtlist, tuple(nlist)))
-            v_list.append(v**n)
-        return tuple(t_list), tuple(v_list)
-    else:
-        assert isinstance(n, int) and n > 0
-        ret = _one
-        for i in range(n):
-            ret = _mul(ret, x)
-        return ret
+from ._waveform import (_D, NDIGITS, _add, _baseFunc, _baseFunc_latex,
+                        _basic_wave, _calc_parts, _const, _half, _is_const,
+                        _merge_waveform, _mul, _one, _pow, _shift, _zero,
+                        registerBaseFunc, registerBaseFuncLatex,
+                        registerDerivative, wave_sum)
 
 
 def _cos_power_n(x, n):
@@ -286,31 +187,6 @@ def _filter(expr, low, high, eps):
         else:
             if low <= 0:
                 ret = _add(ret, ((t, ), (v, )))
-    return ret
-
-
-def _apply(function_lib, func_id, x, shift, *args):
-    return function_lib[func_id](x - shift, *args)
-
-
-def _calc(wav, x, function_lib):
-    lru_cache = {}
-
-    def _calc_m(t, x):
-        ret = 1
-        for mt, n in zip(*t):
-            if mt not in lru_cache:
-                func_id, *args, shift = mt
-                lru_cache[mt] = _apply(function_lib, func_id, x, shift, *args)
-            if n == 1:
-                ret = ret * lru_cache[mt]
-            else:
-                ret = ret * lru_cache[mt]**n
-        return ret
-
-    ret = 0
-    for t, v in zip(*wav):
-        ret = ret + v * _calc_m(t, x)
     return ret
 
 
@@ -682,23 +558,8 @@ class Waveform:
         return Waveform(self.bounds, tuple(seq))
 
     def _comb(self, other, oper):
-        bounds = []
-        seq = []
-        i1, i2 = 0, 0
-        h1, h2 = len(self.bounds), len(other.bounds)
-        while i1 < h1 or i2 < h2:
-            s = oper(self.seq[i1], other.seq[i2])
-            b = min(self.bounds[i1], other.bounds[i2])
-            if seq and s == seq[-1]:
-                bounds[-1] = b
-            else:
-                bounds.append(b)
-                seq.append(s)
-            if b == self.bounds[i1]:
-                i1 += 1
-            if b == other.bounds[i2]:
-                i2 += 1
-        return Waveform(tuple(bounds), tuple(seq))
+        return Waveform(*_merge_waveform(self.bounds, self.seq, other.bounds,
+                                         other.seq, oper))
 
     def __pow__(self, n):
         return Waveform(self.bounds, tuple(_pow(w, n) for w in self.seq))
@@ -811,23 +672,6 @@ class Waveform:
         return self >> (-time)
 
     @staticmethod
-    def _calc_parts(bounds, seq, x, function_lib, min=-inf, max=inf):
-        range_list = np.searchsorted(x, bounds)
-        parts = []
-        start, stop = 0, 0
-        dtype = float
-        for i, stop in enumerate(range_list):
-            if start < stop and seq[i] != _zero:
-                part = np.clip(_calc(seq[i], x[start:stop], function_lib), min,
-                               max)
-                if (isinstance(part, complex) or isinstance(part, np.ndarray)
-                        and isinstance(part[0], complex)):
-                    dtype = complex
-                parts.append((start, stop, part))
-            start = stop
-        return parts, dtype
-
-    @staticmethod
     def _merge_parts(
         parts: list[tuple[int, int, np.ndarray | int | float | complex]],
         out: list[tuple[int, int, np.ndarray | int | float | complex]]
@@ -850,8 +694,8 @@ class Waveform:
             function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
             return self.__call__(np.array([x]), function_lib=function_lib)[0]
-        parts, dtype = self._calc_parts(self.bounds, self.seq, x, function_lib,
-                                        self.min, self.max)
+        parts, dtype = _calc_parts(self.bounds, self.seq, x, function_lib,
+                                   self.min, self.max)
         if not frag:
             if out is None:
                 out = np.zeros_like(x, dtype=dtype)
@@ -966,7 +810,7 @@ class WaveVStack(Waveform):
             else:
                 function_lib = self.function_lib
         for bounds, seq in self.wlist:
-            parts, dtype = self._calc_parts(bounds, seq, x, function_lib)
+            parts, dtype = _calc_parts(bounds, seq, x, function_lib)
             self._fill_parts(parts, out)
         return out.real
 
@@ -1010,7 +854,10 @@ class WaveVStack(Waveform):
         return w
 
     def simplify(self, eps=1e-15):
-        wav = wave_sum(self.wlist)
+        if not self.wlist:
+            return zero()
+        bounds, seq = wave_sum(self.wlist)
+        wav = Waveform(bounds=bounds, seq=seq)
         if self.offset != 0:
             wav += self.offset
         if self.shift != 0:
@@ -1109,50 +956,6 @@ class WaveVStack(Waveform):
         self.function_lib = function_lib
 
 
-def wave_sum(waves):
-    if not waves:
-        return zero()
-
-    bounds, seq = waves[0]
-    if not waves[1:]:
-        return Waveform(bounds, seq)
-    bounds, seq = list(bounds), list(seq)
-
-    for bounds_, seq_ in waves[1:]:
-        if len(bounds_) == 1:
-            for i, s in enumerate(seq):
-                seq[i] = _add(s, seq_[0])
-        elif len(bounds) == 1:
-            bounds = list(bounds_)
-            seq = [_add(seq[0], s) for s in seq_]
-        else:
-            lo = 0
-            for b, s in zip(bounds_, seq_):
-                i = bisect_left(bounds, b, lo=lo)
-                if bounds[i] > b:
-                    bounds.insert(i, b)
-                    if i == 0:
-                        seq.insert(i, s)
-                    else:
-                        seq.insert(i, _add(s, seq[i]))
-                    up = i - 1
-                else:
-                    up = i
-                for j in range(lo + 1, up + 1):
-                    seq[j] = _add(seq[j], s)
-                lo = i
-
-    i = 0
-    while i < len(bounds) - 1:
-        if seq[i] == seq[i + 1]:
-            del seq[i + 1]
-            del bounds[i + 1]
-        else:
-            i += 1
-
-    return Waveform(tuple(bounds), tuple(seq))
-
-
 def play(data, rate=48000):
     import io
 
@@ -1202,35 +1005,6 @@ def one():
 
 def const(c):
     return Waveform(seq=(_const(1.0 * c), ))
-
-
-__TypeIndex = 1
-_baseFunc = {}
-_derivativeBaseFunc = {}
-_baseFunc_latex = {}
-
-
-def registerBaseFunc(func, latex=None):
-    global __TypeIndex
-    Type = __TypeIndex
-    __TypeIndex += 1
-
-    _baseFunc[Type] = func
-    _baseFunc_latex[Type] = latex
-
-    return Type
-
-
-def packBaseFunc():
-    return pickle.dumps(_baseFunc)
-
-
-def updateBaseFunc(buf):
-    _baseFunc.update(pickle.loads(buf))
-
-
-def registerDerivative(Type, dFunc):
-    _derivativeBaseFunc[Type] = dFunc
 
 
 # register base function
@@ -1337,14 +1111,12 @@ def _format_EXP(shift, *args):
         return '\\exp\\left(-' + f'{args[0]:g}' + 't\\right)'
 
 
-LINEAR = registerBaseFunc(lambda t: t, _format_LINEAR)
-GAUSSIAN = registerBaseFunc(lambda t, std_sq2: np.exp(-(t / std_sq2)**2),
-                            _format_GAUSSIAN)
-ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2),
-                       _format_ERF)
-COS = registerBaseFunc(lambda t, w: np.cos(w * t), _format_COSINE)
-SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t), _format_SINC)
-EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t), _format_EXP)
+LINEAR = registerBaseFunc(lambda t: t)
+GAUSSIAN = registerBaseFunc(lambda t, std_sq2: np.exp(-(t / std_sq2)**2))
+ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2))
+COS = registerBaseFunc(lambda t, w: np.cos(w * t))
+SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
+EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
 INTERP = registerBaseFunc(lambda t, start, stop, points: np.interp(
     t, np.linspace(start, stop, len(points)), points))
 LINEARCHIRP = registerBaseFunc(lambda t, f0, f1, T, phi0: np.sin(
@@ -1353,8 +1125,17 @@ EXPONENTIALCHIRP = registerBaseFunc(lambda t, f0, alpha, phi0: np.sin(
     phi0 + 2 * pi * f0 * (np.exp(alpha * t) - 1) / alpha))
 HYPERBOLICCHIRP = registerBaseFunc(lambda t, f0, k, phi0: np.sin(
     phi0 + 2 * np.pi * f0 / k * np.log(1 + k * t)))
-COSH = registerBaseFunc(lambda t, w: np.cosh(w * t), _format_COSH)
-SINH = registerBaseFunc(lambda t, w: np.sinh(w * t), _format_SINH)
+COSH = registerBaseFunc(lambda t, w: np.cosh(w * t))
+SINH = registerBaseFunc(lambda t, w: np.sinh(w * t))
+
+registerBaseFuncLatex(LINEAR, _format_LINEAR)
+registerBaseFuncLatex(GAUSSIAN, _format_GAUSSIAN)
+registerBaseFuncLatex(ERF, _format_ERF)
+registerBaseFuncLatex(COS, _format_COSINE)
+registerBaseFuncLatex(SINC, _format_SINC)
+registerBaseFuncLatex(EXP, _format_EXP)
+registerBaseFuncLatex(COSH, _format_COSH)
+registerBaseFuncLatex(SINH, _format_SINH)
 
 
 def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
@@ -1377,7 +1158,8 @@ def _format_DRAG(shift, *args):
     return f"DRAG(...)"
 
 
-DRAG = registerBaseFunc(_drag, _format_DRAG)
+DRAG = registerBaseFunc(_drag)
+registerBaseFuncLatex(DRAG, _format_DRAG)
 
 # register derivative
 registerDerivative(LINEAR, lambda shift, *args: _one)
@@ -1444,32 +1226,6 @@ registerDerivative(
     (((((LINEAR, shift - 1 / k),
         (HYPERBOLICCHIRP, f0, k, phi0 + pi / 2, shift)), (-1, 1)), ),
      (2 * pi * f0, )))
-
-
-def _D_base(m):
-    Type, *args, shift = m
-    return _derivativeBaseFunc[Type](shift, *args)
-
-
-def _D(x):
-    if _is_const(x):
-        return _zero
-    t_list, v_list = x
-    if len(v_list) == 1:
-        (m_list, n_list), v = t_list[0], v_list[0]
-        if len(m_list) == 1:
-            m, n = m_list[0], n_list[0]
-            if n == 1:
-                return _mul(_D_base(m), _const(v))
-            else:
-                return _mul(((((m, ), (n - 1, )), ), (n * v, )),
-                            _D(((((m, ), (1, )), ), (1, ))))
-        else:
-            a = (((m_list[:1], n_list[:1]), ), (v, ))
-            b = (((m_list[1:], n_list[1:]), ), (1, ))
-            return _add(_mul(a, _D(b)), _mul(_D(a), b))
-    else:
-        return _add(_D((t_list[:1], v_list[:1])), _D((t_list[1:], v_list[1:])))
 
 
 def D(wav):
