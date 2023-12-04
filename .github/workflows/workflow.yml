@@ -29,7 +29,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install pytest pytest-asyncio numpy coveralls cython
+        python -m pip install build pytest pytest-asyncio numpy coveralls cython
         python -m pip install ".[full]"
     - name: Test with pytest
       run: |
@@ -42,7 +42,7 @@ jobs:
     - name: Build package
       run: |
         pip install build setuptools wheel twine
-        python setup.py sdist bdist_wheel
+        python -m build --sdist --wheel --outdir dist/
     - name: Repair package
       if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |

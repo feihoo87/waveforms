@@ -39,8 +39,7 @@ def get_extensions():
             if filename.endswith('.pyx'):
                 extensions.append(
                     Extension(module_name(dirpath, filename),
-                              [os.path.join(dirpath, filename)],
-                              include_dirs=['src']))
+                              [os.path.join(dirpath, filename)]))
 
     return extensions
 
