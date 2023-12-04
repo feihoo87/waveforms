@@ -2,8 +2,8 @@ import math
 
 import numpy as np
 
-from .waveform import (COS, NDIGITS, Waveform, _basic_wave, _format_DRAG,
-                       _zero, inf, pi, registerBaseFunc)
+from .waveform import (COS, NDIGITS, Waveform, _basic_wave, _zero, inf, pi,
+                       registerBaseFunc, registerDerivative)
 
 
 def B_series_mat(bs: np.ndarray):
@@ -80,8 +80,8 @@ def _derivatives_x_m_poly_a(f: np.ndarray, x: float):
     C_mat = np.zeros([m, m])
     for n in range(0, m):
         for l in range(0, m):
-            C_mat[n, l] += (x**(m + l - n)) * math.factorial(
-                m + l) / math.factorial(m + l - n)
+            C_mat[n, l] += (x**(
+                m + l - n)) * math.factorial(m + l) / math.factorial(m + l - n)
     from scipy.linalg import inv
     C_inv = inv(C_mat)
     return np.poly1d([*np.flip(C_inv @ fff), *np.zeros_like(f[:-1]), 1])
@@ -174,7 +174,7 @@ def _drag_sin(t: np.ndarray,
     return Omega_x * np.cos(wt) + Omega_y * np.sin(wt)
 
 
-DRAG_SIN = registerBaseFunc(_drag_sin, _format_DRAG)
+DRAG_SIN = registerBaseFunc(_drag_sin)
 
 
 def drag_sin(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
@@ -210,7 +210,7 @@ def _drag_sinx(t: np.ndarray,
     return Omega_x * np.cos(wt) + Omega_y * np.sin(wt)
 
 
-DRAG_SINX = registerBaseFunc(_drag_sinx, _format_DRAG)
+DRAG_SINX = registerBaseFunc(_drag_sinx)
 
 
 def drag_sinx(freq,
@@ -230,3 +230,19 @@ def drag_sinx(freq,
                     bounds=(round(t0,
                                   NDIGITS), round(t0 + width + plateau,
                                                   NDIGITS), +inf))
+
+
+def _mollifier(x, width):
+    return np.exp(1 / ((x / width)**2 - 1))
+
+
+def _format_MOLLIFIER(shift, *args):
+    width, *_ = args
+    return f'\\exp\\frac{{1}}{{\\left(\\frac{{t-{shift:.{NDIGITS}f}}}{{{width:.{NDIGITS}f}}}\\right)^2-1}}'
+
+
+MOLLIFIER = registerBaseFunc(_mollifier)
+registerDerivative(
+    MOLLIFIER,
+    lambda x, width: 2 * x / width**2 * _mollifier(x, width),
+)
