@@ -1,193 +1,16 @@
-import pickle
-from bisect import bisect_left
 from fractions import Fraction
-from itertools import chain, product
-from math import comb
 
 import numpy as np
-import scipy.special as special
 from numpy import e, inf, pi
 from scipy.signal import sosfilt
 
-from ._waveform import (_D, NDIGITS, _add, _baseFunc, _baseFunc_latex,
-                        _basic_wave, _calc_parts, _const, _half, _is_const,
-                        _merge_waveform, _mul, _one, _pow, _shift, _zero,
+from ._waveform import (_D, COS, COSH, DRAG, ERF, EXP, EXPONENTIALCHIRP,
+                        GAUSSIAN, HYPERBOLICCHIRP, INTERP, LINEAR, LINEARCHIRP,
+                        NDIGITS, SINC, SINH, _baseFunc, _baseFunc_latex,
+                        _const, _half, _one, _zero, add, basic_wave,
+                        calc_parts, filter, is_const, merge_waveform, mul, pow,
                         registerBaseFunc, registerBaseFuncLatex,
-                        registerDerivative, wave_sum)
-
-
-def _cos_power_n(x, n):
-    _, w, shift = x
-    ret = _zero
-    for k in range(0, n // 2 + 1):
-        if n == 2 * k:
-            a = _const(comb(n, k) / 2**n)
-            ret = _add(ret, a)
-        else:
-            expr = (((((COS, (n - 2 * k) * w, shift), ), (1, )), ),
-                    (comb(n, k) / 2**(n - 1), ))
-            ret = _add(ret, expr)
-    return ret
-
-
-def _trigMul_t(x, y, v):
-    """cos(a)cos(b) = 0.5*cos(a+b)+0.5*cos(a-b)"""
-    _, w1, t1 = x
-    _, w2, t2 = y
-    if w2 > w1:
-        t1, t2 = t2, t1
-        w1, w2 = w2, w1
-    exp1 = (COS, w1 + w2, (w1 * t1 + w2 * t2) / (w1 + w2))
-    if w1 == w2:
-        c = v * np.cos(w1 * t1 - w2 * t2) / 2
-        if c == 0:
-            return (((exp1, ), (1, )), ), (0.5 * v, )
-        else:
-            return (((), ()), ((exp1, ), (1, ))), (c, 0.5 * v)
-    else:
-        exp2 = (COS, w1 - w2, (w1 * t1 - w2 * t2) / (w1 - w2))
-        if exp2[1] > exp1[1]:
-            exp2, exp1 = exp1, exp2
-        return (((exp2, ), (1, )), ((exp1, ), (1, ))), (0.5 * v, 0.5 * v)
-
-
-def _trigMul(x, y):
-    if _is_const(x) or _is_const(y):
-        return _mul(x, y)
-    ret = _zero
-    for (t1, t2), (v1, v2) in zip(product(x[0], y[0]), product(x[1], y[1])):
-        v = v1 * v2
-        tmp = _one
-        trig = []
-        for mt, n in zip(chain(t1[0], t2[0]), chain(t1[1], t2[1])):
-            if mt[0] == COS:
-                trig.append(mt)
-            else:
-                tmp = _mul(tmp, ((((mt, ), (n, )), ), (1, )))
-        if len(trig) == 1:
-            x = ((((trig[0], ), (1, )), ), (v, ))
-            expr = _mul(tmp, x)
-        elif len(trig) == 2:
-            expr = _trigMul_t(trig[0], trig[1], v)
-            expr = _mul(tmp, expr)
-        else:
-            expr = _mul(tmp, _const(v))
-        ret = _add(ret, expr)
-    return ret
-
-
-def _exp_trig_Reduce(mtlist, v):
-    trig = _one
-    alpha = 0
-    shift = 0
-    ml, nl = [], []
-    for mt, n in zip(*mtlist):
-        if mt[0] == COS:
-            trig = _trigMul(trig, _cos_power_n(mt, n))
-        elif mt[0] == EXP:
-            x = alpha * shift + n * mt[1] * mt[-1]
-            alpha += n * mt[1]
-            if alpha == 0:
-                shift = 0
-            else:
-                shift = x / alpha
-        elif mt[0] == GAUSSIAN and n != 1:
-            ml.append((mt[0], mt[1] / np.sqrt(n), mt[2]))
-            nl.append(1)
-        else:
-            ml.append(mt)
-            nl.append(n)
-    ret = (((tuple(ml), tuple(nl)), ), (v, ))
-
-    if alpha != 0:
-        ret = _mul(ret, _basic_wave(EXP, alpha, shift=shift))
-
-    return _mul(ret, trig)
-
-
-def _get_freq(t):
-    t2 = [[], []]
-    freq, shift = 0, 0
-    for mt, n in zip(*t):
-        if mt[0] == COS:
-            if freq != 0:
-                raise ValueError("run _exp_trig_Reduce first")
-            freq = mt[1]
-            shift = mt[-1]
-        else:
-            t2[0].append(mt)
-            t2[1].append(n)
-    t2 = (tuple(t2[0]), tuple(t2[1]))
-    return freq, shift, t2
-
-
-def _simplify(expr, eps):
-    d = {}
-    for t, v in zip(*expr):
-        for t, v in zip(*_exp_trig_Reduce(t, v)):
-            freq, shift, t = _get_freq(t)
-            v_r, v_i, shift_r, shift_i = v.real, v.imag, shift, shift
-            if (t, freq) in d:
-                v0_r, shift0_r, v0_i, shift0_i = d[(t, freq)]
-                if freq == 0:
-                    v_r, v_i = v.real + v0_r, v.imag + v0_i
-                else:
-                    a = v0_r * np.cos(freq * shift0_r) + v_r * np.cos(
-                        freq * shift_r)
-                    b = v0_r * np.sin(freq * shift0_r) + v_r * np.sin(
-                        freq * shift_r)
-                    shift_r = np.arctan2(b, a) / freq
-                    v_r = np.sqrt(a**2 + b**2)
-
-                    a = v0_i * np.cos(freq * shift0_i) + v_i * np.cos(
-                        freq * shift_i)
-                    b = v0_i * np.sin(freq * shift0_i) + v_i * np.sin(
-                        freq * shift_i)
-                    shift_i = np.arctan2(b, a) / freq
-                    v_i = np.sqrt(a**2 + b**2)
-            d[(t, freq)] = v_r, shift_r, v_i, shift_i
-    ret = _zero
-    for (t, freq), (v_r, shift_r, v_i, shift_i) in d.items():
-        if freq == 0 and abs(v) >= eps:
-            if v_i == 0:
-                ret = _add(ret, ((t, ), (v_r, )))
-            else:
-                ret = _add(ret, ((t, ), (v_r + 1j * v_i, )))
-        else:
-            if abs(v_i) < eps and abs(v_r) < eps:
-                continue
-            elif abs(v_i) < eps and abs(v_r) >= eps:
-                expr = (((((COS, freq, shift_r), ), (1, )), ), (v_r, ))
-            elif abs(v_i) >= eps and abs(v_r) < eps:
-                expr = (((((COS, freq, shift_i), ), (1, )), ), (v_i * 1j, ))
-            elif abs(v_i) >= eps and abs(v_r) >= eps:
-                expr = (((((COS, freq, shift_r), ), (1, )),
-                         (((COS, freq, shift_i), ), (1, ))), (v_r, v_i * 1j))
-            else:
-                pass  # Never reach here
-
-            expr = _mul(((t, ), (1, )), expr)
-            ret = _add(ret, expr)
-    return ret
-
-
-def _filter(expr, low, high, eps):
-    expr = _simplify(expr, eps)
-    ret = _zero
-    for t, v in zip(*expr):
-        for i, (mt, n) in enumerate(zip(*t)):
-            if mt[0] == COS:
-                if low <= mt[1] < high:
-                    ret = _add(ret, ((t, ), (v, )))
-                break
-            elif mt[0] == SINC and n == 1:
-                pass
-            elif mt[0] == GAUSSIAN and n == 1:
-                pass
-        else:
-            if low <= 0:
-                ret = _add(ret, ((t, ), (v, )))
-    return ret
+                        registerDerivative, shift, simplify, wave_sum)
 
 
 def _test_spec_num(num, spec):
@@ -257,11 +80,10 @@ def _fun_latex(fun):
 
 
 def _wav_latex(wav):
-    from waveforms.waveform import _is_const, _zero
 
     if wav == _zero:
         return "0"
-    elif _is_const(wav):
+    elif is_const(wav):
         return f"{wav[1][0]}"
 
     sum_expr = []
@@ -540,10 +362,10 @@ class Waveform:
         return w
 
     def simplify(self, eps=1e-15):
-        seq = [_simplify(self.seq[0], eps)]
+        seq = [simplify(self.seq[0], eps)]
         bounds = [self.bounds[0]]
         for expr, b in zip(self.seq[1:], self.bounds[1:]):
-            expr = _simplify(expr, eps)
+            expr = simplify(expr, eps)
             if expr == seq[-1]:
                 seq.pop()
                 bounds.pop()
@@ -554,19 +376,19 @@ class Waveform:
     def filter(self, low=0, high=inf, eps=1e-15):
         seq = []
         for expr in self.seq:
-            seq.append(_filter(expr, low, high, eps))
+            seq.append(filter(expr, low, high, eps))
         return Waveform(self.bounds, tuple(seq))
 
     def _comb(self, other, oper):
-        return Waveform(*_merge_waveform(self.bounds, self.seq, other.bounds,
-                                         other.seq, oper))
+        return Waveform(*merge_waveform(self.bounds, self.seq, other.bounds,
+                                        other.seq, oper))
 
     def __pow__(self, n):
-        return Waveform(self.bounds, tuple(_pow(w, n) for w in self.seq))
+        return Waveform(self.bounds, tuple(pow(w, n) for w in self.seq))
 
     def __add__(self, other):
         if isinstance(other, Waveform):
-            return self._comb(other, _add)
+            return self._comb(other, add)
         else:
             return self + const(other)
 
@@ -641,7 +463,7 @@ class Waveform:
 
     def __mul__(self, other):
         if isinstance(other, Waveform):
-            return self._comb(other, _mul)
+            return self._comb(other, mul)
         else:
             return self * const(other)
 
@@ -666,7 +488,7 @@ class Waveform:
     def __rshift__(self, time):
         return Waveform(
             tuple(round(bound + time, NDIGITS) for bound in self.bounds),
-            tuple(_shift(expr, time) for expr in self.seq))
+            tuple(shift(expr, time) for expr in self.seq))
 
     def __lshift__(self, time):
         return self >> (-time)
@@ -694,8 +516,8 @@ class Waveform:
             function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
             return self.__call__(np.array([x]), function_lib=function_lib)[0]
-        parts, dtype = _calc_parts(self.bounds, self.seq, x, function_lib,
-                                   self.min, self.max)
+        parts, dtype = calc_parts(self.bounds, self.seq, x, function_lib,
+                                  self.min, self.max)
         if not frag:
             if out is None:
                 out = np.zeros_like(x, dtype=dtype)
@@ -810,7 +632,7 @@ class WaveVStack(Waveform):
             else:
                 function_lib = self.function_lib
         for bounds, seq in self.wlist:
-            parts, dtype = _calc_parts(bounds, seq, x, function_lib)
+            parts, dtype = calc_parts(bounds, seq, x, function_lib)
             self._fill_parts(parts, out)
         return out.real
 
@@ -873,7 +695,7 @@ class WaveVStack(Waveform):
         if time == 0:
             return wlist
         return [(tuple(round(bound + time, NDIGITS) for bound in bounds),
-                 tuple(_shift(expr, time) for expr in seq))
+                 tuple(shift(expr, time) for expr in seq))
                 for bounds, seq in wlist]
 
     def __rshift__(self, time):
@@ -1111,22 +933,9 @@ def _format_EXP(shift, *args):
         return '\\exp\\left(-' + f'{args[0]:g}' + 't\\right)'
 
 
-LINEAR = registerBaseFunc(lambda t: t)
-GAUSSIAN = registerBaseFunc(lambda t, std_sq2: np.exp(-(t / std_sq2)**2))
-ERF = registerBaseFunc(lambda t, std_sq2: special.erf(t / std_sq2))
-COS = registerBaseFunc(lambda t, w: np.cos(w * t))
-SINC = registerBaseFunc(lambda t, bw: np.sinc(bw * t))
-EXP = registerBaseFunc(lambda t, alpha: np.exp(alpha * t))
-INTERP = registerBaseFunc(lambda t, start, stop, points: np.interp(
-    t, np.linspace(start, stop, len(points)), points))
-LINEARCHIRP = registerBaseFunc(lambda t, f0, f1, T, phi0: np.sin(
-    phi0 + 2 * np.pi * ((f1 - f0) / (2 * T) * t**2 + f0 * t)))
-EXPONENTIALCHIRP = registerBaseFunc(lambda t, f0, alpha, phi0: np.sin(
-    phi0 + 2 * pi * f0 * (np.exp(alpha * t) - 1) / alpha))
-HYPERBOLICCHIRP = registerBaseFunc(lambda t, f0, k, phi0: np.sin(
-    phi0 + 2 * np.pi * f0 / k * np.log(1 + k * t)))
-COSH = registerBaseFunc(lambda t, w: np.cosh(w * t))
-SINH = registerBaseFunc(lambda t, w: np.sinh(w * t))
+def _format_DRAG(shift, *args):
+    return f"DRAG(...)"
+
 
 registerBaseFuncLatex(LINEAR, _format_LINEAR)
 registerBaseFuncLatex(GAUSSIAN, _format_GAUSSIAN)
@@ -1136,96 +945,7 @@ registerBaseFuncLatex(SINC, _format_SINC)
 registerBaseFuncLatex(EXP, _format_EXP)
 registerBaseFuncLatex(COSH, _format_COSH)
 registerBaseFuncLatex(SINH, _format_SINH)
-
-
-def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
-          block_freq: float, phase: float):
-
-    o = np.pi / width
-    Omega_x = np.sin(o * (t - t0))**2
-    wt = 2 * np.pi * (freq + delta) * t - (2 * np.pi * delta * t0 + phase)
-
-    if block_freq is None or block_freq - delta == 0:
-        return Omega_x * np.cos(wt)
-
-    b = 1 / np.pi / 2 / (block_freq - delta)
-    Omega_y = -b * o * np.sin(2 * o * (t - t0))
-
-    return Omega_x * np.cos(wt) + Omega_y * np.sin(wt)
-
-
-def _format_DRAG(shift, *args):
-    return f"DRAG(...)"
-
-
-DRAG = registerBaseFunc(_drag)
 registerBaseFuncLatex(DRAG, _format_DRAG)
-
-# register derivative
-registerDerivative(LINEAR, lambda shift, *args: _one)
-
-registerDerivative(
-    GAUSSIAN, lambda shift, *args: (((((LINEAR, shift),
-                                       (GAUSSIAN, *args, shift)), (1, 1)), ),
-                                    (-2 / args[0]**2, )))
-
-registerDerivative(
-    ERF, lambda shift, *args: (((((GAUSSIAN, *args, shift), ), (1, )), ),
-                               (2 / args[0] / np.sqrt(pi), )))
-
-registerDerivative(
-    COS, lambda shift, *args: (((((COS, args[0], shift - pi / args[0] / 2), ),
-                                 (1, )), ), (args[0], )))
-
-registerDerivative(
-    SINC, lambda shift, *args:
-    (((((LINEAR, shift), (COS, *args, shift)), (-1, 1)),
-      (((LINEAR, shift), (COS, args[0], args[1] - pi / 2, shift)), (-2, 1))),
-     (1, -1 / args[0])))
-
-registerDerivative(
-    EXP, lambda shift, *args: (((((EXP, *args, shift), ), (1, )), ),
-                               (args[0], )))
-
-registerDerivative(
-    INTERP, lambda shift, start, stop, points:
-    (((((INTERP, start, stop, tuple(np.gradient(np.asarray(points))), shift),
-        ), (1, )), ), ((len(points) - 1) / (stop - start), )))
-
-registerDerivative(
-    COSH, lambda shift, *args: (((((SINH, *args, shift), ), (1, )), ),
-                                (args[0], )))
-
-registerDerivative(
-    SINH, lambda shift, *args: (((((COSH, *args, shift), ), (1, )), ),
-                                (args[0], )))
-
-
-def _d_LINEARCHIRP(shift, f0, f1, T, phi0):
-    tlist = (
-        (((LINEARCHIRP, f0, f1, T, phi0 + pi / 2, shift), ), (1, )),
-        (((LINEAR, shift), (LINEARCHIRP, f0, f1, T, phi0 + pi / 2, shift)),
-         (1, 1)),
-    )
-    alist = (2 * pi * f0, 2 * pi * (f1 - f0) / T)
-
-    if f0 == 0:
-        return tlist[1:], alist[1:]
-    else:
-        return tlist, alist
-
-
-registerDerivative(LINEARCHIRP, _d_LINEARCHIRP)
-registerDerivative(
-    EXPONENTIALCHIRP, lambda shift, f0, alpha, phi0:
-    (((((EXP, alpha, shift),
-        (EXPONENTIALCHIRP, f0, alpha, phi0 + pi / 2, shift)), (1, 1)), ),
-     (2 * pi * f0, )))
-registerDerivative(
-    HYPERBOLICCHIRP, lambda shift, f0, k, phi0:
-    (((((LINEAR, shift - 1 / k),
-        (HYPERBOLICCHIRP, f0, k, phi0 + pi / 2, shift)), (-1, 1)), ),
-     (2 * pi * f0, )))
 
 
 def D(wav):
@@ -1249,21 +969,21 @@ def step(edge, type='erf'):
     if edge == 0:
         return Waveform(bounds=(0, +inf), seq=(_zero, _one))
     if type == 'cos':
-        rise = _add(_half,
-                    _mul(_half, _basic_wave(COS, pi / edge, shift=0.5 * edge)))
+        rise = add(_half,
+                   mul(_half, basic_wave(COS, pi / edge, shift=0.5 * edge)))
         return Waveform(bounds=(round(-edge / 2,
                                       NDIGITS), round(edge / 2,
                                                       NDIGITS), +inf),
                         seq=(_zero, rise, _one))
     elif type == 'linear':
-        rise = _add(_half, _mul(_const(1 / edge), _basic_wave(LINEAR)))
+        rise = add(_half, mul(_const(1 / edge), basic_wave(LINEAR)))
         return Waveform(bounds=(round(-edge / 2,
                                       NDIGITS), round(edge / 2,
                                                       NDIGITS), +inf),
                         seq=(_zero, rise, _one))
     else:
         std_sq2 = edge / 5
-        # rise = _add(_half, _mul(_half, _basic_wave(ERF, std_sq2)))
+        # rise = add(_half, mul(_half, basic_wave(ERF, std_sq2)))
         rise = ((((), ()), (((ERF, std_sq2, 0), ), (1, ))), (0.5, 0.5))
         return Waveform(bounds=(-round(edge, NDIGITS), round(edge,
                                                              NDIGITS), +inf),
@@ -1295,7 +1015,7 @@ def gaussian(width, plateau=0.0):
         return Waveform(bounds=(round(-0.75 * width,
                                       NDIGITS), round(0.75 * width,
                                                       NDIGITS), +inf),
-                        seq=(_zero, _basic_wave(GAUSSIAN, std_sq2), _zero))
+                        seq=(_zero, basic_wave(GAUSSIAN, std_sq2), _zero))
     else:
         return Waveform(bounds=(round(-0.75 * width - 0.5 * plateau,
                                       NDIGITS), round(-0.5 * plateau, NDIGITS),
@@ -1303,12 +1023,11 @@ def gaussian(width, plateau=0.0):
                                 round(0.75 * width + 0.5 * plateau,
                                       NDIGITS), +inf),
                         seq=(_zero,
-                             _basic_wave(GAUSSIAN,
-                                         std_sq2,
-                                         shift=-0.5 * plateau), _one,
-                             _basic_wave(GAUSSIAN,
-                                         std_sq2,
-                                         shift=0.5 * plateau), _zero))
+                             basic_wave(GAUSSIAN,
+                                        std_sq2,
+                                        shift=-0.5 * plateau), _one,
+                             basic_wave(GAUSSIAN, std_sq2,
+                                        shift=0.5 * plateau), _zero))
 
 
 def cos(w, phi=0):
@@ -1317,7 +1036,7 @@ def cos(w, phi=0):
     if w < 0:
         phi = -phi
         w = -w
-    return Waveform(seq=(_basic_wave(COS, w, shift=-phi / w), ))
+    return Waveform(seq=(basic_wave(COS, w, shift=-phi / w), ))
 
 
 def sin(w, phi=0):
@@ -1326,7 +1045,7 @@ def sin(w, phi=0):
     if w < 0:
         phi = -phi + pi
         w = -w
-    return Waveform(seq=(_basic_wave(COS, w, shift=(pi / 2 - phi) / w), ))
+    return Waveform(seq=(basic_wave(COS, w, shift=(pi / 2 - phi) / w), ))
 
 
 def exp(alpha):
@@ -1336,7 +1055,7 @@ def exp(alpha):
         else:
             return exp(alpha.real) * (cos(alpha.imag) + 1j * sin(alpha.imag))
     else:
-        return Waveform(seq=(_basic_wave(EXP, alpha), ))
+        return Waveform(seq=(basic_wave(EXP, alpha), ))
 
 
 def sinc(bw):
@@ -1345,12 +1064,12 @@ def sinc(bw):
     width = 100 / bw
     return Waveform(bounds=(round(-0.5 * width,
                                   NDIGITS), round(0.5 * width, NDIGITS), +inf),
-                    seq=(_zero, _basic_wave(SINC, bw), _zero))
+                    seq=(_zero, basic_wave(SINC, bw), _zero))
 
 
 def cosPulse(width, plateau=0.0):
-    # cos = _basic_wave(COS, 2*np.pi/width)
-    # pulse = _mul(_add(cos, _one), _half)
+    # cos = basic_wave(COS, 2*np.pi/width)
+    # pulse = mul(add(cos, _one), _half)
     if round(0.5 * plateau, NDIGITS) > 0:
         return square(plateau + 0.5 * width, edge=0.5 * width, type='cos')
     if width <= 0:
@@ -1367,11 +1086,11 @@ def hanning(width, plateau=0.0):
 
 
 def cosh(w):
-    return Waveform(seq=(_basic_wave(COSH, w), ))
+    return Waveform(seq=(basic_wave(COSH, w), ))
 
 
 def sinh(w):
-    return Waveform(seq=(_basic_wave(SINH, w), ))
+    return Waveform(seq=(basic_wave(SINH, w), ))
 
 
 def coshPulse(width, eps=1.0, plateau=0.0):
@@ -1473,26 +1192,25 @@ def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
     phase += pi * delta * (width + plateau)
     if plateau <= 0:
         return Waveform(seq=(_zero,
-                             _basic_wave(DRAG, t0, freq, width, delta,
-                                         block_freq, phase), _zero),
+                             basic_wave(DRAG, t0, freq, width, delta,
+                                        block_freq, phase), _zero),
                         bounds=(round(t0, NDIGITS), round(t0 + width,
                                                           NDIGITS), +inf))
     elif width <= 0:
         w = 2 * pi * (freq + delta)
         return Waveform(
             seq=(_zero,
-                 _basic_wave(COS, w,
-                             shift=(phase + 2 * pi * delta * t0) / w), _zero),
+                 basic_wave(COS, w,
+                            shift=(phase + 2 * pi * delta * t0) / w), _zero),
             bounds=(round(t0, NDIGITS), round(t0 + plateau, NDIGITS), +inf))
     else:
         w = 2 * pi * (freq + delta)
         return Waveform(
             seq=(_zero,
-                 _basic_wave(DRAG, t0, freq, width, delta, block_freq, phase),
-                 _basic_wave(COS, w, shift=(phase + 2 * pi * delta * t0) / w),
-                 _basic_wave(DRAG, t0 + plateau, freq, width, delta,
-                             block_freq,
-                             phase - 2 * pi * delta * plateau), _zero),
+                 basic_wave(DRAG, t0, freq, width, delta, block_freq, phase),
+                 basic_wave(COS, w, shift=(phase + 2 * pi * delta * t0) / w),
+                 basic_wave(DRAG, t0 + plateau, freq, width, delta, block_freq,
+                            phase - 2 * pi * delta * plateau), _zero),
             bounds=(round(t0, NDIGITS), round(t0 + width / 2, NDIGITS),
                     round(t0 + width / 2 + plateau,
                           NDIGITS), round(t0 + width + plateau,
@@ -1515,8 +1233,8 @@ def chirp(f0, f1, T, phi0=0, type='linear'):
     if type == 'linear':
         # f(t) = f1 * (t/T) + f0 * (1 - t/T)
         return Waveform(bounds=(0, round(T, NDIGITS), +inf),
-                        seq=(_zero, _basic_wave(LINEARCHIRP, f0, f1, T,
-                                                phi0), _zero))
+                        seq=(_zero, basic_wave(LINEARCHIRP, f0, f1, T,
+                                               phi0), _zero))
     elif type in ['exp', 'exponential', 'geometric']:
         # f(t) = f0 * (f1/f0) ** (t/T)
         if f0 == 0:
@@ -1524,16 +1242,16 @@ def chirp(f0, f1, T, phi0=0, type='linear'):
         alpha = np.log(f1 / f0) / T
         return Waveform(bounds=(0, round(T, NDIGITS), +inf),
                         seq=(_zero,
-                             _basic_wave(EXPONENTIALCHIRP, f0, alpha,
-                                         phi0), _zero))
+                             basic_wave(EXPONENTIALCHIRP, f0, alpha,
+                                        phi0), _zero))
     elif type in ['hyperbolic', 'hyp']:
         # f(t) = f0 * f1 / (f0 * (t/T) + f1 * (1-t/T))
         if f0 * f1 == 0:
             return const(np.sin(phi0))
         k = (f0 - f1) / (f1 * T)
         return Waveform(bounds=(0, round(T, NDIGITS), +inf),
-                        seq=(_zero, _basic_wave(HYPERBOLICCHIRP, f0, k,
-                                                phi0), _zero))
+                        seq=(_zero, basic_wave(HYPERBOLICCHIRP, f0, k,
+                                               phi0), _zero))
     else:
         raise ValueError(f'unknown type {type}')
 
@@ -1544,9 +1262,10 @@ def interp(x, y):
         if x2 == x1:
             continue
         seq.append(
-            _add(
-                _mul(_const((y2 - y1) / (x2 - x1)),
-                     _basic_wave(LINEAR, shift=x1)), _const(y1)))
+            add(
+                mul(_const((y2 - y1) / (x2 - x1)), basic_wave(LINEAR,
+                                                              shift=x1)),
+                _const(y1)))
         bounds.append(x2)
     bounds.append(inf)
     seq.append(_zero)
@@ -1576,7 +1295,7 @@ def cut(wav, start=None, stop=None, head=None, tail=None, min=None, max=None):
 
 def function(fun, *args, start=None, stop=None):
     TYPEID = registerBaseFunc(fun)
-    seq = (_basic_wave(TYPEID, *args), )
+    seq = (basic_wave(TYPEID, *args), )
     wav = Waveform(seq=seq)
     if start is not None:
         wav = wav * (step(0) >> start)
@@ -1587,8 +1306,8 @@ def function(fun, *args, start=None, stop=None):
 
 def samplingPoints(start, stop, points):
     return Waveform(bounds=(round(start, NDIGITS), round(stop, NDIGITS), inf),
-                    seq=(_zero, _basic_wave(INTERP, start, stop,
-                                            tuple(points)), _zero))
+                    seq=(_zero, basic_wave(INTERP, start, stop,
+                                           tuple(points)), _zero))
 
 
 def mixing(I,

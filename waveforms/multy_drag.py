@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 
-from .waveform import (COS, NDIGITS, Waveform, _basic_wave, _zero, inf, pi,
+from .waveform import (COS, NDIGITS, Waveform, _zero, basic_wave, inf, pi,
                        registerBaseFunc, registerDerivative)
 
 
@@ -182,8 +182,8 @@ def drag_sin(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
     if isinstance(block_freq, float):
         block_freq = (block_freq, )
     return Waveform(seq=(_zero,
-                         _basic_wave(DRAG_SIN, t0, freq, width, delta,
-                                     block_freq, phase, plateau), _zero),
+                         basic_wave(DRAG_SIN, t0, freq, width, delta,
+                                    block_freq, phase, plateau), _zero),
                     bounds=(round(t0,
                                   NDIGITS), round(t0 + width + plateau,
                                                   NDIGITS), +inf))
@@ -225,8 +225,8 @@ def drag_sinx(freq,
     if isinstance(block_freq, float):
         block_freq = (block_freq, )
     return Waveform(seq=(_zero,
-                         _basic_wave(DRAG_SINX, t0, freq, width, delta,
-                                     block_freq, phase, plateau, tab), _zero),
+                         basic_wave(DRAG_SINX, t0, freq, width, delta,
+                                    block_freq, phase, plateau, tab), _zero),
                     bounds=(round(t0,
                                   NDIGITS), round(t0 + width + plateau,
                                                   NDIGITS), +inf))
