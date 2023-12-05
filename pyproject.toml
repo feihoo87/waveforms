@@ -32,6 +32,7 @@ dependencies = [
     "click>=7.1.2",
     "dill>=0.3.6",
     "GitPython>=3.1.14",
+    "matplotlib>=3.7.2",
     "numpy>=1.13.3",
     "ply>=3.11",
     "scipy>=1.0.0"
