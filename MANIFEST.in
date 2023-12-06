@@ -1,3 +1,2 @@
-include waveforms/qlisp/qasm/libs/*.inc
 include src/*.h
 include MANIFEST.in

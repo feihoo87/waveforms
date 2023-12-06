@@ -20,8 +20,6 @@ def get_extensions():
     #from pathlib import Path
 
     extensions = [
-        Extension('waveforms.math._prime', ['src/prime.c'],
-                  include_dirs=['src']),
         Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
                   include_dirs=['src']),
         # Extension(

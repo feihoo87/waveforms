@@ -7,6 +7,7 @@ def test_drag_sin():
     t0 = 0e-9
     freq = 5e9
     width = 22.22e-9
+    np.random.seed(1234)
     delta = np.random.random() * 9.5e6 - 19e6
     plateau = 0
     block_freq = tuple(
@@ -43,6 +44,7 @@ def test_drag_sinx():
     t0 = 0e-9
     freq = 5e9
     width = 22.22e-9
+    np.random.seed(1234)
     delta = np.random.random() * 9.5e6 - 19e6
     plateau = 0
     block_freq = tuple(
