@@ -204,35 +204,25 @@ class Waveform:
                 stop = start + length
                 size = chunk_size
             x = np.linspace(start, stop, size, endpoint=False)
-            if out is not None:
-                if filters is None:
+
+            if filters is None:
+                if out is not None:
                     yield self.__call__(x,
                                         out=out[start_n:],
                                         function_lib=function_lib)
                 else:
-                    if initial:
-                        sig -= initial
-                    sig, zi = sosfilt(sos,
-                                      self.__call__(x,
-                                                    function_lib=function_lib),
-                                      zi=zi)
-                    if initial:
-                        sig += initial
-                    out[start_n:start_n + size] = sig
-                    yield sig
-            else:
-                if filters is None:
                     yield self.__call__(x, function_lib=function_lib)
-                else:
-                    if initial:
-                        sig -= initial
-                    sig, zi = sosfilt(sos,
-                                      self.__call__(x,
-                                                    function_lib=function_lib),
-                                      zi=zi)
-                    if initial:
-                        sig += initial
-                    yield sig
+            else:
+                sig = self.__call__(x, function_lib=function_lib)
+                if initial:
+                    sig -= initial
+                sig, zi = sosfilt(sos, sig, zi=zi)
+                if initial:
+                    sig += initial
+                if out is not None:
+                    out[start_n:start_n + size] = sig
+                yield sig
+
             start = stop
             start_n += chunk_size
 
