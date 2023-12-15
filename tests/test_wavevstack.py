@@ -3,6 +3,7 @@ import scipy.special as special
 from scipy.signal import butter, lfilter, lfiltic, tf2sos
 
 from waveforms import *
+from waveforms._waveform import wave_sum
 from waveforms.waveform import WaveVStack
 
 
@@ -134,3 +135,9 @@ def test_filters():
     l = wav.tolist()
     wav2 = WaveVStack.fromlist(l)
     assert np.allclose(wav2.sample(), points, atol=1e-6)
+
+
+def test_wave_sum():
+    assert wave_sum([((-1.0, np.inf), (((), ()), ((((), ()), ), (0.02, )))),
+                     ((-1.0, np.inf), (((), ()), ((((), ()), ), (-0.02, ))))
+                     ]) == ((np.inf, ), (((), ()), ))

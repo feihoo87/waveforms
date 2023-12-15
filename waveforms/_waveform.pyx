@@ -205,8 +205,8 @@ def wave_sum(waves):
     i = 0
     while i < len(bounds) - 1:
         if seq[i] == seq[i + 1]:
-            del seq[i + 1]
-            del bounds[i + 1]
+            del seq[i]
+            del bounds[i]
         else:
             i += 1
 
