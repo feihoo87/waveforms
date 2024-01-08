@@ -26,23 +26,35 @@ class GitFinder(importlib.abc.MetaPathFinder):
 
 
 class GitModuleLoader(importlib.abc.FileLoader, importlib.abc.SourceLoader):
-    def __init__(self, repo_path, name, fullname):
+    def __init__(self, repo_path, revision, fullname):
         self.repo_path = repo_path
-        self.hexsha = git.Repo(self.repo_path).commit(name).hexsha
+        self.hexsha = git.Repo(self.repo_path).commit(revision).hexsha
 
         self.blob, self.filepath, self._is_package = self._find_blob(
-            repo_path, name, '/'.join(fullname.split('.')))
-
-    def _find_blob(self, repo_path, name, filepath):
+            repo_path, revision, '/'.join(fullname.split('.')))
+        
+    def get_blob(self, revision, filepath):
         try:
             # find a module
-            blob = git.Repo(repo_path).commit(name).tree[filepath + '.py']
+            blob = git.Repo(self.repo_path).commit(revision).tree[filepath + '.py']
+            return blob, filepath + '.py'
+        except KeyError:
+            try:
+                blob = git.Repo(self.repo_path).commit(revision).tree[filepath + '.pyc']
+                return blob, filepath + '.pyc'
+            except KeyError:
+                return None, None
+
+    def _find_blob(self, repo_path, revision, filepath):
+        try:
+            # find a module
+            blob = git.Repo(repo_path).commit(revision).tree[filepath + '.py']
             return blob, filepath + '.py', False
         except KeyError:
             pass
         try:
             # find a package
-            blob = git.Repo(repo_path).commit(name).tree[filepath +
+            blob = git.Repo(repo_path).commit(revision).tree[filepath +
                                                          '/__init__.py']
             return blob, filepath + '/__init__.py', True
         except KeyError:
