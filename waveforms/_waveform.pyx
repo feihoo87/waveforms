@@ -336,7 +336,7 @@ def _SINH(t, w):
 
 
 def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
-          block_freq: float, phase: float):
+          block_freq: float | None, phase: float):
 
     o = np.pi / width
     Omega_x = np.sin(o * (t - t0))**2
