@@ -1,2 +1,3 @@
 include src/*.h
+include waveforms/_waveforms.pyx
 include MANIFEST.in
