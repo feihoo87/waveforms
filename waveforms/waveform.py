@@ -127,36 +127,38 @@ class Waveform:
         self.filters = None
         self.label = None
 
-    def _begin(self):
-        for i, s in enumerate(self.seq):
+    @staticmethod
+    def _begin(bounds, seq):
+        for i, s in enumerate(seq):
             if s is not _zero:
                 if i == 0:
                     return -inf
-                return self.bounds[i - 1]
+                return bounds[i - 1]
         return inf
 
-    def _end(self):
-        N = len(self.bounds)
-        for i, s in enumerate(self.seq[::-1]):
+    @staticmethod
+    def _end(bounds, seq):
+        N = len(bounds)
+        for i, s in enumerate(seq[::-1]):
             if s is not _zero:
                 if i == 0:
                     return inf
-                return self.bounds[N - i - 1]
+                return bounds[N - i - 1]
         return -inf
 
     @property
     def begin(self):
         if self.start is None:
-            return self._begin()
+            return self._begin(self.bounds, self.seq)
         else:
-            return max(self.start, self._begin())
+            return max(self.start, self._begin(self.bounds, self.seq))
 
     @property
     def end(self):
         if self.stop is None:
-            return self._end()
+            return self._end(self.bounds, self.seq)
         else:
-            return min(self.stop, self._end())
+            return min(self.stop, self._end(self.bounds, self.seq))
 
     def sample(self,
                sample_rate=None,
@@ -610,6 +612,34 @@ class WaveVStack(Waveform):
         self.filters = None
         self.label = None
         self.function_lib = None
+
+    def __begin(self):
+        if self.wlist:
+            v = [self._begin(bounds, seq) for bounds, seq in self.wlist]
+            return min(v)
+        else:
+            return -inf
+
+    def __end(self):
+        if self.wlist:
+            v = [self._end(bounds, seq) for bounds, seq in self.wlist]
+            return max(v)
+        else:
+            return inf
+
+    @property
+    def begin(self):
+        if self.start is None:
+            return self.__begin()
+        else:
+            return max(self.start, self.__begin())
+
+    @property
+    def end(self):
+        if self.stop is None:
+            return self.__end()
+        else:
+            return min(self.stop, self.__end())
 
     def __call__(self, x, frag=False, out=None, function_lib=None):
         assert frag is False, 'WaveVStack does not support frag mode'
