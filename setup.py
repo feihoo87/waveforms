@@ -20,8 +20,8 @@ def get_extensions():
     #from pathlib import Path
 
     extensions = [
-        Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
-                  include_dirs=['src']),
+        # Extension('waveforms.sys.net._kcp', ['src/kcp.c', 'src/ikcp.c'],
+        #           include_dirs=['src']),
         # Extension(
         #     'waveforms.math.npufunc',
         #     ['src/multi_type_logit.c'],

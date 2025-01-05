@@ -1,7 +1,5 @@
 import click
 
-from .sys.net.cli import dht
-
 
 @click.group()
 def main():
@@ -13,8 +11,6 @@ def hello():
     """Print hello world."""
     click.echo('hello, world')
 
-
-main.add_command(dht)
 
 if __name__ == '__main__':
     main()
