@@ -49,7 +49,7 @@ class WaveformVisitor:
     
     def visit(self, ctx):
         """Visit a parse tree node."""
-        method_name = f'visit_{type(ctx).__name__}'
+        method_name = f'visit{type(ctx).__name__}'
         visitor = getattr(self, method_name, self.generic_visit)
         return visitor(ctx)
     
@@ -62,107 +62,114 @@ class WaveformVisitor:
                 return [self.visit(child) for child in ctx.children]
         return ctx.getText()
     
-    def visit_ExprContext(self, ctx):
+    def visitExprContext(self, ctx):
         """Visit expression context."""
-        return self.visit(ctx.children[0])
+        if ctx.assignment():
+            return self.visit(ctx.assignment())
+        else:
+            return self.visit(ctx.expression())
     
-    def visit_PowerExpressionContext(self, ctx):
+    def visitAssignmentContext(self, ctx):
+        """Visit assignment context - not supported in waveform expressions."""
+        raise WaveformParseError("Assignment expressions are not supported")
+    
+    def visitPowerExpressionContext(self, ctx):
         """Handle power expressions (** or ^)."""
         left = self.visit(ctx.expression(0))
         right = self.visit(ctx.expression(1))
         return left ** right
     
-    def visit_MultiplyDivideExpressionContext(self, ctx):
+    def visitMultiplyDivideExpressionContext(self, ctx):
         """Handle multiplication and division."""
         left = self.visit(ctx.expression(0))
         right = self.visit(ctx.expression(1))
-        op = ctx.op.text
+        op = ctx.getChild(1).getText()  # Get operator text
         if op == '*':
             return left * right
         else:  # op == '/'
             return left / right
     
-    def visit_AddSubtractExpressionContext(self, ctx):
+    def visitAddSubtractExpressionContext(self, ctx):
         """Handle addition and subtraction."""
         left = self.visit(ctx.expression(0))
         right = self.visit(ctx.expression(1))
-        op = ctx.op.text
+        op = ctx.getChild(1).getText()  # Get operator text
         if op == '+':
             return left + right
         else:  # op == '-'
             return left - right
     
-    def visit_ShiftExpressionContext(self, ctx):
+    def visitShiftExpressionContext(self, ctx):
         """Handle shift expressions (<< and >>)."""
         left = self.visit(ctx.expression(0))
         right = self.visit(ctx.expression(1))
-        op = ctx.op.text
+        op = ctx.getChild(1).getText()  # Get operator text
         if op == '<<':
             return left << right
         else:  # op == '>>'
             return left >> right
     
-    def visit_ParenthesesExpressionContext(self, ctx):
+    def visitParenthesesExpressionContext(self, ctx):
         """Handle parentheses expressions."""
         return self.visit(ctx.expression())
     
-    def visit_UnaryMinusExpressionContext(self, ctx):
+    def visitUnaryMinusExpressionContext(self, ctx):
         """Handle unary minus expressions."""
         return -self.visit(ctx.expression())
     
-    def visit_FunctionCallExpressionContext(self, ctx):
+    def visitFunctionCallExpressionContext(self, ctx):
         """Handle function call expressions."""
         return self.visit(ctx.functionCall())
     
-    def visit_ConstantExpressionContext(self, ctx):
+    def visitConstantExpressionContext(self, ctx):
         """Handle constant expressions."""
         const_name = ctx.CONSTANT().getText()
         return self.constants[const_name]
     
-    def visit_NumberExpressionContext(self, ctx):
+    def visitNumberExpressionContext(self, ctx):
         """Handle number expressions."""
         return literal_eval(ctx.NUMBER().getText())
     
-    def visit_StringExpressionContext(self, ctx):
+    def visitStringExpressionContext(self, ctx):
         """Handle string expressions."""
         return literal_eval(ctx.STRING().getText())
     
-    def visit_ListExpressionContext(self, ctx):
+    def visitListExpressionContext(self, ctx):
         """Handle list expressions."""
-        return self.visit(ctx.list())
+        return self.visit(ctx.list_())
     
-    def visit_TupleExpressionContext(self, ctx):
+    def visitTupleExpressionContext(self, ctx):
         """Handle tuple expressions."""
-        return self.visit(ctx.tuple())
+        return self.visit(ctx.tuple_())
     
-    def visit_IdentifierExpressionContext(self, ctx):
+    def visitIdentifierExpressionContext(self, ctx):
         """Handle identifier expressions."""
         # This could be a variable reference, but for now we'll raise an error
         # as the original implementation doesn't support variables
         var_name = ctx.ID().getText()
         raise WaveformParseError(f"Unknown identifier '{var_name}'")
     
-    def visit_NoArgFunctionContext(self, ctx):
+    def visitNoArgFunctionContext(self, ctx):
         """Handle function calls with no arguments."""
         func_name = ctx.ID().getText()
         func = self.get_function(func_name)
         return func()
     
-    def visit_ArgsFunctionContext(self, ctx):
+    def visitArgsFunctionContext(self, ctx):
         """Handle function calls with positional arguments."""
         func_name = ctx.ID().getText()
         func = self.get_function(func_name)
         args = self.visit(ctx.args())
         return func(*args)
     
-    def visit_KwargsFunctionContext(self, ctx):
+    def visitKwargsFunctionContext(self, ctx):
         """Handle function calls with keyword arguments."""
         func_name = ctx.ID().getText()
         func = self.get_function(func_name)
         kwargs = self.visit(ctx.kwargs())
         return func(**kwargs)
     
-    def visit_ArgsKwargsFunctionContext(self, ctx):
+    def visitArgsKwargsFunctionContext(self, ctx):
         """Handle function calls with both positional and keyword arguments."""
         func_name = ctx.ID().getText()
         func = self.get_function(func_name)
@@ -170,11 +177,11 @@ class WaveformVisitor:
         kwargs = self.visit(ctx.kwargs())
         return func(*args, **kwargs)
     
-    def visit_ArgsContext(self, ctx):
+    def visitArgsContext(self, ctx):
         """Handle argument lists."""
         return [self.visit(expr) for expr in ctx.expression()]
     
-    def visit_KwargsContext(self, ctx):
+    def visitKwargsContext(self, ctx):
         """Handle keyword argument lists."""
         kwargs = {}
         for kwarg in ctx.kwarg():
@@ -182,23 +189,24 @@ class WaveformVisitor:
             kwargs[key] = value
         return kwargs
     
-    def visit_KwargContext(self, ctx):
+    def visitKwargContext(self, ctx):
         """Handle individual keyword arguments."""
         key = ctx.ID().getText()
         value = self.visit(ctx.expression())
         return key, value
     
-    def visit_ListContext(self, ctx):
+    def visitListContext(self, ctx):
         """Handle list literals."""
         if ctx.expression():
             return [self.visit(expr) for expr in ctx.expression()]
         return []
     
-    def visit_TupleContext(self, ctx):
+    def visitTupleContext(self, ctx):
         """Handle tuple literals."""
-        if len(ctx.expression()) == 1:
-            return (self.visit(ctx.expression(0)),)
-        return tuple(self.visit(expr) for expr in ctx.expression())
+        expressions = ctx.expression()
+        if len(expressions) == 1:
+            return (self.visit(expressions[0]),)
+        return tuple(self.visit(expr) for expr in expressions)
 
 
 def _generate_antlr_parser():
@@ -235,6 +243,36 @@ def _generate_antlr_parser():
 
 def parse_waveform_expression(expr: str) -> waveform.Waveform:
     """Parse a waveform expression using ANTLR4."""
-    # For now, raise an error to indicate ANTLR parser is not yet ready
-    # This will cause the fallback to PLY parser in wave_eval
-    raise WaveformParseError("ANTLR parser not yet fully implemented - falling back to PLY parser") 
+    try:
+        # Import generated ANTLR classes
+        from .WaveformLexer import WaveformLexer
+        from .WaveformParser import WaveformParser
+        
+        # Create lexer and parser
+        input_stream = InputStream(expr)
+        lexer = WaveformLexer(input_stream)
+        stream = CommonTokenStream(lexer)
+        parser = WaveformParser(stream)
+        
+        # Add error listener
+        error_listener = WaveformErrorListener()
+        parser.removeErrorListeners()
+        parser.addErrorListener(error_listener)
+        
+        # Parse expression
+        tree = parser.expr()
+        
+        # Visit tree and evaluate
+        visitor = WaveformVisitor()
+        result = visitor.visit(tree)
+        
+        # Convert numeric results to waveforms
+        if isinstance(result, (int, float, complex)):
+            result = waveform.const(result)
+        
+        return result.simplify()
+        
+    except Exception as e:
+        if isinstance(e, WaveformParseError):
+            raise
+        raise WaveformParseError(f"Failed to parse expression '{expr}': {str(e)}") 

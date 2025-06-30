@@ -33,32 +33,23 @@
 
 ## 使用方式
 
-### 默认使用 ANTLR 4 解析器
-
 ```python
 from waveforms import wave_eval
 
-# 默认使用 ANTLR 4 解析器
+# 使用 ANTLR 4 解析器（唯一选项）
 waveform = wave_eval("gaussian(10) * cos(2*pi*50)")
 ```
 
-### 强制使用 PLY 解析器
-
-```python
-from waveforms import wave_eval
-
-# 强制使用传统的 PLY 解析器
-waveform = wave_eval("gaussian(10) * cos(2*pi*50)", use_antlr=False)
-```
+API 保持完全不变，所有现有代码无需修改即可继续使用。
 
 ## 当前状态
 
-**注意**: ANTLR 4 解析器的完整实现尚未完成。目前系统会自动回退到 PLY 解析器，确保所有功能正常工作。
+**✅ 重构完成**: ANTLR 4 解析器已经完全实现并替代了 PLY 解析器。
 
-- ✅ PLY 回退机制正常工作
+- ✅ ANTLR 4 解析器完全实现
 - ✅ 所有现有测试通过
-- ✅ 向后兼容性保持
-- 🔄 ANTLR 4 解析器实现进行中
+- ✅ 移除了 PLY 依赖
+- ✅ 保持完全向后兼容性
 
 ## 测试结果
 
@@ -68,15 +59,17 @@ waveform = wave_eval("gaussian(10) * cos(2*pi*50)", use_antlr=False)
 20 tests passed
 ```
 
-## 下一步计划
+## 后续优化方向
 
-1. 完成 ANTLR 4 解析器的完整实现
-2. 添加 ANTLR 特定的测试用例
+1. ✅ 完成 ANTLR 4 解析器的完整实现
+2. 添加更多 ANTLR 特定的测试用例
 3. 优化错误处理和错误信息
-4. 在确认 ANTLR 解析器稳定后，逐步弃用 PLY 解析器
+4. 考虑添加更高级的语法特性（如变量支持）
 
 ## 开发者注意事项
 
 - 如果需要修改语法规则，请编辑 `waveforms/Waveform.g4` 文件
 - 生成 ANTLR 解析器需要 Java 环境和 ANTLR 4 工具
-- CI/CD 管道已经配置了自动生成 ANTLR 文件的功能 
+- 重新生成解析器后需要相应更新 `antlr_parser.py` 中的访问者方法
+- CI/CD 管道已经配置了自动生成 ANTLR 文件的功能
+- PLY 相关代码已完全移除，项目现在完全依赖 ANTLR 4 
