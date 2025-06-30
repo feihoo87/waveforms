@@ -15,125 +15,61 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
-    
+    - name: Install Java (for ANTLR)
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '11'
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        
-    - name: Install Java (for ANTLR)
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '11'
-        
     - name: Install ANTLR4
       run: |
-        curl -O https://www.antlr.org/download/antlr-4.11.1-complete.jar
-        echo "ANTLR_JAR=$(pwd)/antlr-4.11.1-complete.jar" >> $GITHUB_ENV
-      shell: bash
-      
+        python -m pip install --upgrade pip
+        python -m pip install --upgrade setuptools
+        python -m pip install antlr4-tools
     - name: Generate ANTLR Parser
       run: |
-        java -jar $ANTLR_JAR -Dlanguage=Python3 -o waveforms/ waveforms/Waveform.g4
-      shell: bash
-      
+        antlr4 -Dlanguage=Python3 waveforms/Waveform.g4
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        python -m pip install --upgrade setuptools wheel
-        python -m pip install build pytest pytest-asyncio numpy cython uv
-        python -m pip install antlr4-python3-runtime>=4.11.1
+        python -m pip install build pytest pytest-asyncio numpy coveralls cython
         python setup.py build_ext --inplace
-        python -m pip install ".[full,test]"
-        
+        python -m pip install ".[full]"
     - name: Test with pytest
       run: |
-        python -m pytest --verbose tests/
-        
+        coverage run --source=waveforms -m pytest --verbose tests/
+    - name: Coveralls
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        coveralls --service=github   
     - name: Build package
-      if: ${{ matrix.python-version == '3.11' }}
       run: |
-        python -m build
-        
-    - name: Store artifacts
-      if: ${{ matrix.python-version == '3.11' }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: dist-${{ matrix.os }}
-        path: dist/
-
-  publish:
-    needs: test
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' }}
-
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        
-    - name: Install Java (for ANTLR)
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '11'
-        
-    - name: Install ANTLR4
+        pip install build setuptools wheel twine
+        python setup.py sdist bdist_wheel
+    - name: Repair package
+      if: ${{ matrix.os == 'ubuntu-latest' }}
       run: |
-        curl -O https://www.antlr.org/download/antlr-4.11.1-complete.jar
-        echo "ANTLR_JAR=$(pwd)/antlr-4.11.1-complete.jar" >> $GITHUB_ENV
-        
-    - name: Generate ANTLR Parser
+        pip install auditwheel
+        wheel_file=dist/*.whl
+        auditwheel show $wheel_file
+        auditwheel repair $wheel_file --plat manylinux_2_17_x86_64
+        rm $wheel_file
+        mv wheelhouse/*.whl dist/
+        ls -lh dist/
+    - name: Publish package
+      if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release' }}
       run: |
-        java -jar $ANTLR_JAR -Dlanguage=Python3 -o waveforms/ waveforms/Waveform.g4
-        
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: dist-all/
-        
-    - name: Prepare distribution
-      run: |
-        mkdir -p dist/
-        find dist-all/ -name "*.whl" -o -name "*.tar.gz" | xargs -I {} cp {} dist/
-        ls -la dist/
-        
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        python -m pip install --upgrade setuptools wheel build twine cython numpy
-        python -m pip install antlr4-python3-runtime>=4.11.1
-        python setup.py build_ext --inplace
-        
-    - name: Build source distribution
-      run: |
-        python -m build --sdist
-        
-    - name: Repair wheels (Linux)
-      run: |
-        python -m pip install auditwheel
-        for wheel in dist/*.whl; do
-          if [[ $wheel == *"linux"* ]]; then
-            auditwheel show "$wheel"
-            auditwheel repair "$wheel" --plat linux_x86_64 -w dist/
-            rm "$wheel"
-          fi
-        done
-        
-    - name: Publish to PyPI
+        twine upload --verbose --skip-existing dist/*
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: |
-        python -m twine upload --verbose --skip-existing dist/*
