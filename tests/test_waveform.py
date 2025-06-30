@@ -139,6 +139,11 @@ def test_chirp():
 
 
 def test_parser():
+    assert wave_eval("one()") == one()
+    assert wave_eval("zero()") == zero()
+    assert wave_eval("pi") == pi
+    assert wave_eval("e") == e
+
     w1 = (gaussian(10) <<
           100) + square(20, edge=5, type='linear') * cos(2 * pi * 23.1)
     w2 = wave_eval(
