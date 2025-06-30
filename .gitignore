@@ -135,3 +135,7 @@ dmypy.json
 .antlr/
 *.interp
 *.tokens
+
+waveforms/WaveformLexer.py
+waveforms/WaveformParser.py
+waveforms/WaveformListener.py
