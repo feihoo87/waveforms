@@ -227,10 +227,10 @@ def _generate_antlr_parser():
     # Generate ANTLR files
     try:
         result = subprocess.run([
-            "antlr4", "-Dlanguage=Python3", "-o",
-            str(current_dir),
+            "antlr4", "-Dlanguage=Python3",
             str(grammar_file)
         ],
+                                cwd=str(current_dir),
                                 capture_output=True,
                                 text=True,
                                 check=True)
@@ -240,10 +240,10 @@ def _generate_antlr_parser():
             antlr_jar = os.environ.get('ANTLR_JAR',
                                        'antlr-4.11.1-complete.jar')
             result = subprocess.run([
-                "java", "-jar", antlr_jar, "-Dlanguage=Python3", "-o",
-                str(current_dir),
+                "java", "-jar", antlr_jar, "-Dlanguage=Python3",
                 str(grammar_file)
             ],
+                                    cwd=str(current_dir),
                                     capture_output=True,
                                     text=True,
                                     check=True)
@@ -256,6 +256,9 @@ def _generate_antlr_parser():
 def parse_waveform_expression(expr: str) -> waveform.Waveform:
     """Parse a waveform expression using ANTLR4."""
     try:
+        # Generate parser files if they don't exist
+        # _generate_antlr_parser()
+        
         # Import generated ANTLR classes
         from .WaveformLexer import WaveformLexer
         from .WaveformParser import WaveformParser

@@ -38,7 +38,7 @@ jobs:
         python -m pip install antlr4-tools
     - name: Generate ANTLR Parser
       run: |
-        antlr4 -Dlanguage=Python3 waveforms/Waveform.g4
+        cd waveforms && antlr4 -Dlanguage=Python3 Waveform.g4
     - name: Install dependencies
       run: |
         python -m pip install build pytest pytest-asyncio numpy coveralls cython
