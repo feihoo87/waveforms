@@ -33,8 +33,9 @@ dependencies = [
     "click>=7.1.2",
     "dill>=0.3.6",
     "numpy>=1.13.3",
+    "antlr4-python3-runtime>=4.11.1",
+    "scipy>=1.0.0",
     "ply>=3.11",
-    "scipy>=1.0.0"
 ]
 dynamic = ["version"]
 
