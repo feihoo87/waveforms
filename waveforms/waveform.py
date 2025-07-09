@@ -179,6 +179,10 @@ class Waveform:
             sig = self.__call__(x, out=out, function_lib=function_lib)
             if filters is not None:
                 sos, initial = filters
+                if not isinstance(sos, np.ndarray):
+                    sos = np.array(sos)
+                elif not sos.flags.writeable:
+                    sos = sos.copy()
                 if initial:
                     sig = sosfilt(sos, sig - initial) + initial
                 else:
