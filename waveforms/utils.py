@@ -1,6 +1,6 @@
 from itertools import repeat
 from types import MappingProxyType
-from typing import Optional, Sequence
+from typing import Optional, Sequence, cast
 
 import numpy as np
 import scipy.sparse as sp
@@ -20,13 +20,13 @@ def freeze(x):
     elif isinstance(x, (np.ndarray, np.matrix)):
         x.flags.writeable = False
     elif isinstance(x, sp.spmatrix):
-        x.data.flags.writeable = False
-        if x.format in {'csr', 'csc', 'bsr'}:
-            x.indices.flags.writeable = False
-            x.indptr.flags.writeable = False
-        elif x.format == 'coo':
-            x.row.flags.writeable = False
-            x.col.flags.writeable = False
+        cast(np.ndarray, getattr(x, 'data')).flags.writeable = False
+        if getattr(x, 'format') in {'csr', 'csc', 'bsr'}:
+            cast(np.ndarray, getattr(x, 'indices')).flags.writeable = False
+            cast(np.ndarray, getattr(x, 'indptr')).flags.writeable = False
+        elif getattr(x, 'format') == 'coo':
+            cast(np.ndarray, getattr(x, 'row')).flags.writeable = False
+            cast(np.ndarray, getattr(x, 'col')).flags.writeable = False
     elif isinstance(x, bytearray):
         x = bytes(x)
     return x
@@ -72,12 +72,14 @@ def getFTMatrix(fList: Sequence[float],
     if weight is None or len(weight) == 0:
         weight = np.full(numOfPoints, 2 / numOfPoints)
     if phaseList is None or len(phaseList) == 0:
-        phaseList = np.zeros_like(fList)
-    if weight.ndim == 1:
-        weightList = repeat(weight)
+        phase_list = np.zeros_like(fList)
     else:
-        weightList = weight
-    for f, phase, weight in zip(fList, phaseList, weightList):
+        phase_list = phaseList
+    if weight.ndim == 1:
+        weight_list = repeat(weight)
+    else:
+        weight_list = weight
+    for f, phase, weight in zip(fList, phase_list, weight_list):
         e.append(weight * np.exp(-1j * (2 * np.pi * f * t + phase)))
     return np.asarray(e).T
 
