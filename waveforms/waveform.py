@@ -198,6 +198,10 @@ class Waveform:
         start_n = 0
         if filters is not None:
             sos, initial = filters
+            if not isinstance(sos, np.ndarray):
+                sos = np.array(sos)
+            elif not sos.flags.writeable:
+                sos = sos.copy()
             # zi = sosfilt_zi(sos)
             zi = np.zeros((sos.shape[0], 2))
         length = chunk_size / sample_rate
