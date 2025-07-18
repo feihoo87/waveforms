@@ -28,7 +28,7 @@ def is_const(x: tuple[tuple, tuple]) -> bool:
     pass
 
 
-def basic_wave(Type, *args, shift=0) -> tuple[tuple, tuple]:
+def basic_wave(Type: int, *args, shift: float = 0) -> tuple[tuple, tuple]:
     pass
 
 
@@ -53,7 +53,7 @@ def calc_parts(bounds: tuple,
                x: np.ndarray,
                function_lib: dict,
                min=-inf,
-               max=inf) -> tuple[list[np.ndarray], type]:
+               max=inf) -> tuple[list[tuple[int, int, np.ndarray]], type]:
     pass
 
 
@@ -103,6 +103,7 @@ HYPERBOLICCHIRP: int = ...
 COSH: int = ...
 SINH: int = ...
 DRAG: int = ...
+MOLLIFIER: int = ...
 
 
 def simplify(expr: tuple[tuple, tuple], eps: float) -> tuple[tuple, tuple]:

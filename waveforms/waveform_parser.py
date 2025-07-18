@@ -30,9 +30,9 @@ class WaveformVisitor:
         self.functions = [
             'D', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
             'cut', 'drag', 'drag_sin', 'drag_sinx', 'exp', 'gaussian',
-            'general_cosine', 'hanning', 'interp', 'mixing', 'one', 'poly',
-            'samplingPoints', 'sign', 'sin', 'sinc', 'sinh', 'square', 'step',
-            't', 'zero'
+            'general_cosine', 'hanning', 'interp', 'mixing', 'mollifier',
+            'one', 'poly', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
+            'square', 'step', 't', 'zero'
         ]
         self.constants = {
             'pi': waveform.pi,
@@ -226,14 +226,13 @@ def _generate_antlr_parser():
 
     # Generate ANTLR files
     try:
-        result = subprocess.run([
-            "antlr4", "-Dlanguage=Python3",
-            str(grammar_file)
-        ],
-                                cwd=str(current_dir),
-                                capture_output=True,
-                                text=True,
-                                check=True)
+        result = subprocess.run(
+            ["antlr4", "-Dlanguage=Python3",
+             str(grammar_file)],
+            cwd=str(current_dir),
+            capture_output=True,
+            text=True,
+            check=True)
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         # Fall back to java command if antlr4 command is not available
         try:
@@ -258,7 +257,7 @@ def parse_waveform_expression(expr: str) -> waveform.Waveform:
     try:
         # Generate parser files if they don't exist
         # _generate_antlr_parser()
-        
+
         # Import generated ANTLR classes
         from .WaveformLexer import WaveformLexer
         from .WaveformParser import WaveformParser

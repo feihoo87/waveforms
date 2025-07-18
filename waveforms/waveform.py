@@ -1,16 +1,17 @@
 from fractions import Fraction
+from typing import Generator, Iterable, cast
 
 import numpy as np
 from numpy import e, inf, pi
+from numpy.typing import NDArray
 from scipy.signal import sosfilt
 
-from ._waveform import (_D, COS, COSH, DRAG, ERF, EXP, EXPONENTIALCHIRP,
-                        GAUSSIAN, HYPERBOLICCHIRP, INTERP, LINEAR, LINEARCHIRP,
-                        NDIGITS, SINC, SINH, _baseFunc, _baseFunc_latex,
-                        _const, _half, _one, _zero, add, basic_wave,
-                        calc_parts, filter, is_const, merge_waveform, mul, pow,
-                        registerBaseFunc, registerBaseFuncLatex,
-                        registerDerivative, shift, simplify, wave_sum)
+from ._waveform import (
+    _D, COS, COSH, DRAG, ERF, EXP, EXPONENTIALCHIRP, GAUSSIAN, HYPERBOLICCHIRP,
+    INTERP, LINEAR, LINEARCHIRP, MOLLIFIER, NDIGITS, SINC, SINH, _baseFunc,
+    _baseFunc_latex, _const, _half, _one, _zero, add, basic_wave, calc_parts,
+    filter, is_const, merge_waveform, mul, pow, registerBaseFunc,
+    registerBaseFuncLatex, registerDerivative, shift, simplify, wave_sum)
 
 
 def _test_spec_num(num, spec):
@@ -124,7 +125,7 @@ class Waveform:
         self.start = None
         self.stop = None
         self.sample_rate = None
-        self.filters = None
+        self.filters: tuple[np.ndarray, float] | None = None
         self.label = None
 
     @staticmethod
@@ -160,12 +161,14 @@ class Waveform:
         else:
             return min(self.stop, self._end(self.bounds, self.seq))
 
-    def sample(self,
-               sample_rate=None,
-               out=None,
-               chunk_size=None,
-               function_lib=None,
-               filters=None):
+    def sample(
+        self,
+        sample_rate=None,
+        out: np.ndarray | None = None,
+        chunk_size=None,
+        function_lib=None,
+        filters: tuple[np.ndarray, float] | None = None
+    ) -> np.ndarray | Iterable[np.ndarray]:
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
@@ -184,17 +187,20 @@ class Waveform:
                 elif not sos.flags.writeable:
                     sos = sos.copy()
                 if initial:
-                    sig = sosfilt(sos, sig - initial) + initial
+                    sig = cast(np.ndarray, sosfilt(sos,
+                                                   sig - initial)) + initial
                 else:
-                    sig = sosfilt(sos, sig)
-            return sig
+                    sig = cast(np.ndarray, sosfilt(sos, sig))
+            return cast(np.ndarray, sig)
         else:
             return self._sample_iter(sample_rate, chunk_size, out,
                                      function_lib, filters)
 
-    def _sample_iter(self, sample_rate, chunk_size, out, function_lib,
-                     filters):
-        start = self.start
+    def _sample_iter(
+        self, sample_rate, chunk_size, out: np.ndarray | None, function_lib,
+        filters: tuple[np.ndarray, float] | None
+    ) -> Generator[np.ndarray, None, None]:
+        start = cast(float, self.start)
         start_n = 0
         if filters is not None:
             sos, initial = filters
@@ -205,10 +211,10 @@ class Waveform:
             # zi = sosfilt_zi(sos)
             zi = np.zeros((sos.shape[0], 2))
         length = chunk_size / sample_rate
-        while start < self.stop:
-            if start + length > self.stop:
-                length = self.stop - start
-                stop = self.stop
+        while start < cast(float, self.stop):
+            if start + length > cast(float, self.stop):
+                length = cast(float, self.stop) - start
+                stop = cast(float, self.stop)
                 size = round((stop - start) * sample_rate)
             else:
                 stop = start + length
@@ -217,13 +223,17 @@ class Waveform:
 
             if filters is None:
                 if out is not None:
-                    yield self.__call__(x,
-                                        out=out[start_n:],
-                                        function_lib=function_lib)
+                    yield cast(
+                        np.ndarray,
+                        self.__call__(x,
+                                      out=out[start_n:],
+                                      function_lib=function_lib))
                 else:
-                    yield self.__call__(x, function_lib=function_lib)
+                    yield cast(np.ndarray,
+                               self.__call__(x, function_lib=function_lib))
             else:
-                sig = self.__call__(x, function_lib=function_lib)
+                sig = cast(np.ndarray,
+                           self.__call__(x, function_lib=function_lib))
                 if initial:
                     sig -= initial
                 sig, zi = sosfilt(sos, sig, zi=zi)
@@ -231,7 +241,7 @@ class Waveform:
                     sig += initial
                 if out is not None:
                     out[start_n:start_n + size] = sig
-                yield sig
+                yield cast(np.ndarray, sig)
 
             start = stop
             start_n += chunk_size
@@ -506,16 +516,21 @@ class Waveform:
         for start, stop, part in parts:
             out[start:stop] += part
 
-    def __call__(self,
-                 x,
-                 frag=False,
-                 out=None,
-                 accumulate=False,
-                 function_lib=None):
+    def __call__(
+        self,
+        x,
+        frag=False,
+        out: np.ndarray | None = None,
+        accumulate=False,
+        function_lib=None
+    ) -> NDArray[np.float64] | list[tuple[int, int,
+                                          NDArray[np.float64]]] | np.float64:
         if function_lib is None:
             function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
-            return self.__call__(np.array([x]), function_lib=function_lib)[0]
+            return cast(
+                NDArray[np.float64],
+                self.__call__(np.array([x]), function_lib=function_lib))[0]
         parts, dtype = calc_parts(self.bounds, self.seq, x, function_lib,
                                   self.min, self.max)
         if not frag:
@@ -965,6 +980,25 @@ def _format_DRAG(shift, *args):
     return f"DRAG(...)"
 
 
+def _format_MOLLIFIER(shift, *args):
+    r = _num_latex(args[0])
+    d = _num_latex(args[1])
+    shift_str = _num_latex(-shift)
+    if shift_str == '0':
+        shift_str = ''
+    elif shift_str[0] != '-':
+        shift_str = '+' + shift_str
+
+    if d == '0':
+        return f"\\mathrm{{Mollifier}}\\left(t{shift_str}, r={r}\\right)"
+    elif d == '1':
+        return f"\\mathrm{{Mollifier}}'\\left(t{shift_str}, r={r}\\right)"
+    elif d == '2':
+        return f"\\mathrm{{Mollifier}}''\\left(t{shift_str}, r={r}\\right)"
+    else:
+        return f"\\mathrm{{Mollifier}}^{{({d})}}\\left(t{shift_str}, r={r}\\right)"
+
+
 registerBaseFuncLatex(LINEAR, _format_LINEAR)
 registerBaseFuncLatex(GAUSSIAN, _format_GAUSSIAN)
 registerBaseFuncLatex(ERF, _format_ERF)
@@ -974,12 +1008,26 @@ registerBaseFuncLatex(EXP, _format_EXP)
 registerBaseFuncLatex(COSH, _format_COSH)
 registerBaseFuncLatex(SINH, _format_SINH)
 registerBaseFuncLatex(DRAG, _format_DRAG)
+registerBaseFuncLatex(MOLLIFIER, _format_MOLLIFIER)
 
 
-def D(wav):
+def D(wav: Waveform, d: int = 1) -> Waveform:
     """derivative
+
+    Parameters
+    ----------
+    wav : Waveform
+        The waveform to take the derivative of.
+    d : int, optional
+        The order of the derivative, by default 1.
     """
-    return Waveform(bounds=wav.bounds, seq=tuple(_D(x) for x in wav.seq))
+    assert d >= 0 and isinstance(d, int), "d must be a non-negative integer"
+    if d == 0:
+        return wav
+    elif d == 1:
+        return Waveform(bounds=wav.bounds, seq=tuple(_D(x) for x in wav.seq))
+    else:
+        return D(D(wav, d - 1), 1)
 
 
 def convolve(a, b):
@@ -1189,6 +1237,40 @@ def slepian(duration, *arg):
     return wav * square(duration)
 
 
+def mollifier(width, plateau: float = 0.0, d: int = 0):
+    """
+    Mollifier function is a smooth function that is 1 at the origin and 0 outside a certain radius.
+    It is defined as:
+
+    f(x) = exp(1 / ((x / r) ^ 2 - 1) + 1)  in case |x| < r
+         = 0                           in case |x| >= r
+    where r = width / 2 is the radius of the mollifier.
+
+    The parameter plateau is the width of the plateau.
+    The parameter d is the order of the derivative.
+    """
+    assert d >= 0 and isinstance(d, int), "d must be a non-negative integer"
+    assert width > 0, "width must be positive"
+
+    if plateau <= 0:
+        return Waveform(bounds=(-0.5 * width, 0.5 * width, inf),
+                        seq=(_zero, basic_wave(MOLLIFIER, width / 2,
+                                               d), _zero))
+    else:
+        return Waveform(bounds=(-0.5 * width - 0.5 * plateau, -0.5 * plateau,
+                                0.5 * plateau, 0.5 * width + 0.5 * plateau,
+                                inf),
+                        seq=(_zero,
+                             basic_wave(MOLLIFIER,
+                                        width / 2,
+                                        d,
+                                        shift=-0.5 * plateau), _one,
+                             basic_wave(MOLLIFIER,
+                                        width / 2,
+                                        d,
+                                        shift=0.5 * plateau), _zero))
+
+
 def _poly(*a):
     """
     a[0] + a[1] * t + a[2] * t**2 + ...
@@ -1384,7 +1466,7 @@ def mixing(I,
 __all__ = [
     'D', 'Waveform', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
     'cut', 'drag', 'exp', 'function', 'gaussian', 'general_cosine', 'hanning',
-    'interp', 'mixing', 'one', 'poly', 'registerBaseFunc',
+    'interp', 'mixing', 'mollifier', 'one', 'poly', 'registerBaseFunc',
     'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
     'square', 'step', 't', 'zero'
 ]
