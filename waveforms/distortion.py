@@ -1,8 +1,9 @@
 import warnings
-from itertools import repeat, zip_longest
-from typing import Sequence
+from itertools import zip_longest
+from typing import Sequence, cast
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
 from scipy.optimize import curve_fit
 from scipy.signal import fftconvolve, lfilter, lfiltic, tf2zpk, zpk2sos, zpk2tf
@@ -55,7 +56,7 @@ def zDistortKernel(dt: float, params: Sequence[tuple]) -> np.ndarray:
     for tau, A in params:
         H += (1j * A * omega * tau) / (1j * omega * tau + 1)
 
-    ker = ifftshift(ifft(1 / H)).real
+    ker = cast(NDArray[np.complex128], ifftshift(ifft(1 / H))).real
     return ker
 
 
@@ -98,11 +99,14 @@ def exp_decay_filter_old(amp, tau, sample_rate):
     return b, a
 
 
-def exp_decay_filter(amp: float | Sequence[float],
-                     tau: float | Sequence[float],
-                     sample_rate: float,
-                     inv: bool = False,
-                     output='ba') -> tuple[np.ndarray, np.ndarray]:
+def exp_decay_filter(
+    amp: float | Sequence[float],
+    tau: float | Sequence[float],
+    sample_rate: float,
+    inv: bool = False,
+    output='ba'
+) -> NDArray[np.float64] | tuple[NDArray[np.float64], NDArray[
+        np.float64]] | tuple[NDArray[np.float64], NDArray[np.float64], float]:
     """
     exp decay filter
 
@@ -137,7 +141,9 @@ def exp_decay_filter(amp: float | Sequence[float],
 
     if isinstance(amp, (int, float, complex)):
         amp = [amp]
-        tau = [tau]
+        tau = [cast(float, tau)]
+    amp = cast(Sequence[float], amp)
+    tau = cast(Sequence[float], tau)
     numerator, denominator = np.poly1d([0.0]), np.poly1d([1.0])
     for i, (A, t) in enumerate(zip(amp, tau)):
         denominator = denominator * np.poly1d([1, -1 / t])
@@ -148,18 +154,22 @@ def exp_decay_filter(amp: float | Sequence[float],
         numerator = numerator + n
     numerator = numerator + denominator
 
-    z = np.exp(-numerator.roots / sample_rate)
-    p = np.exp(-denominator.roots / sample_rate)
+    z = cast(NDArray[np.float64], np.exp(-numerator.roots / sample_rate))
+    p = cast(NDArray[np.float64], np.exp(-denominator.roots / sample_rate))
     if inv:
         z, p = p, z
-    k = numerator(0) / denominator(0) * np.prod(1 - p) / np.prod(1 - z)
+    k = cast(float,
+             numerator(0) / denominator(0) * np.prod(1 - p) / np.prod(1 - z))
 
     if output == 'sos':
-        return zpk2sos(z, p, k)
+        return cast(NDArray[np.float64], zpk2sos(z, p, k))
     elif output == 'ba':
-        return zpk2tf(z, p, k)
+        return cast(tuple[NDArray[np.float64], NDArray[np.float64]],
+                    zpk2tf(z, p, k))
     elif output == 'zpk':
         return z, p, k
+    else:
+        raise ValueError(f"Invalid output type: {output}")
 
 
 def reflection_filter(f, A, tau):
@@ -251,7 +261,8 @@ def stable_filter(exp_decay_filters: list, sample_rate: float):
     """
     filters = []
     for amp, tau in exp_decay_filters:
-        a, b = exp_decay_filter(amp, tau, sample_rate)
+        a, b = cast(tuple[NDArray[np.float64], NDArray[np.float64]],
+                    exp_decay_filter(amp, tau, sample_rate))
         filters.append((b, a))
 
     b, a = combine_filters(filters)
@@ -262,14 +273,15 @@ def stable_filter(exp_decay_filters: list, sample_rate: float):
         return False
 
 
-def predistort(sig: np.ndarray,
-               filters: list = None,
-               ker: np.ndarray = None,
-               initial: float = 0.0,
-               initial_x: np.ndarray | None = None,
-               initial_y: np.ndarray | None = None,
-               zi: np.ndarray | None = None,
-               return_zf: bool = False) -> np.ndarray:
+def predistort(
+        sig: np.ndarray,
+        filters: list | None = None,
+        ker: np.ndarray | None = None,
+        initial: float = 0.0,
+        initial_x: np.ndarray | None = None,
+        initial_y: np.ndarray | None = None,
+        zi: np.ndarray | None = None,
+        return_zf: bool = False) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     if filters is not None:
         b, a = combine_filters(filters)
         z, p, k = tf2zpk(b, a)
@@ -315,7 +327,8 @@ def predistort(sig: np.ndarray,
 def distort(points, params, sample_rate, initial=0.0):
     filters = []
     for amp, tau in np.asarray(params).reshape(-1, 2):
-        b, a = exp_decay_filter(amp, abs(tau), sample_rate)
+        b, a = cast(tuple[NDArray[np.float64], NDArray[np.float64]],
+                    exp_decay_filter(amp, abs(tau), sample_rate))
         filters.append((b, a))
     return predistort(points, filters, initial=initial)
 
@@ -342,6 +355,7 @@ def phase_curve(t, params, df_dphi, pulse_width, start, wav, sample_rate):
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+
     from waveforms import square
 
     data = np.load('Z_distortion.npz')
@@ -354,7 +368,7 @@ if __name__ == '__main__':
     wav = 0.1 * (square(2e-6) << 1e-6)
 
     def f(t, *params):
-        return phase_curve(t, params, df_dphi, 10e-9, 25e-9)
+        return phase_curve(t, params, df_dphi, 10e-9, 25e-9, wav, sample_rate)
 
     params = [-0.03, 0.1e-6, 0.02, 0.3e-6]
     popt, pcov = curve_fit(f, x, y, p0=params)
