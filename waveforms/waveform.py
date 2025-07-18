@@ -526,8 +526,9 @@ class Waveform:
         out: np.ndarray | list | None = None,
         accumulate=False,
         function_lib=None
-    ) -> NDArray[np.float64] | list[tuple[int, int, NDArray[np.float64]] | int
-                                    | float | complex] | np.float64:
+    ) -> NDArray[np.float64 | np.complex128] | list[
+            tuple[int, int, NDArray[np.float64 | np.complex128]] | int
+            | float | complex] | np.float64:
         if function_lib is None:
             function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
