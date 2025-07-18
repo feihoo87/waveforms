@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from fractions import Fraction
 from typing import Generator, Iterable, cast
 
@@ -179,7 +181,8 @@ class Waveform:
             filters = self.filters
         if chunk_size is None:
             x = np.arange(self.start, self.stop, 1 / sample_rate)
-            sig = self.__call__(x, out=out, function_lib=function_lib)
+            sig = cast(np.ndarray,
+                       self.__call__(x, out=out, function_lib=function_lib))
             if filters is not None:
                 sos, initial = filters
                 if not isinstance(sos, np.ndarray):
@@ -393,22 +396,22 @@ class Waveform:
         return Waveform(*merge_waveform(self.bounds, self.seq, other.bounds,
                                         other.seq, oper))
 
-    def __pow__(self, n):
+    def __pow__(self, n) -> Waveform:
         return Waveform(self.bounds, tuple(pow(w, n) for w in self.seq))
 
-    def __add__(self, other):
+    def __add__(self, other) -> Waveform:
         if isinstance(other, Waveform):
             return self._comb(other, add)
         else:
             return self + const(other)
 
-    def __radd__(self, v):
+    def __radd__(self, v) -> Waveform:
         return const(v) + self
 
-    def __ior__(self, other):
+    def __ior__(self, other) -> Waveform:
         return self | other
 
-    def __or__(self, other):
+    def __or__(self, other) -> Waveform:
         if isinstance(other, (int, float, complex)):
             other = const(other)
         w = self.marker + other.marker
@@ -421,10 +424,10 @@ class Waveform:
 
         return self._comb(other, _or)
 
-    def __iand__(self, other):
+    def __iand__(self, other) -> Waveform:
         return self & other
 
-    def __and__(self, other):
+    def __and__(self, other) -> Waveform:
         if isinstance(other, (int, float, complex)):
             other = const(other)
         w = self.marker + other.marker
@@ -443,7 +446,7 @@ class Waveform:
         return Waveform(w.bounds,
                         tuple(_zero if s == _zero else _one for s in w.seq))
 
-    def mask(self, edge=0):
+    def mask(self, edge: float = 0) -> Waveform:
         w = self.marker
         in_wave = w.seq[0] == _zero
         bounds = []
@@ -471,31 +474,31 @@ class Waveform:
                     bounds.append(b)
         return Waveform(tuple(bounds), tuple(seq))
 
-    def __mul__(self, other):
+    def __mul__(self, other) -> Waveform:
         if isinstance(other, Waveform):
             return self._comb(other, mul)
         else:
             return self * const(other)
 
-    def __rmul__(self, v):
+    def __rmul__(self, v) -> Waveform:
         return const(v) * self
 
-    def __truediv__(self, other):
+    def __truediv__(self, other) -> Waveform:
         if isinstance(other, Waveform):
             raise TypeError('division by waveform')
         else:
             return self * const(1 / other)
 
-    def __neg__(self):
+    def __neg__(self) -> Waveform:
         return -1 * self
 
-    def __sub__(self, other):
+    def __sub__(self, other) -> Waveform:
         return self + (-other)
 
-    def __rsub__(self, v):
+    def __rsub__(self, v) -> Waveform:
         return v + (-self)
 
-    def __rshift__(self, time):
+    def __rshift__(self, time) -> Waveform:
         return Waveform(
             tuple(round(bound + time, NDIGITS) for bound in self.bounds),
             tuple(shift(expr, time) for expr in self.seq))
@@ -520,11 +523,11 @@ class Waveform:
         self,
         x,
         frag=False,
-        out: np.ndarray | None = None,
+        out: np.ndarray | list | None = None,
         accumulate=False,
         function_lib=None
-    ) -> NDArray[np.float64] | list[tuple[int, int,
-                                          NDArray[np.float64]]] | np.float64:
+    ) -> NDArray[np.float64] | list[tuple[int, int, NDArray[np.float64]] | int
+                                    | float | complex] | np.float64:
         if function_lib is None:
             function_lib = _baseFunc
         if isinstance(x, (int, float, complex)):
@@ -541,8 +544,9 @@ class Waveform:
             self._fill_parts(parts, out)
         else:
             if out is None:
-                return parts
+                return cast(list, parts)
             else:
+                out = cast(list, out)
                 if not accumulate:
                     out.clear()
                     out.extend(parts)
@@ -666,7 +670,8 @@ class WaveVStack(Waveform):
 
     def __call__(self, x, frag=False, out=None, function_lib=None):
         assert frag is False, 'WaveVStack does not support frag mode'
-        out = np.full_like(x, self.offset, dtype=complex)
+        out = np.full_like(x, self.offset, dtype=np.complex128)
+        out = cast(NDArray[np.complex128], out)
         if self.shift != 0:
             x = x - self.shift
         if function_lib is None:
@@ -751,7 +756,7 @@ class WaveVStack(Waveform):
         ret.offset = self.offset
         return ret
 
-    def __add__(self, other):
+    def __add__(self, other) -> WaveVStack:
         ret = WaveVStack()
         ret.wlist.extend(self.wlist)
         if isinstance(other, WaveVStack):
@@ -769,10 +774,10 @@ class WaveVStack(Waveform):
             ret.offset += other
         return ret
 
-    def __radd__(self, v):
+    def __radd__(self, v) -> WaveVStack:
         return self + v
 
-    def __mul__(self, other):
+    def __mul__(self, other) -> WaveVStack:
         if isinstance(other, Waveform):
             other = other.simplify() << self.shift
             ret = WaveVStack([Waveform(*w) * other for w in self.wlist])
@@ -785,10 +790,10 @@ class WaveVStack(Waveform):
             ret.offset = self.offset * other
             return ret
 
-    def __rmul__(self, v):
+    def __rmul__(self, v) -> WaveVStack:
         return self * v
 
-    def __eq__(self, other):
+    def __eq__(self, other) -> bool:
         if self.wlist:
             return False
         else:
@@ -1066,7 +1071,7 @@ def step(edge, type='erf'):
                         seq=(_zero, rise, _one))
 
 
-def square(width, edge=0, type='erf'):
+def square(width: float, edge: float = 0, type: str = 'erf') -> Waveform:
     if width <= 0:
         return zero()
     if edge == 0:
@@ -1079,7 +1084,7 @@ def square(width, edge=0, type='erf'):
                 (step(edge, type=type) >> width / 2))
 
 
-def gaussian(width, plateau=0.0):
+def gaussian(width: float, plateau: float = 0.0) -> Waveform:
     if width <= 0 and plateau <= 0.0:
         return zero()
     # width is two times FWHM
@@ -1106,7 +1111,7 @@ def gaussian(width, plateau=0.0):
                                         shift=0.5 * plateau), _zero))
 
 
-def cos(w, phi=0):
+def cos(w: float, phi: float = 0) -> Waveform:
     if w == 0:
         return const(np.cos(phi))
     if w < 0:
@@ -1115,7 +1120,7 @@ def cos(w, phi=0):
     return Waveform(seq=(basic_wave(COS, w, shift=-phi / w), ))
 
 
-def sin(w, phi=0):
+def sin(w: float, phi: float = 0) -> Waveform:
     if w == 0:
         return const(np.sin(phi))
     if w < 0:
@@ -1124,7 +1129,7 @@ def sin(w, phi=0):
     return Waveform(seq=(basic_wave(COS, w, shift=(pi / 2 - phi) / w), ))
 
 
-def exp(alpha):
+def exp(alpha: float | complex) -> Waveform:
     if isinstance(alpha, complex):
         if alpha.real == 0:
             return cos(alpha.imag) + 1j * sin(alpha.imag)
@@ -1134,7 +1139,7 @@ def exp(alpha):
         return Waveform(seq=(basic_wave(EXP, alpha), ))
 
 
-def sinc(bw):
+def sinc(bw: float) -> Waveform:
     if bw <= 0:
         return zero()
     width = 100 / bw
@@ -1143,7 +1148,7 @@ def sinc(bw):
                     seq=(_zero, basic_wave(SINC, bw), _zero))
 
 
-def cosPulse(width, plateau=0.0):
+def cosPulse(width: float, plateau: float = 0.0) -> Waveform:
     # cos = basic_wave(COS, 2*np.pi/width)
     # pulse = mul(add(cos, _one), _half)
     if round(0.5 * plateau, NDIGITS) > 0:
@@ -1157,19 +1162,21 @@ def cosPulse(width, plateau=0.0):
                     seq=(_zero, pulse, _zero))
 
 
-def hanning(width, plateau=0.0):
+def hanning(width: float, plateau: float = 0.0) -> Waveform:
     return cosPulse(width, plateau=plateau)
 
 
-def cosh(w):
+def cosh(w: float) -> Waveform:
     return Waveform(seq=(basic_wave(COSH, w), ))
 
 
-def sinh(w):
+def sinh(w: float) -> Waveform:
     return Waveform(seq=(basic_wave(SINH, w), ))
 
 
-def coshPulse(width, eps=1.0, plateau=0.0):
+def coshPulse(width: float,
+              eps: float = 1.0,
+              plateau: float = 0.0) -> Waveform:
     """Cosine hyperbolic pulse with the following im
 
     pulse edge shape:
@@ -1219,25 +1226,25 @@ def coshPulse(width, eps=1.0, plateau=0.0):
                         seq=(_zero, raising, _one, falling, _zero))
 
 
-def general_cosine(duration, *arg):
+def general_cosine(duration: float, *arg: float) -> Waveform:
     wav = zero()
-    arg = np.asarray(arg)
-    arg /= arg[::2].sum()
-    for i, a in enumerate(arg, start=1):
+    arg_ = np.asarray(arg)
+    arg_ /= arg_[::2].sum()
+    for i, a in enumerate(arg_, start=1):
         wav += a / 2 * (1 - (-1)**i * cos(i * 2 * pi / duration))
     return wav * square(duration)
 
 
-def slepian(duration, *arg):
+def slepian(duration: float, *arg: float) -> Waveform:
     wav = zero()
-    arg = np.asarray(arg)
-    arg /= arg[::2].sum()
-    for i, a in enumerate(arg, start=1):
+    arg_ = np.asarray(arg)
+    arg_ /= arg_[::2].sum()
+    for i, a in enumerate(arg_, start=1):
         wav += a / 2 * (1 - (-1)**i * cos(i * 2 * pi / duration))
     return wav * square(duration)
 
 
-def mollifier(width, plateau: float = 0.0, d: int = 0):
+def mollifier(width: float, plateau: float = 0.0, d: int = 0) -> Waveform:
     """
     Mollifier function is a smooth function that is 1 at the origin and 0 outside a certain radius.
     It is defined as:
@@ -1298,7 +1305,13 @@ def t():
     return Waveform(seq=((((LINEAR, 0), ), (1, )), (1, )))
 
 
-def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
+def drag(freq: float,
+         width: float,
+         plateau: float = 0,
+         delta: float = 0,
+         block_freq: float | None = None,
+         phase: float = 0,
+         t0: float = 0) -> Waveform:
     phase += pi * delta * (width + plateau)
     if plateau <= 0:
         return Waveform(seq=(_zero,
@@ -1327,7 +1340,11 @@ def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
                                           NDIGITS), +inf))
 
 
-def chirp(f0, f1, T, phi0=0, type='linear'):
+def chirp(f0: float,
+          f1: float,
+          T: float,
+          phi0: float = 0,
+          type: str = 'linear') -> Waveform:
     """
     A chirp is a signal in which the frequency increases (up-chirp)
     or decreases (down-chirp) with time. In some sources, the term
@@ -1366,7 +1383,7 @@ def chirp(f0, f1, T, phi0=0, type='linear'):
         raise ValueError(f'unknown type {type}')
 
 
-def interp(x, y):
+def interp(x: NDArray[np.float64], y: NDArray[np.float64]) -> Waveform:
     seq, bounds = [_zero], [x[0]]
     for x1, x2, y1, y2 in zip(x[:-1], x[1:], y[:-1], y[1:]):
         if x2 == x1:
@@ -1384,12 +1401,20 @@ def interp(x, y):
                                  for b in bounds)).simplify()
 
 
-def cut(wav, start=None, stop=None, head=None, tail=None, min=None, max=None):
+def cut(wav: Waveform,
+        start: float | None = None,
+        stop: float | None = None,
+        head: float | None = None,
+        tail: float | None = None,
+        min: float | None = None,
+        max: float | None = None) -> Waveform:
     offset = 0
     if start is not None and head is not None:
-        offset = head - wav(np.array([1.0 * start]))[0]
+        offset = head - cast(NDArray[np.float64], wav(np.array([1.0 * start
+                                                                ])))[0]
     elif stop is not None and tail is not None:
-        offset = tail - wav(np.array([1.0 * stop]))[0]
+        offset = tail - cast(NDArray[np.float64], wav(np.array([1.0 * stop
+                                                                ])))[0]
     wav = wav + offset
 
     if start is not None:
@@ -1420,15 +1445,15 @@ def samplingPoints(start, stop, points):
                                            tuple(points)), _zero))
 
 
-def mixing(I,
-           Q=None,
+def mixing(I: Waveform,
+           Q: Waveform | None = None,
            *,
-           phase=0.0,
-           freq=0.0,
-           ratioIQ=1.0,
-           phaseDiff=0.0,
-           block_freq=None,
-           DRAGScaling=None):
+           phase: float = 0.0,
+           freq: float = 0.0,
+           ratioIQ: float = 1.0,
+           phaseDiff: float = 0.0,
+           block_freq: float | None = None,
+           DRAGScaling: float | None = None) -> tuple[Waveform, Waveform]:
     """SSB or envelope mixing
     """
     if Q is None:
@@ -1442,8 +1467,8 @@ def mixing(I,
         Qout = -I * sin(w, -phase + phaseDiff) + Q * cos(w, -phase + phaseDiff)
     else:
         # envelope mixing
-        Iout = I * np.cos(-phase) + Q * np.sin(-phase)
-        Qout = -I * np.sin(-phase) + Q * np.cos(-phase)
+        Iout = cast(Waveform, I * np.cos(-phase) + Q * np.sin(-phase))
+        Qout = cast(Waveform, -I * np.sin(-phase) + Q * np.cos(-phase))
 
     # apply DRAG
     if block_freq is not None and block_freq != freq:

@@ -2,6 +2,7 @@ from typing import Callable
 
 import numpy as np
 from numpy import e, inf, pi
+from numpy.typing import NDArray
 
 NDIGITS: int = ...
 __TypeIndex: int = ...
@@ -48,12 +49,15 @@ def pow(x: tuple[tuple, tuple], n: int) -> tuple[tuple, tuple]:
     pass
 
 
-def calc_parts(bounds: tuple,
-               seq: tuple,
-               x: np.ndarray,
-               function_lib: dict,
-               min=-inf,
-               max=inf) -> tuple[list[tuple[int, int, np.ndarray]], type]:
+def calc_parts(
+    bounds: tuple,
+    seq: tuple,
+    x: np.ndarray,
+    function_lib: dict,
+    min=-inf,
+    max=inf
+) -> tuple[list[tuple[int, int, NDArray[np.float64] | int | float | complex]],
+           type]:
     pass
 
 
