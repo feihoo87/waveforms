@@ -56,8 +56,8 @@ def calc_parts(
     function_lib: dict,
     min=-inf,
     max=inf
-) -> tuple[list[tuple[int, int, NDArray[np.float64] | int | float | complex]],
-           type]:
+) -> tuple[list[tuple[int, int, NDArray[np.float64 | np.complex128] | int
+                      | float | complex]], type]:
     pass
 
 
