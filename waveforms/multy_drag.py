@@ -230,19 +230,3 @@ def drag_sinx(freq,
                     bounds=(round(t0,
                                   NDIGITS), round(t0 + width + plateau,
                                                   NDIGITS), +inf))
-
-
-def _mollifier(x, width):
-    return np.exp(1 / ((x / width)**2 - 1))
-
-
-def _format_MOLLIFIER(shift, *args):
-    width, *_ = args
-    return f'\\exp\\frac{{1}}{{\\left(\\frac{{t-{shift:.{NDIGITS}f}}}{{{width:.{NDIGITS}f}}}\\right)^2-1}}'
-
-
-MOLLIFIER = registerBaseFunc(_mollifier)
-registerDerivative(
-    MOLLIFIER,
-    lambda x, width: 2 * x / width**2 * _mollifier(x, width),
-)
