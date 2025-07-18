@@ -4,7 +4,7 @@ from ast import literal_eval
 from functools import lru_cache
 from pathlib import Path
 
-from antlr4 import *
+from antlr4 import CommonTokenStream, InputStream
 from antlr4.error.ErrorListener import ErrorListener
 
 from . import multy_drag, waveform
