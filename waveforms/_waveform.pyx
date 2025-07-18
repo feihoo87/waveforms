@@ -295,6 +295,11 @@ def _GAUSSIAN(t, std_sq2):
     return np.exp(-(t / std_sq2)**2)
 
 
+def _D_GAUSSIAN(t, std_sq2, n):
+    return (-1)**n / std_sq2**n * special.hermite(n)(
+        t / std_sq2) * np.exp(-(t / std_sq2)**2)
+
+
 def _ERF(t, std_sq2):
     return special.erf(t / std_sq2)
 
@@ -360,7 +365,8 @@ def _mollifier(t: np.ndarray, r: float, d: int):
         for n in range(1, d):
             p = np.poly1d([1, 0, -2, 0, 1]) * p.deriv() + np.poly1d(
                 [-4 * n, 0, 4 * n - 2, 0]) * p
-        return np.exp(1 / (np.abs(x)**2 - 1) + 1) * p(x) / (1 - x**2)**(2 * d) / r**d
+        return np.exp(1 / (np.abs(x)**2 - 1) +
+                      1) * p(x) / (1 - x**2)**(2 * d) / r**d
 
 
 LINEAR = registerBaseFunc(_LINEAR)
@@ -377,6 +383,7 @@ COSH = registerBaseFunc(_COSH)
 SINH = registerBaseFunc(_SINH)
 DRAG = registerBaseFunc(_drag)
 MOLLIFIER = registerBaseFunc(_mollifier)
+D_GAUSSIAN = registerBaseFunc(_D_GAUSSIAN)
 
 
 def _d_LINEAR(shift, *args):
@@ -447,7 +454,11 @@ def _d_HYPERBOLICCHIRP(shift, f0, k, phi0):
 
 
 def _d_MOLLIFIER(shift, r, d):
-    return (((((MOLLIFIER, r, d+1, shift), ), (1, )), ), (1, ))
+    return (((((MOLLIFIER, r, d + 1, shift), ), (1, )), ), (1, ))
+
+
+def _d_D_GAUSSIAN(shift, std_sq2, n):
+    return (((((D_GAUSSIAN, std_sq2, n + 1, shift), ), (1, )), ), (1, ))
 
 
 # register derivative
@@ -464,6 +475,7 @@ registerDerivative(LINEARCHIRP, _d_LINEARCHIRP)
 registerDerivative(EXPONENTIALCHIRP, _d_EXPONENTIALCHIRP)
 registerDerivative(HYPERBOLICCHIRP, _d_HYPERBOLICCHIRP)
 registerDerivative(MOLLIFIER, _d_MOLLIFIER)
+registerDerivative(D_GAUSSIAN, _d_D_GAUSSIAN)
 
 
 def _cos_power_n(x, n):

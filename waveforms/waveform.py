@@ -8,12 +8,14 @@ from numpy import e, inf, pi
 from numpy.typing import NDArray
 from scipy.signal import sosfilt
 
-from ._waveform import (
-    _D, COS, COSH, DRAG, ERF, EXP, EXPONENTIALCHIRP, GAUSSIAN, HYPERBOLICCHIRP,
-    INTERP, LINEAR, LINEARCHIRP, MOLLIFIER, NDIGITS, SINC, SINH, _baseFunc,
-    _baseFunc_latex, _const, _half, _one, _zero, add, basic_wave, calc_parts,
-    filter, is_const, merge_waveform, mul, pow, registerBaseFunc,
-    registerBaseFuncLatex, registerDerivative, shift, simplify, wave_sum)
+from ._waveform import (_D, COS, COSH, D_GAUSSIAN, DRAG, ERF, EXP,
+                        EXPONENTIALCHIRP, GAUSSIAN, HYPERBOLICCHIRP, INTERP,
+                        LINEAR, LINEARCHIRP, MOLLIFIER, NDIGITS, SINC, SINH,
+                        _baseFunc, _baseFunc_latex, _const, _half, _one, _zero,
+                        add, basic_wave, calc_parts, filter, is_const,
+                        merge_waveform, mul, pow, registerBaseFunc,
+                        registerBaseFuncLatex, registerDerivative, shift,
+                        simplify, wave_sum)
 
 
 def _test_spec_num(num, spec):
