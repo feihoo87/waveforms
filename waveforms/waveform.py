@@ -1007,6 +1007,23 @@ def _format_MOLLIFIER(shift, *args):
         return f"\\mathrm{{Mollifier}}^{{({d})}}\\left(t{shift_str}, r={r}\\right)"
 
 
+def _format_D_GAUSSIAN(shift, *args):
+    sigma = _num_latex(args[0] / np.sqrt(2))
+    d = args[1]
+    shift_str = _num_latex(-shift)
+    if shift_str == '0':
+        shift_str = ''
+    elif shift_str[0] != '-':
+        shift_str = '+' + shift_str
+
+    if d == 0:
+        return f"\\mathrm{{Gaussian}}\\left(t{shift_str}, \\sigma={sigma}\\right)"
+    elif d == 1:
+        return f"\\frac{{\\mathrm{{d}}}}{{\\mathrm{{d}}t}}\\mathrm{{Gaussian}}\\left(t{shift_str}, \\sigma={sigma}\\right)"
+    else:
+        return f"\\frac{{\\mathrm{{d}}^{{{d}}}}}{{\\mathrm{{d}}t^{{{d}}}}}\\mathrm{{Gaussian}}\\left(t{shift_str}, \\sigma={sigma}\\right)"
+
+
 registerBaseFuncLatex(LINEAR, _format_LINEAR)
 registerBaseFuncLatex(GAUSSIAN, _format_GAUSSIAN)
 registerBaseFuncLatex(ERF, _format_ERF)
@@ -1017,6 +1034,7 @@ registerBaseFuncLatex(COSH, _format_COSH)
 registerBaseFuncLatex(SINH, _format_SINH)
 registerBaseFuncLatex(DRAG, _format_DRAG)
 registerBaseFuncLatex(MOLLIFIER, _format_MOLLIFIER)
+registerBaseFuncLatex(D_GAUSSIAN, _format_D_GAUSSIAN)
 
 
 def D(wav: Waveform, d: int = 1) -> Waveform:
@@ -1087,7 +1105,9 @@ def square(width: float, edge: float = 0, type: str = 'erf') -> Waveform:
                 (step(edge, type=type) >> width / 2))
 
 
-def gaussian(width: float, plateau: float = 0.0) -> Waveform:
+def gaussian(width: float,
+             plateau: float = 0.0,
+             d: int | None = None) -> Waveform:
     if width <= 0 and plateau <= 0.0:
         return zero()
     # width is two times FWHM
@@ -1095,23 +1115,24 @@ def gaussian(width: float, plateau: float = 0.0) -> Waveform:
     std_sq2 = width / 3.3302184446307908
     # std is set to give total pulse area same as a square
     # std_sq2 = width/np.sqrt(np.pi)
+    if d is None:
+        base = lambda shift: basic_wave(GAUSSIAN, std_sq2, shift=shift)
+    else:
+        base = lambda shift: basic_wave(D_GAUSSIAN, std_sq2, d, shift=shift)
+
     if round(0.5 * plateau, NDIGITS) <= 0.0:
         return Waveform(bounds=(round(-0.75 * width,
                                       NDIGITS), round(0.75 * width,
                                                       NDIGITS), +inf),
-                        seq=(_zero, basic_wave(GAUSSIAN, std_sq2), _zero))
+                        seq=(_zero, base(0), _zero))
     else:
         return Waveform(bounds=(round(-0.75 * width - 0.5 * plateau,
                                       NDIGITS), round(-0.5 * plateau, NDIGITS),
                                 round(0.5 * plateau, NDIGITS),
                                 round(0.75 * width + 0.5 * plateau,
                                       NDIGITS), +inf),
-                        seq=(_zero,
-                             basic_wave(GAUSSIAN,
-                                        std_sq2,
-                                        shift=-0.5 * plateau), _one,
-                             basic_wave(GAUSSIAN, std_sq2,
-                                        shift=0.5 * plateau), _zero))
+                        seq=(_zero, base(-0.5 * plateau), _one,
+                             base(0.5 * plateau), _zero))
 
 
 def cos(w: float, phi: float = 0) -> Waveform:
