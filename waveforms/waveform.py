@@ -135,7 +135,7 @@ class Waveform:
     @staticmethod
     def _begin(bounds, seq):
         for i, s in enumerate(seq):
-            if s is not _zero:
+            if s != _zero:
                 if i == 0:
                     return -inf
                 return bounds[i - 1]
@@ -145,7 +145,7 @@ class Waveform:
     def _end(bounds, seq):
         N = len(bounds)
         for i, s in enumerate(seq[::-1]):
-            if s is not _zero:
+            if s != _zero:
                 if i == 0:
                     return inf
                 return bounds[N - i - 1]
