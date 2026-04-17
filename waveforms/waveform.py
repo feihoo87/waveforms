@@ -28,6 +28,14 @@ def _test_spec_num(num, spec):
     return False, x, 0
 
 
+def _exp_num(s):
+    if "e" in s:
+        a, n = s.split("e")
+        n = float(n)
+        s = f"{a} \\times 10^{{{n:g}}}"
+    return s
+
+
 def _spec_num_latex(num):
     for spec, spec_latex in [(1, ''), (np.sqrt(2), '\\sqrt{2}'),
                              (np.sqrt(3), '\\sqrt{3}'),
@@ -44,13 +52,14 @@ def _spec_num_latex(num):
                 if x.numerator == 1:
                     return f"{spec_latex}"
                 else:
-                    return f"{x.numerator:g}{spec_latex}"
+                    s = _exp_num(f"{x.numerator:g}")
+                    return f"{s}{spec_latex}"
             else:
                 if x.numerator < 0:
                     return f"-\\frac{{{-x.numerator}}}{{{x.denominator}}}{spec_latex}"
                 else:
                     return f"\\frac{{{x.numerator}}}{{{x.denominator}}}{spec_latex}"
-    return f"{num:g}"
+    return _exp_num(f"{num:g}")
 
 
 def _num_latex(num):
@@ -65,10 +74,6 @@ def _num_latex(num):
     s = _spec_num_latex(num.real)
     if s == '' and round(num.real) == 1:
         return '1'
-    if "e" in s:
-        a, n = s.split("e")
-        n = float(n)
-        s = f"{a} \\times 10^{{{n:g}}}"
     return s
 
 

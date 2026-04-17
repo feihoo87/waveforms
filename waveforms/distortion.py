@@ -135,8 +135,18 @@ def exp_decay_filter(
             poles (p) and gain (k). See scipy.signal.lfilter for more.
 
     Returns:
-        tuple: (b, a) array like, numerator (b) and denominator (a)
+        if output is 'ba', return (b, a) array like, numerator (b) and denominator (a)
         polynomials of the IIR filter. See scipy.signal.lfilter for more.
+        if output is 'sos', return array of second-order filter coefficients with shape
+        (n_sections, 6). See scipy.signal.sosfilt for more.
+        if output is 'zpk', return (z, p, k) array like, zeros (z), poles (p) and gain (k).
+        See scipy.signal.zpk2tf for more.
+    
+    Raises:
+        ValueError: if output is not 'ba', 'sos', or 'zpk'
+    
+    Notes:
+        The filter is stable if all poles are inside the unit circle.
     """
 
     if isinstance(amp, (int, float, complex)):
@@ -155,11 +165,14 @@ def exp_decay_filter(
     numerator = numerator + denominator
 
     z = cast(NDArray[np.float64], np.exp(-numerator.roots / sample_rate))
-    p = cast(NDArray[np.float64], np.exp(-denominator.roots / sample_rate))
+    # p = cast(NDArray[np.float64], np.exp(-denominator.roots / sample_rate))
+    p = np.exp(-1 / (np.asarray(tau) * sample_rate))
+
     if inv:
         z, p = p, z
-    k = cast(float,
-             numerator(0) / denominator(0) * np.prod(1 - p) / np.prod(1 - z))
+    # remove poles outside the unit circle to make the filter stable
+    p = p[np.abs(p) < 1]
+    k = cast(float, (np.prod(1 - p) / np.prod(1 - z)).real)
 
     if output == 'sos':
         return cast(NDArray[np.float64], zpk2sos(z, p, k))

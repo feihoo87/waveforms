@@ -360,13 +360,13 @@ def _mollifier(t: np.ndarray, r: float, d: int):
     x = t / r
     xx_1 = np.abs(x)**2 - 1
     if d == 0:
-        return np.where(xx_1 == 0, 0, np.exp(1 / xx_1 + 1))
+        return np.where(xx_1 >= 0, 0, np.exp(1 / xx_1 + 1))
     else:
         p = np.poly1d([-2, 0])
         for n in range(1, d):
             p = np.poly1d([1, 0, -2, 0, 1]) * p.deriv() + np.poly1d(
                 [-4 * n, 0, 4 * n - 2, 0]) * p
-        return np.where(xx_1 == 0, 0,
+        return np.where(xx_1 >= 0, 0,
                         np.exp(1 / xx_1 + 1) /
                         (-xx_1)**(2 * d)) * p(x) / r**d
 
