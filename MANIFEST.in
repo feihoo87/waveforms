@@ -1,3 +1,7 @@
 include src/*.h
 include waveforms/_waveform.pyx
+include waveforms/Waveform.g4
+include waveforms/WaveformLexer.py
+include waveforms/WaveformParser.py
+include waveforms/WaveformListener.py
 include MANIFEST.in

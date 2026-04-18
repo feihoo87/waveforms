@@ -68,5 +68,8 @@ content-type = "text/markdown"
 license-files = ["LICENSE"]
 include-package-data = true
 
+[tool.setuptools.package-data]
+waveforms = ["WaveformLexer.py", "WaveformParser.py", "WaveformListener.py"]
+
 [tool.setuptools.dynamic]
 version = {attr = "waveforms.version.__version__"}
