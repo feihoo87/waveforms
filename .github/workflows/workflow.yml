@@ -44,7 +44,7 @@ jobs:
         python -m pip install --upgrade pip setuptools
         python -m pip install build pytest pytest-asyncio numpy coveralls cython
         python setup.py build_ext --inplace
-        python -m pip install ".[full]"
+        python -m pip install -e ".[full]"
     - name: Test with pytest
       run: |
         coverage run --source=waveforms -m pytest --verbose tests/
