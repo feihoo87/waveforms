@@ -130,6 +130,7 @@ dmypy.json
 .vscode/
 
 .DS_Store
+uv.lock
 
 # antlr
 .antlr/
