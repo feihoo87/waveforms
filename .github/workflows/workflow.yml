@@ -37,22 +37,17 @@ jobs:
       shell: bash
     - name: Generate ANTLR Parser
       run: |
-        java -jar $GITHUB_WORKSPACE/antlr-4.13.2-complete.jar -Dlanguage=Python3 waveforms/Waveform.g4
-        ls -lh waveforms/
-        ls -lh .
+        cd waveforms && java -jar $GITHUB_WORKSPACE/antlr-4.13.2-complete.jar -Dlanguage=Python3 Waveform.g4
       shell: bash
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip setuptools
         python -m pip install build pytest pytest-asyncio numpy coveralls cython
-        python -m pip install antlr4-python3-runtime scipy dill click msgpack
         python setup.py build_ext --inplace
         python -m pip install ".[full]"
     - name: Test with pytest
       run: |
         coverage run --source=waveforms -m pytest --verbose tests/
-      env:
-        PYTHONPATH: ${{ github.workspace }}
     - name: Coveralls
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
