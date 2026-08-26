@@ -138,6 +138,44 @@ def test_chirp():
     assert np.allclose(wav3(t), _chirp(t, 1, 2, 10, 4, 'hyperbolic'))
 
 
+def test_gaussian_derivative_and_mollifier():
+    x = np.linspace(-1.999, 1.999, 4097)
+
+    width = 4.0
+    std_sq2 = width / 3.3302184446307908
+    n = 8
+    expected = ((-1)**n / std_sq2**n
+                * special.eval_hermite(n, x / std_sq2)
+                * np.exp(-(x / std_sq2)**2))
+    assert np.allclose(gaussian(width, d=n)(x), expected)
+
+    d = 6
+    r = width / 2
+    scaled = x / r
+    xx_1 = scaled * scaled - 1
+    p = np.poly1d([-2, 0])
+    for order in range(1, d):
+        p = (np.poly1d([1, 0, -2, 0, 1]) * p.deriv()
+             + np.poly1d([-4 * order, 0, 4 * order - 2, 0]) * p)
+    expected = (np.exp(1 / xx_1 + 1) / (-xx_1)**(2 * d)
+                * p(scaled) / r**d)
+    assert np.allclose(mollifier(width, d=d)(x), expected)
+
+
+def test_sampling_points_and_clipping():
+    x = np.linspace(-2.0, 2.0, 4096, endpoint=False)
+    points = tuple(np.sin(np.linspace(0.0, 3.0, 65)))
+    wav = samplingPoints(-2.0, 2.0, points)
+    assert np.allclose(wav(x), np.interp(x, np.linspace(-2.0, 2.0, 65),
+                                        points))
+
+    wav = 2.0 * cos(2.1) + 0.3 * sin(0.7)
+    wav.min = -0.4
+    wav.max = 0.6
+    assert np.allclose(wav(x), np.clip(2.0 * np.cos(2.1 * x)
+                                      + 0.3 * np.sin(0.7 * x), -0.4, 0.6))
+
+
 def test_parser():
     assert wave_eval("one()") == one()
     assert wave_eval("zero()") == zero()

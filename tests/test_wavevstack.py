@@ -141,3 +141,13 @@ def test_wave_sum():
     assert wave_sum([((-1.0, np.inf), (((), ()), ((((), ()), ), (0.02, )))),
                      ((-1.0, np.inf), (((), ()), ((((), ()), ), (-0.02, ))))
                      ]) == ((np.inf, ), (((), ()), ))
+
+
+def test_wave_sum_preserves_value_before_a_new_earliest_bound():
+    source = (square(1.0) >> 5.0, const(2.0), square(1.0))
+    waves = [(wav.bounds, wav.seq) for wav in source]
+    combined = Waveform(*wave_sum(waves))
+    x = np.array([-10.0, 0.0, 2.0, 5.0, 10.0])
+    expected = sum(wav(x) for wav in source)
+
+    assert np.allclose(combined(x), expected)

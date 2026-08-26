@@ -1,5 +1,6 @@
 import pickle
 from bisect import bisect_left
+from functools import lru_cache
 from itertools import chain, product
 
 import numpy as np
@@ -127,90 +128,174 @@ def pow(x, n):
         return ret
 
 
-def _apply(function_lib, func_id, x, shift, *args):
-    return function_lib[func_id](x - shift, *args)
+cdef object _calc_impl(object wav, object x, object function_lib):
+    cdef dict value_cache = {}
+    cdef object term_list = wav[0]
+    cdef object coefficient_list = wav[1]
+    cdef object monomial
+    cdef object base_list
+    cdef object power_list
+    cdef object base
+    cdef object value
+    cdef object product_value
+    cdef object term_value
+    cdef object total = None
+    cdef object coefficient
+    cdef object func
+    cdef object shift
+    cdef object args
+    cdef Py_ssize_t i, j
+    cdef Py_ssize_t term_count = len(term_list)
+    cdef Py_ssize_t base_count
+
+    for i in range(term_count):
+        monomial = term_list[i]
+        base_list = monomial[0]
+        power_list = monomial[1]
+        coefficient = coefficient_list[i]
+        product_value = None
+        base_count = len(base_list)
+
+        for j in range(base_count):
+            base = base_list[j]
+            if base in value_cache:
+                value = value_cache[base]
+            else:
+                func = function_lib[base[0]]
+                shift = base[-1]
+                args = base[1:-1]
+                if shift == 0:
+                    value = func(x, *args)
+                else:
+                    value = func(x - shift, *args)
+                value_cache[base] = value
+
+            if power_list[j] != 1:
+                value = value**power_list[j]
+
+            if product_value is None:
+                product_value = value
+            else:
+                product_value = product_value * value
+
+        if product_value is None:
+            term_value = coefficient
+        elif coefficient == 1:
+            term_value = product_value
+        else:
+            term_value = coefficient * product_value
+
+        if total is None:
+            total = term_value
+        else:
+            total = total + term_value
+
+    if total is None:
+        return 0
+    return total
 
 
 def _calc(wav, x, function_lib):
-    lru_cache = {}
-
-    def _calc_m(t, x):
-        ret = 1
-        for mt, n in zip(*t):
-            if mt not in lru_cache:
-                func_id, *args, shift = mt
-                lru_cache[mt] = _apply(function_lib, func_id, x, shift, *args)
-            if n == 1:
-                ret = ret * lru_cache[mt]
-            else:
-                ret = ret * lru_cache[mt]**n
-        return ret
-
-    ret = 0
-    for t, v in zip(*wav):
-        ret = ret + v * _calc_m(t, x)
-    return ret
+    return _calc_impl(wav, x, function_lib)
 
 
 def calc_parts(bounds, seq, x, function_lib, min=-inf, max=inf):
-    range_list = np.searchsorted(x, bounds)
-    parts = []
-    start, stop = 0, 0
-    dtype = float
-    for i, stop in enumerate(range_list):
+    cdef object range_list = np.searchsorted(x, bounds)
+    cdef list parts = []
+    cdef object part
+    cdef object dtype = float
+    cdef Py_ssize_t i
+    cdef Py_ssize_t start = 0
+    cdef Py_ssize_t stop
+    cdef Py_ssize_t count = len(range_list)
+    cdef bint should_clip = min != -inf or max != inf
+
+    for i in range(count):
+        stop = range_list[i]
         if start < stop and seq[i] != _zero:
-            part = np.clip(_calc(seq[i], x[start:stop], function_lib), min,
-                           max)
-            if (isinstance(part, complex) or isinstance(part, np.ndarray)
-                    and isinstance(part[0], complex)):
+            part = _calc_impl(seq[i], x[start:stop], function_lib)
+            if should_clip:
+                part = np.clip(part, min, max)
+            if np.iscomplexobj(part):
                 dtype = complex
             parts.append((start, stop, part))
         start = stop
     return parts, dtype
 
 
+cdef void _accumulate_expr(dict accumulator, object expr, int sign):
+    cdef object term_list = expr[0]
+    cdef object value_list = expr[1]
+    cdef object term
+    cdef object value
+    cdef Py_ssize_t i
+    cdef Py_ssize_t count = len(term_list)
+
+    for i in range(count):
+        term = term_list[i]
+        value = accumulator.get(term, 0) + sign * value_list[i]
+        if value == 0:
+            accumulator.pop(term, None)
+        else:
+            accumulator[term] = value
+
+
+cdef object _snapshot_expr(dict accumulator):
+    cdef list items
+    if not accumulator:
+        return _zero
+    items = sorted(accumulator.items())
+    return (tuple(item[0] for item in items),
+            tuple(item[1] for item in items))
+
+
 def wave_sum(waves):
+    cdef dict accumulator = {}
+    cdef dict events = {}
+    cdef list output_bounds = []
+    cdef list output_seq
+    cdef object bounds
+    cdef object seq
+    cdef object changes
+    cdef object old_expr
+    cdef object new_expr
+    cdef object expr
+    cdef object boundary
+    cdef Py_ssize_t i, j
+    cdef Py_ssize_t wave_count
+    cdef Py_ssize_t bound_count
+
     if not waves:
-        return ((+inf, ), (_zero, ))
+        return ((inf, ), (_zero, ))
+    if len(waves) == 1:
+        return waves[0]
 
-    bounds, seq = waves[0]
-    if not waves[1:]:
-        return bounds, seq
-    bounds, seq = list(bounds), list(seq)
+    wave_count = len(waves)
+    for i in range(wave_count):
+        bounds, seq = waves[i]
+        _accumulate_expr(accumulator, seq[0], 1)
+        bound_count = len(bounds)
+        for j in range(bound_count - 1):
+            boundary = bounds[j]
+            changes = events.get(boundary)
+            if changes is None:
+                changes = []
+                events[boundary] = changes
+            changes.append((seq[j], seq[j + 1]))
 
-    for bounds_, seq_ in waves[1:]:
-        if len(bounds_) == 1:
-            for i, s in enumerate(seq):
-                seq[i] = add(s, seq_[0])
-        elif len(bounds) == 1:
-            bounds = list(bounds_)
-            seq = [add(seq[0], s) for s in seq_]
-        else:
-            lo = 0
-            for b, s in zip(bounds_, seq_):
-                i = bisect_left(bounds, b, lo=lo)
-                if bounds[i] > b:
-                    bounds.insert(i, b)
-                    if i == 0:
-                        seq.insert(i, s)
-                    else:
-                        seq.insert(i, add(s, seq[i]))
-                    up = i - 1
-                else:
-                    up = i
-                for j in range(lo + 1, up + 1):
-                    seq[j] = add(seq[j], s)
-                lo = i
+    output_seq = [_snapshot_expr(accumulator)]
+    for boundary in sorted(events):
+        changes = events[boundary]
+        for old_expr, new_expr in changes:
+            _accumulate_expr(accumulator, old_expr, -1)
+            _accumulate_expr(accumulator, new_expr, 1)
+        expr = _snapshot_expr(accumulator)
+        if expr != output_seq[-1]:
+            output_bounds.append(boundary)
+            output_seq.append(expr)
 
-    i = 0
-    while i < len(bounds) - 1:
-        if seq[i] == seq[i + 1]:
-            del seq[i]
-            del bounds[i]
-        else:
-            i += 1
-
-    return tuple(bounds), tuple(seq)
+    output_bounds.append(inf)
+    return tuple(output_bounds), tuple(output_seq)
 
 
 def merge_waveform(b1, s1, b2, s2, oper):
@@ -296,8 +381,9 @@ def _GAUSSIAN(t, std_sq2):
 
 
 def _D_GAUSSIAN(t, std_sq2, n):
-    return (-1)**n / std_sq2**n * special.hermite(n)(
-        t / std_sq2) * np.exp(-(t / std_sq2)**2)
+    x = t / std_sq2
+    return ((-1)**n / std_sq2**n * special.eval_hermite(n, x)
+            * np.exp(-(x**2)))
 
 
 def _ERF(t, std_sq2):
@@ -316,8 +402,13 @@ def _EXP(t, alpha):
     return np.exp(alpha * t)
 
 
+@lru_cache(maxsize=256)
+def _interp_grid(start, stop, size):
+    return np.linspace(start, stop, size)
+
+
 def _INTERP(t, start, stop, points):
-    return np.interp(t, np.linspace(start, stop, len(points)), points)
+    return np.interp(t, _interp_grid(start, stop, len(points)), points)
 
 
 def _LINEARCHIRP(t, f0, f1, T, phi0):
@@ -356,19 +447,24 @@ def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
     return Omega_x * np.cos(wt) + Omega_y * np.sin(wt)
 
 
+@lru_cache(maxsize=64)
+def _mollifier_poly(d):
+    p = np.poly1d([-2, 0])
+    for n in range(1, d):
+        p = (np.poly1d([1, 0, -2, 0, 1]) * p.deriv()
+             + np.poly1d([-4 * n, 0, 4 * n - 2, 0]) * p)
+    return p
+
+
 def _mollifier(t: np.ndarray, r: float, d: int):
     x = t / r
-    xx_1 = np.abs(x)**2 - 1
+    xx_1 = x * x - 1
     if d == 0:
         return np.where(xx_1 >= 0, 0, np.exp(1 / xx_1 + 1))
-    else:
-        p = np.poly1d([-2, 0])
-        for n in range(1, d):
-            p = np.poly1d([1, 0, -2, 0, 1]) * p.deriv() + np.poly1d(
-                [-4 * n, 0, 4 * n - 2, 0]) * p
-        return np.where(xx_1 >= 0, 0,
-                        np.exp(1 / xx_1 + 1) /
-                        (-xx_1)**(2 * d)) * p(x) / r**d
+    p = _mollifier_poly(d)
+    return (np.where(xx_1 >= 0, 0,
+                     np.exp(1 / xx_1 + 1) / (-xx_1)**(2 * d))
+            * p(x) / r**d)
 
 
 LINEAR = registerBaseFunc(_LINEAR)
