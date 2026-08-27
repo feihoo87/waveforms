@@ -12,7 +12,7 @@ import struct
 from bisect import bisect_left
 from functools import lru_cache
 from itertools import chain, product
-from math import comb
+from math import comb, factorial
 
 import numpy as np
 import scipy.special as special
@@ -36,6 +36,8 @@ SINH = 12
 DRAG = 13
 MOLLIFIER = 14
 D_GAUSSIAN = 15
+DRAG_SIN = 16
+DRAG_SINX = 17
 
 _zero = ((), ())
 _one = ((((), ()),), (1.0,))
@@ -169,6 +171,179 @@ def _drag(t, t0, freq, width, delta, block_freq, phase):
     return omega_x * np.cos(wt) + omega_y * np.sin(wt)
 
 
+def _b_series_matrix(block_coefficients):
+    matrix = np.zeros((len(block_coefficients) + 1, 2, 2))
+    matrix[0] = np.identity(2)
+    for coefficient in block_coefficients:
+        rotation = np.array([[0, coefficient], [-coefficient, 0]])
+        matrix[1:] += matrix[:-1] @ rotation
+    return matrix
+
+
+def _sin_power_derivatives(int power, int order, double angular_frequency):
+    matrix = np.zeros((order + 1, power + 1))
+    matrix[0, power] = 1
+    for derivative in range(1, order + 1):
+        if derivative % 2:
+            matrix[derivative, :-1] = (
+                matrix[derivative - 1, 1:] * np.arange(1, power + 1)
+                * angular_frequency
+            )
+        else:
+            matrix[derivative, :-2] = (
+                matrix[derivative - 2, 2:] * np.arange(1, power)
+                * np.arange(2, power + 1)
+            )
+            matrix[derivative] -= (
+                matrix[derivative - 2] * np.arange(power + 1) ** 2
+            )
+            matrix[derivative] *= angular_frequency ** 2
+    return matrix
+
+
+def _edge_polynomial(derivatives, double x):
+    values = np.asarray(derivatives, dtype=float).copy()
+    values[0] -= 1
+    size = values.shape[0]
+    matrix = np.zeros((size, size))
+    for derivative in range(size):
+        for coefficient in range(size):
+            matrix[derivative, coefficient] = (
+                x ** (size + coefficient - derivative)
+                * factorial(size + coefficient)
+                / factorial(size + coefficient - derivative)
+            )
+    coefficients = np.linalg.solve(matrix, values)
+    return np.poly1d((*np.flip(coefficients), *np.zeros_like(values[:-1]), 1))
+
+
+@lru_cache(maxsize=128)
+def _drag_sin_plan(double width, double delta, tuple block_freq):
+    frequencies = np.asarray(block_freq, dtype=float)
+    block_coefficients = (
+        np.empty(0) if frequencies.size == 0
+        else 1 / (2 * pi * (frequencies - delta))
+    )
+    power = max(((len(block_coefficients) + 2) >> 1) << 1, 2)
+    transform = _b_series_matrix(block_coefficients)
+    derivatives = _sin_power_derivatives(
+        power, len(block_coefficients), pi / width
+    )
+    peak_basis = np.ones(power + 1)
+    peak_basis[1::2] = 0
+    peak_derivatives = derivatives @ peak_basis
+    transformed_peak = np.einsum(
+        "ijk,ki->j",
+        transform,
+        np.array([peak_derivatives, np.zeros_like(peak_derivatives)]),
+    )
+    normalization = np.sqrt(np.sum(np.abs(transformed_peak) ** 2))
+    return transform, derivatives, np.arange(power + 1), normalization
+
+
+def _drag_sin_derivatives(t, double t0, double width, double plateau,
+                          derivatives, powers):
+    midpoint = t0 + width / 2
+    plateau_stop = midpoint + plateau
+    plateau_mask = (t > midpoint) & (t < plateau_stop)
+    adjusted = np.where(t >= plateau_stop, t - plateau, t)
+    angle = pi / width * (adjusted - t0)
+    sine = np.sin(angle)
+    cosine = np.cos(angle)
+    if np.any(plateau_mask):
+        sine = sine.copy()
+        cosine = cosine.copy()
+        sine[plateau_mask] = 0
+        cosine[plateau_mask] = 0
+    basis = sine ** powers.reshape((-1, 1))
+    basis[1::2] *= cosine
+    values = derivatives @ basis
+    if np.any(plateau_mask):
+        values[0, plateau_mask] = 1
+    return values
+
+
+def _drag_omega_sin(t, double t0, double width, double delta,
+                    tuple block_freq, double plateau):
+    transform, derivatives, powers, normalization = _drag_sin_plan(
+        width, delta, block_freq
+    )
+    values = _drag_sin_derivatives(
+        t, t0, width, plateau, derivatives, powers
+    )
+    components = np.array([values, np.zeros_like(values)])
+    return np.einsum("ijk,kim->jm", transform, components) / normalization
+
+
+@lru_cache(maxsize=128)
+def _drag_sinx_plan(double width, double delta, tuple block_freq, double tab):
+    transform, derivatives, powers, _ = _drag_sin_plan(
+        width, delta, block_freq
+    )
+    angular_frequency = pi / width
+
+    left_basis = np.sin(angular_frequency * (1 - tab) * width / 2) ** powers
+    left_basis[1::2] *= np.cos(angular_frequency * (1 - tab) * width / 2)
+    left_polynomial = _edge_polynomial(
+        derivatives @ left_basis, -tab * width / 2
+    )
+
+    right_basis = np.sin(angular_frequency * (1 + tab) * width / 2) ** powers
+    right_basis[1::2] *= np.cos(angular_frequency * (1 + tab) * width / 2)
+    right_polynomial = _edge_polynomial(
+        derivatives @ right_basis, tab * width / 2
+    )
+
+    order = len(block_freq) + 1
+    left_derivatives = tuple(
+        np.polyder(left_polynomial, derivative) for derivative in range(order)
+    )
+    right_derivatives = tuple(
+        np.polyder(right_polynomial, derivative) for derivative in range(order)
+    )
+    return (transform, derivatives, powers, left_derivatives,
+            right_derivatives)
+
+
+def _drag_omega_sinx(t, double t0, double width, double delta,
+                     tuple block_freq, double plateau, double tab):
+    (transform, derivatives, powers, left_derivatives,
+     right_derivatives) = _drag_sinx_plan(width, delta, block_freq, tab)
+    values = _drag_sin_derivatives(
+        t, t0, width, plateau, derivatives, powers
+    )
+    midpoint = t0 + width / 2
+    plateau_stop = midpoint + plateau
+    left_mask = (t >= midpoint - tab * width / 2) & (t <= midpoint)
+    right_mask = ((t >= plateau_stop)
+                  & (t <= plateau_stop + tab * width / 2))
+    for derivative in range(len(block_freq) + 1):
+        values[derivative, left_mask] = left_derivatives[derivative](
+            t[left_mask] - midpoint
+        )
+        values[derivative, right_mask] = right_derivatives[derivative](
+            t[right_mask] - plateau_stop
+        )
+    components = np.array([values, np.zeros_like(values)])
+    return np.einsum("ijk,kim->jm", transform, components)
+
+
+def _drag_sin(t, t0, freq, width, delta, block_freq, phase, plateau):
+    omega_x, omega_y = _drag_omega_sin(
+        t, t0, width, delta, block_freq, plateau
+    )
+    wt = 2 * pi * (freq + delta) * t - (2 * pi * delta * t0 + phase)
+    return omega_x * np.cos(wt) + omega_y * np.sin(wt)
+
+
+def _drag_sinx(t, t0, freq, width, delta, block_freq, phase, plateau, tab):
+    omega_x, omega_y = _drag_omega_sinx(
+        t, t0, width, delta, block_freq, plateau, tab
+    )
+    wt = 2 * pi * (freq + delta) * t - (2 * pi * delta * t0 + phase)
+    return omega_x * np.cos(wt) + omega_y * np.sin(wt)
+
+
 @lru_cache(maxsize=64)
 def _mollifier_poly(d):
     polynomial = np.poly1d([-2, 0])
@@ -205,6 +380,8 @@ _base_functions = {
     DRAG: _drag,
     MOLLIFIER: _MOLLIFIER,
     D_GAUSSIAN: _D_GAUSSIAN,
+    DRAG_SIN: _drag_sin,
+    DRAG_SINX: _drag_sinx,
 }
 
 
@@ -280,6 +457,18 @@ def _encode_builtin_args(bytearray out, int opcode, args):
                                float(values[1]), _time_to_tick(values[2]),
                                float(values[3]), float(values[4]),
                                float(values[5]), _time_to_tick(values[6])))
+    elif opcode in (DRAG_SIN, DRAG_SINX):
+        t0, freq, width, delta, block_freq, phase, plateau = args[:7]
+        block_freq = tuple(float(value) for value in block_freq)
+        out.extend(struct.pack("<qdqddq", _time_to_tick(t0), float(freq),
+                               _time_to_tick(width), float(delta),
+                               float(phase), _time_to_tick(plateau)))
+        if opcode == DRAG_SINX:
+            out.extend(struct.pack("<d", float(args[7])))
+        out.extend(struct.pack("<I", len(block_freq)))
+        if block_freq:
+            out.extend(struct.pack(f"<{len(block_freq)}d", *block_freq))
+        out.extend(struct.pack("<q", _time_to_tick(args[-1])))
     elif opcode in (MOLLIFIER, D_GAUSSIAN):
         out.extend(struct.pack("<qiq", _time_to_tick(args[0]), int(args[1]),
                                _time_to_tick(args[2])))
@@ -318,6 +507,26 @@ def _decode_builtin_args(bytes data, Py_ssize_t pos, int opcode):
             values[4] = None
         values[-1] = _tick_to_time(values[-1])
         return tuple(values), pos + 56
+    if opcode in (DRAG_SIN, DRAG_SINX):
+        t0, freq, width, delta, phase, plateau = struct.unpack_from(
+            "<qdqddq", data, pos
+        )
+        pos += 48
+        tab = None
+        if opcode == DRAG_SINX:
+            tab = struct.unpack_from("<d", data, pos)[0]
+            pos += 8
+        count = struct.unpack_from("<I", data, pos)[0]
+        pos += 4
+        block_freq = struct.unpack_from(f"<{count}d", data, pos)
+        pos += 8 * count
+        shift = struct.unpack_from("<q", data, pos)[0]
+        pos += 8
+        values = (_tick_to_time(t0), freq, _tick_to_time(width), delta,
+                  block_freq, phase, _tick_to_time(plateau))
+        if opcode == DRAG_SINX:
+            values += (tab,)
+        return values + (_tick_to_time(shift),), pos
     if opcode in (MOLLIFIER, D_GAUSSIAN):
         first, order, shift = struct.unpack_from("<qiq", data, pos)
         return (_tick_to_time(first), order, _tick_to_time(shift)), pos + 20

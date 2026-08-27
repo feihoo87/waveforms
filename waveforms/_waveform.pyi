@@ -18,6 +18,8 @@ SINH: int
 DRAG: int
 MOLLIFIER: int
 D_GAUSSIAN: int
+DRAG_SIN: int
+DRAG_SINX: int
 
 
 class PackedWaveform:

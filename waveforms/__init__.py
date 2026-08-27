@@ -13,6 +13,8 @@ from .waveform import (
     cosPulse,
     cut,
     drag,
+    drag_sin,
+    drag_sinx,
     exp,
     function,
     gaussian,
@@ -41,7 +43,8 @@ from .waveform import (
 
 __all__ = [
     "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
-    "coshPulse", "cosPulse", "cut", "drag", "e", "exp", "function",
+    "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
+    "e", "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning",
     "interp", "mixing", "mollifier", "one", "pi", "poly",
     "registerBaseFunc", "registerDerivative", "samplingPoints",

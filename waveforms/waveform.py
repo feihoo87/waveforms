@@ -16,7 +16,8 @@ from numpy import e, inf, pi
 from scipy.signal import sosfilt
 
 from ._waveform import (
-    COS, COSH, D_GAUSSIAN, DRAG, ERF, EXP, EXPONENTIALCHIRP, GAUSSIAN,
+    COS, COSH, D_GAUSSIAN, DRAG, DRAG_SIN, DRAG_SINX, ERF, EXP,
+    EXPONENTIALCHIRP, GAUSSIAN,
     HYPERBOLICCHIRP, INTERP, LINEAR, LINEARCHIRP, MOLLIFIER, SINC, SINH,
     PackedStack, PackedWaveform, basic, constant, get_time_resolution,
     piecewise, quantize_time, registerBaseFunc, registerDerivative,
@@ -813,6 +814,42 @@ def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
     )
 
 
+def _block_frequencies(block_freq):
+    if block_freq is None:
+        return ()
+    if np.isscalar(block_freq):
+        return (float(block_freq),)
+    return tuple(float(value) for value in block_freq)
+
+
+def drag_sin(freq, width, plateau=0, delta=0, block_freq=None, phase=0,
+             t0=0):
+    """Return a sine-power DRAG pulse with spectral blocking constraints."""
+    if width <= 0:
+        raise ValueError("width must be positive")
+    phase += pi * delta * (width + plateau)
+    core = _scalar(
+        DRAG_SIN, t0, freq, width, delta, _block_frequencies(block_freq),
+        phase, plateau,
+    )
+    return _piecewise((t0, t0 + width + plateau, inf), 0, core, 0)
+
+
+def drag_sinx(freq, width, plateau=0, delta=0, block_freq=None, phase=0,
+              t0=0, tab=0.618):
+    """Return a flat-top sine-power DRAG pulse with polynomial joins."""
+    if width <= 0:
+        raise ValueError("width must be positive")
+    if not 0 < tab <= 1:
+        raise ValueError("tab must be in the interval (0, 1]")
+    phase += pi * delta * (width + plateau)
+    core = _scalar(
+        DRAG_SINX, t0, freq, width, delta, _block_frequencies(block_freq),
+        phase, plateau, tab,
+    )
+    return _piecewise((t0, t0 + width + plateau, inf), 0, core, 0)
+
+
 def chirp(f0, f1, T, phi0=0, type="linear"):
     if f0 == f1:
         return sin(f0, phi0)
@@ -941,7 +978,8 @@ def wave_eval(expr: str) -> Waveform:
 
 __all__ = [
     "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
-    "coshPulse", "cosPulse", "cut", "drag", "exp", "function",
+    "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
+    "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning",
     "interp", "mixing", "mollifier", "one", "play", "poly",
     "registerBaseFunc", "registerDerivative", "samplingPoints",

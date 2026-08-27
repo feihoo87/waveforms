@@ -32,7 +32,7 @@ class WaveformVisitor:
         self.extra_modules = tuple(extra_modules)
         self.functions = [
             'D', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
-            'cut', 'drag', 'exp', 'gaussian',
+            'cut', 'drag', 'drag_sin', 'drag_sinx', 'exp', 'gaussian',
             'general_cosine', 'hanning', 'interp', 'mixing', 'mollifier',
             'one', 'poly', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
             'square', 'step', 't', 'zero'

@@ -13,7 +13,8 @@ import waveforms as wf
 
 PUBLIC_NAMES = {
     "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
-    "coshPulse", "cosPulse", "cut", "drag", "exp", "function",
+    "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
+    "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning", "interp", "mixing",
     "mollifier", "one", "poly", "registerBaseFunc", "registerDerivative",
     "samplingPoints", "set_time_resolution", "sign", "sin", "sinc", "sinh", "square", "step",
@@ -132,6 +133,96 @@ def test_sampling_points_chirps_and_mixing():
                      DRAGScaling=0.01)
     assert np.all(np.isfinite(i(x)))
     assert np.all(np.isfinite(q(x)))
+
+
+@pytest.mark.parametrize("constructor,extra", [
+    (wf.drag_sin, {}),
+    (wf.drag_sinx, {"tab": 0.47}),
+])
+def test_multi_frequency_drag_roundtrip_shift_and_parser(constructor, extra):
+    parameters = dict(
+        freq=5e9,
+        width=22.22e-9,
+        plateau=3e-9,
+        delta=-13.7e6,
+        block_freq=(-91e6, 37e6, 124e6),
+        phase=0.31,
+        t0=7e-9,
+        **extra,
+    )
+    wav = constructor(**parameters)
+    x = np.linspace(-2e-9, 40e-9, 8193)
+    values = wav(x)
+    assert np.all(np.isfinite(values))
+    assert np.all(values[(x < parameters["t0"])
+                         | (x >= parameters["t0"] + parameters["width"]
+                            + parameters["plateau"])] == 0)
+
+    restored = wf.Waveform.from_bytes(wav.to_bytes())
+    assert restored == wav
+    assert np.array_equal(restored(x), values)
+    delay = 11e-9
+    assert np.allclose((wav >> delay)(x + delay), values)
+
+    expression = (
+        f"{constructor.__name__}(5e9, 22.22e-9, plateau=3e-9, "
+        "delta=-13.7e6, block_freq=(-91e6, 37e6, 124e6), "
+        f"phase=0.31, t0=7e-9{', tab=0.47' if extra else ''})"
+    )
+    assert wf.wave_eval(expression) == wav
+
+
+def test_drag_sin_scalar_block_frequency_and_argument_validation():
+    scalar = wf.drag_sin(5e9, 20e-9, block_freq=80e6)
+    sequence = wf.drag_sin(5e9, 20e-9, block_freq=(80e6,))
+    assert scalar.to_bytes() == sequence.to_bytes()
+    with pytest.raises(ValueError):
+        wf.drag_sin(5e9, 0)
+    with pytest.raises(ValueError):
+        wf.drag_sinx(5e9, 20e-9, tab=0)
+
+
+def test_multi_frequency_drag_matches_v2_numerical_behavior():
+    parameters = dict(
+        freq=5e9,
+        width=22.22e-9,
+        plateau=3e-9,
+        delta=-13.7e6,
+        block_freq=(-91e6, 37e6, 124e6),
+        phase=0.31,
+        t0=7e-9,
+    )
+    fractions = np.array([0, 0.07, 0.19, 0.37, 0.51,
+                          0.68, 0.83, 0.96, 0.999])
+    x = parameters["t0"] + fractions * (
+        parameters["width"] + parameters["plateau"]
+    )
+    expected_sin = np.array([
+        0,
+        0.20532545807257174,
+        0.6208384978963238,
+        -0.4333357461117501,
+        -0.08840393960186489,
+        -0.8620379323126761,
+        -0.5748645543753418,
+        -0.07489572316435908,
+        -0.00309835789254227,
+    ])
+    expected_sinx = np.array([
+        0,
+        0.11971095177791738,
+        0.36196762048509773,
+        -0.03689065391238458,
+        -0.05154217041569324,
+        -0.19970252200405683,
+        -0.3351634210081106,
+        -0.04366647169944161,
+        -0.00180643635595232,
+    ])
+    assert np.allclose(wf.drag_sin(**parameters)(x), expected_sin,
+                       rtol=2e-13, atol=2e-13)
+    assert np.allclose(wf.drag_sinx(**parameters, tab=0.47)(x), expected_sinx,
+                       rtol=2e-13, atol=2e-13)
 
 
 def test_filters_and_chunked_sampling():
