@@ -2,6 +2,8 @@ from numpy import e, pi
 
 from .version import __version__
 from .waveform import (
+    ComplexWaveform,
+    ComplexWaveVStack,
     D,
     Waveform,
     WaveVStack,
@@ -42,7 +44,8 @@ from .waveform import (
 )
 
 __all__ = [
-    "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
+    "ComplexWaveform", "ComplexWaveVStack", "D", "Waveform", "WaveVStack",
+    "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "e", "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning",

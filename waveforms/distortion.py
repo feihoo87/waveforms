@@ -211,9 +211,9 @@ def reflection(sig, A, tau, sample_rate):
 
 
 def correct_reflection(sig, A, tau, sample_rate=None):
-    from waveforms.waveform import Waveform
+    from waveforms.waveform import ComplexWaveform, Waveform
 
-    if isinstance(sig, Waveform):
+    if isinstance(sig, (Waveform, ComplexWaveform)):
         return 1 / (1 - A) * sig - A / (1 - A) * (sig >> tau)
     if sample_rate is not None:
         freq = np.fft.fftfreq(len(sig), 1 / sample_rate)

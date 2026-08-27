@@ -8,6 +8,7 @@ intentionally not repeated in every block.
 
 from __future__ import annotations
 
+import struct
 from functools import lru_cache
 from typing import Iterable, cast
 
@@ -26,6 +27,36 @@ from ._waveform import (
 
 _ZERO_EXPR = ((), ())
 _ONE_EXPR = ((((), ()),), (1.0,))
+_COMPLEX_WAVE_MAGIC = b"CWF1"
+_COMPLEX_STACK_MAGIC = b"CWS1"
+_COMPLEX_HEADER = struct.Struct("<4sII")
+
+
+def _number_parts(value):
+    """Return real and imaginary Python floats for a scalar number."""
+    if not isinstance(value, (int, float, complex, np.number)):
+        raise TypeError(f"expected a scalar number, got {type(value).__name__}")
+    number = complex(value)
+    return float(number.real), float(number.imag)
+
+
+def _pack_complex(magic, real_data, imag_data):
+    return (_COMPLEX_HEADER.pack(magic, len(real_data), len(imag_data))
+            + real_data + imag_data)
+
+
+def _unpack_complex(data, magic):
+    data = data if isinstance(data, bytes) else bytes(data)
+    if len(data) < _COMPLEX_HEADER.size:
+        raise ValueError("truncated complex waveform")
+    actual_magic, real_size, imag_size = _COMPLEX_HEADER.unpack_from(data)
+    if actual_magic != magic:
+        raise ValueError("unsupported complex waveform format")
+    start = _COMPLEX_HEADER.size
+    split = start + real_size
+    if split + imag_size != len(data):
+        raise ValueError("invalid complex waveform layout")
+    return data[start:split], data[split:]
 
 
 def _copy_sampling_metadata(source, target):
@@ -160,7 +191,10 @@ class Waveform(_SamplingMixin):
             _core = PackedWaveform.from_legacy(tuple(bounds), tuple(seq))
         self._core = _core
         self._delay = quantize_time(_delay)
-        self._scale = complex(_scale) if isinstance(_scale, complex) else _scale
+        scale_real, scale_imag = _number_parts(_scale)
+        if scale_imag != 0:
+            raise TypeError("Waveform scale must be real; use ComplexWaveform")
+        self._scale = scale_real
         self.max = max
         self.min = min
         self.start = None
@@ -220,6 +254,8 @@ class Waveform(_SamplingMixin):
 
     @classmethod
     def from_bytes(cls, data):
+        if bytes(data[:4]) == _COMPLEX_WAVE_MAGIC:
+            return ComplexWaveform.from_bytes(data)
         return cls._from_core(PackedWaveform.from_bytes(data))
 
     def simplify(self, eps=1e-15):
@@ -232,8 +268,17 @@ class Waveform(_SamplingMixin):
         return Waveform._from_core(self._materialized_core().power(n))
 
     def __add__(self, other):
+        if isinstance(other, ComplexWaveform):
+            return other + self
+        if isinstance(other, ComplexWaveVStack):
+            return other + self
+        if isinstance(other, WaveVStack):
+            return other + self
         if not isinstance(other, Waveform):
-            other = const(other)
+            real, imag = _number_parts(other)
+            if imag != 0:
+                return ComplexWaveform(self + real, _real_const(imag))
+            other = _real_const(real)
         return Waveform._from_core(
             self._materialized_core().add(other._materialized_core())
         )
@@ -245,20 +290,33 @@ class Waveform(_SamplingMixin):
         return self + (-other)
 
     def __rsub__(self, value):
-        return value + (-self)
+        real, imag = _number_parts(value)
+        if imag != 0:
+            return ComplexWaveform(real - self, _real_const(imag))
+        return real + (-self)
 
     def __mul__(self, other):
+        if isinstance(other, ComplexWaveform):
+            return other * self
+        if isinstance(other, ComplexWaveVStack):
+            return other * self
+        if isinstance(other, WaveVStack):
+            return other * self
         if isinstance(other, Waveform):
             return Waveform._from_core(
                 self._materialized_core().mul(other._materialized_core())
             )
-        return Waveform._from_core(self._core, self._delay, self._scale * other)
+        real, imag = _number_parts(other)
+        if imag != 0:
+            return ComplexWaveform(self * real, self * imag)
+        return Waveform._from_core(self._core, self._delay, self._scale * real)
 
     def __rmul__(self, value):
         return self * value
 
     def __truediv__(self, other):
-        if isinstance(other, (Waveform, WaveVStack)):
+        if isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
+                              ComplexWaveVStack)):
             raise TypeError("division by waveform")
         return self * (1 / other)
 
@@ -332,7 +390,6 @@ class Waveform(_SamplingMixin):
         values = np.asarray([x]) if scalar else np.asarray(x)
         parts, _ = self._core.parts_shifted(values, self._delay)
         scaled_parts = []
-        complex_output = False
         should_scale = self._scale != 1
         should_clip = self.min != -inf or self.max != inf
         for start, stop, part in parts:
@@ -340,7 +397,6 @@ class Waveform(_SamplingMixin):
                 part = part * self._scale
             if should_clip:
                 part = np.clip(part, self.min, self.max)
-            complex_output |= np.iscomplexobj(part)
             scaled_parts.append((start, stop, part))
         if frag:
             if out is None:
@@ -351,7 +407,7 @@ class Waveform(_SamplingMixin):
             return out
 
         if out is None:
-            out = np.zeros_like(values, dtype=complex if complex_output else float)
+            out = np.zeros_like(values, dtype=float)
         elif not accumulate:
             out[...] = 0
         for start, stop, part in scaled_parts:
@@ -362,7 +418,12 @@ class Waveform(_SamplingMixin):
         if self is other:
             return True
         if isinstance(other, (int, float, complex, np.number)):
-            other = const(other)
+            real, imag = _number_parts(other)
+            if imag != 0:
+                return False
+            other = _real_const(real)
+        if isinstance(other, ComplexWaveform):
+            return other == self
         if not isinstance(other, Waveform):
             return False
         if (self.max, self.min, self.start, self.stop) != (
@@ -392,6 +453,263 @@ class Waveform(_SamplingMixin):
         self._core = PackedWaveform.from_bytes(data)
 
 
+class ComplexWaveform(_SamplingMixin):
+    """Complex waveform represented by two independent real waveforms."""
+
+    __slots__ = (
+        "_real", "_imag", "max", "min", "start", "stop", "sample_rate",
+        "filters", "label",
+    )
+
+    def __init__(self, real=0.0, imag=0.0):
+        if isinstance(real, ComplexWaveform):
+            if imag != 0:
+                raise TypeError("imag must be zero when copying ComplexWaveform")
+            self._real = real._real
+            self._imag = real._imag
+        else:
+            if isinstance(real, Waveform):
+                self._real = real
+            else:
+                real_value, embedded_imag = _number_parts(real)
+                if embedded_imag != 0:
+                    imag_value, nested_imag = _number_parts(imag)
+                    if imag_value != 0 or nested_imag != 0:
+                        raise TypeError(
+                            "a complex first argument cannot be combined with imag"
+                        )
+                    self._real = _real_const(real_value)
+                    self._imag = _real_const(embedded_imag)
+                else:
+                    self._real = _real_const(real_value)
+            if not hasattr(self, "_imag"):
+                self._imag = imag if isinstance(imag, Waveform) else _real_const(imag)
+        if not isinstance(self._real, Waveform) or not isinstance(self._imag, Waveform):
+            raise TypeError("ComplexWaveform components must be real Waveform objects")
+        self.max = inf
+        self.min = -inf
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+        self.filters = None
+        self.label = None
+
+    @classmethod
+    def _from_components(cls, real, imag):
+        return cls(real, imag)
+
+    @property
+    def real(self):
+        return self._real
+
+    @property
+    def imag(self):
+        return self._imag
+
+    @property
+    def begin(self):
+        value = min(self._real.begin, self._imag.begin)
+        return value if self.start is None else max(self.start, value)
+
+    @property
+    def end(self):
+        value = max(self._real.end, self._imag.end)
+        return value if self.stop is None else min(self.stop, value)
+
+    def to_bytes(self):
+        return _pack_complex(
+            _COMPLEX_WAVE_MAGIC, self._real.to_bytes(), self._imag.to_bytes()
+        )
+
+    @classmethod
+    def from_bytes(cls, data):
+        real_data, imag_data = _unpack_complex(data, _COMPLEX_WAVE_MAGIC)
+        return cls(Waveform.from_bytes(real_data), Waveform.from_bytes(imag_data))
+
+    def simplify(self, eps=1e-15):
+        return ComplexWaveform(self._real.simplify(eps),
+                               self._imag.simplify(eps))
+
+    def filter(self, low=0, high=inf, eps=1e-15):
+        return ComplexWaveform(self._real.filter(low, high, eps),
+                               self._imag.filter(low, high, eps))
+
+    def __pow__(self, n):
+        if not isinstance(n, int) or n < 0:
+            raise ValueError("complex waveform powers must be non-negative integers")
+        result = _real_const(1.0)
+        base = self
+        while n:
+            if n & 1:
+                result = result * base
+            n >>= 1
+            if n:
+                base = base * base
+        return result
+
+    def __add__(self, other):
+        if isinstance(other, ComplexWaveVStack):
+            return other + self
+        if isinstance(other, WaveVStack):
+            return ComplexWaveVStack(other) + self
+        if isinstance(other, ComplexWaveform):
+            return ComplexWaveform(self._real + other._real,
+                                   self._imag + other._imag)
+        if isinstance(other, Waveform):
+            return ComplexWaveform(self._real + other, self._imag)
+        real, imag = _number_parts(other)
+        return ComplexWaveform(self._real + real, self._imag + imag)
+
+    def __radd__(self, other):
+        return self + other
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __rsub__(self, other):
+        return (-self) + other
+
+    def __mul__(self, other):
+        if isinstance(other, ComplexWaveVStack):
+            return other * self
+        if isinstance(other, WaveVStack):
+            return ComplexWaveVStack(other * self._real,
+                                     other * self._imag)
+        if isinstance(other, ComplexWaveform):
+            return ComplexWaveform(
+                self._real * other._real - self._imag * other._imag,
+                self._real * other._imag + self._imag * other._real,
+            )
+        if isinstance(other, Waveform):
+            return ComplexWaveform(self._real * other, self._imag * other)
+        real, imag = _number_parts(other)
+        return ComplexWaveform(
+            self._real * real - self._imag * imag,
+            self._real * imag + self._imag * real,
+        )
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __truediv__(self, other):
+        if isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
+                              ComplexWaveVStack)):
+            raise TypeError("division by waveform")
+        return self * (1 / other)
+
+    def __neg__(self):
+        return ComplexWaveform(-self._real, -self._imag)
+
+    def __rshift__(self, time):
+        return ComplexWaveform(self._real >> time, self._imag >> time)
+
+    def __lshift__(self, time):
+        return self >> -time
+
+    @property
+    def marker(self):
+        return self._real.marker | self._imag.marker
+
+    def mask(self, edge=0):
+        return self.marker.mask(edge)
+
+    def __or__(self, other):
+        if not isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
+                                  ComplexWaveVStack)):
+            other = const(other)
+        return self.marker | other.marker
+
+    def __ior__(self, other):
+        return self | other
+
+    def __and__(self, other):
+        if not isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
+                                  ComplexWaveVStack)):
+            other = const(other)
+        return self.marker & other.marker
+
+    def __iand__(self, other):
+        return self & other
+
+    def __call__(self, x, frag=False, out=None, accumulate=False,
+                 function_lib=None):
+        if function_lib is not None:
+            raise NotImplementedError("custom waveform functions are not supported")
+        scalar = isinstance(x, (int, float, np.number))
+        values = np.asarray([x]) if scalar else np.asarray(x)
+        if frag:
+            result = self(values)
+            parts = [] if not np.any(result) else [(0, len(values), result)]
+            if out is None:
+                return parts
+            if not accumulate:
+                out.clear()
+            out.extend(parts)
+            return out
+
+        if out is None:
+            out = np.zeros(values.shape, dtype=np.complex128)
+        elif not np.iscomplexobj(out):
+            raise TypeError("complex waveform output must have a complex dtype")
+        elif not accumulate:
+            out[...] = 0
+
+        should_clip = self.min != -inf or self.max != inf
+        if should_clip:
+            real = np.clip(self._real(values), self.min, self.max)
+            imag = np.clip(self._imag(values), self.min, self.max)
+            if accumulate:
+                out.real[...] += real
+                out.imag[...] += imag
+            else:
+                out.real[...] = real
+                out.imag[...] = imag
+        else:
+            self._real(values, out=out.real, accumulate=True)
+            self._imag(values, out=out.imag, accumulate=True)
+        return out[0] if scalar else out
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if isinstance(other, (int, float, complex, np.number)):
+            real, imag = _number_parts(other)
+            other = ComplexWaveform(real, imag)
+        elif isinstance(other, Waveform):
+            other = ComplexWaveform(other, _real_const(0))
+        if not isinstance(other, ComplexWaveform):
+            return False
+        if (self.max, self.min, self.start, self.stop) != (
+                other.max, other.min, other.start, other.stop):
+            return False
+        return self._real == other._real and self._imag == other._imag
+
+    def __hash__(self):
+        if (self.max, self.min, self.start, self.stop) == (
+                inf, -inf, None, None) and self._imag == 0:
+            return hash(self._real)
+        return hash((self._real, self._imag, self.max, self.min,
+                     self.start, self.stop))
+
+    def __repr__(self):
+        return (f"ComplexWaveform(real={self._real!r}, imag={self._imag!r}, "
+                f"bytes={len(self.to_bytes())})")
+
+    def _repr_latex_(self):
+        return rf"f_I(t)+i f_Q(t)\quad\mathrm{{on}}\ [{self.begin:g},\,{self.end:g}]"
+
+    def __getstate__(self):
+        return (self.to_bytes(), self.max, self.min, self.start, self.stop,
+                self.sample_rate, self.filters, self.label)
+
+    def __setstate__(self, state):
+        (data, self.max, self.min, self.start, self.stop, self.sample_rate,
+         self.filters, self.label) = state
+        restored = type(self).from_bytes(data)
+        self._real = restored._real
+        self._imag = restored._imag
+
+
 class WaveVStack(_SamplingMixin):
     __slots__ = (
         "_stack", "start", "stop", "sample_rate", "offset", "shift",
@@ -404,6 +722,10 @@ class WaveVStack(_SamplingMixin):
         else:
             events = []
             for wav in wlist:
+                if isinstance(wav, ComplexWaveform):
+                    raise TypeError(
+                        "WaveVStack is real-only; use ComplexWaveVStack"
+                    )
                 if not isinstance(wav, Waveform):
                     raise TypeError("WaveVStack accepts Waveform objects")
                 events.append((wav._core, wav._delay, wav._scale))
@@ -477,6 +799,8 @@ class WaveVStack(_SamplingMixin):
 
     @classmethod
     def from_bytes(cls, data):
+        if bytes(data[:4]) == _COMPLEX_STACK_MAGIC:
+            return ComplexWaveVStack.from_bytes(data)
         return cls._from_stack(PackedStack.from_bytes(data))
 
     def simplify(self, eps=1e-15):
@@ -496,6 +820,10 @@ class WaveVStack(_SamplingMixin):
         return self >> -time
 
     def __add__(self, other):
+        if isinstance(other, ComplexWaveVStack):
+            return other + self
+        if isinstance(other, ComplexWaveform):
+            return ComplexWaveVStack(self) + other
         if isinstance(other, WaveVStack):
             left = [(core, delay + self.shift, scale)
                     for core, delay, scale in self._stack.events()]
@@ -510,8 +838,12 @@ class WaveVStack(_SamplingMixin):
             result.offset = self.offset
             result.shift = self.shift
         else:
+            real, imag = _number_parts(other)
+            if imag != 0:
+                return ComplexWaveVStack(self + real,
+                                         WaveVStack() + imag)
             result = self._from_stack(self._stack)
-            result.offset = self.offset + other
+            result.offset = self.offset + real
             result.shift = self.shift
         result.filters = self.filters
         result.label = self.label
@@ -527,9 +859,17 @@ class WaveVStack(_SamplingMixin):
         return (-self) + value
 
     def __mul__(self, other):
+        if isinstance(other, ComplexWaveVStack):
+            return other * self
+        if isinstance(other, ComplexWaveform):
+            return ComplexWaveVStack(self * other.real,
+                                     self * other.imag)
         if not isinstance(other, Waveform):
-            result = self._from_stack(self._stack.scaled(other))
-            result.offset = self.offset * other
+            real, imag = _number_parts(other)
+            if imag != 0:
+                return ComplexWaveVStack(self * real, self * imag)
+            result = self._from_stack(self._stack.scaled(real))
+            result.offset = self.offset * real
             result.shift = self.shift
             result.filters = self.filters
             result.label = self.label
@@ -548,7 +888,8 @@ class WaveVStack(_SamplingMixin):
         return self * value
 
     def __truediv__(self, other):
-        if isinstance(other, (Waveform, WaveVStack)):
+        if isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
+                              ComplexWaveVStack)):
             raise TypeError("division by waveform")
         return self * (1 / other)
 
@@ -577,6 +918,10 @@ class WaveVStack(_SamplingMixin):
     def __eq__(self, other):
         if self is other:
             return True
+        if isinstance(other, ComplexWaveVStack):
+            return other == self
+        if isinstance(other, ComplexWaveform):
+            return other == self.simplify()
         if isinstance(other, WaveVStack):
             return self.simplify() == other.simplify()
         return self.simplify() == other
@@ -602,21 +947,296 @@ class WaveVStack(_SamplingMixin):
         self.function_lib = None
 
 
+class ComplexWaveVStack(_SamplingMixin):
+    """Complex stack represented by two real packed stacks."""
+
+    __slots__ = (
+        "_real_stack", "_imag_stack", "start", "stop", "sample_rate",
+        "offset", "shift", "filters", "label", "function_lib",
+    )
+
+    def __init__(self, wlist=(), imag=None):
+        if isinstance(wlist, ComplexWaveVStack) and imag is None:
+            self._real_stack = wlist._real_stack
+            self._imag_stack = wlist._imag_stack
+            self.offset = wlist.offset
+            self.shift = wlist.shift
+        elif isinstance(wlist, ComplexWaveform) and imag is None:
+            real_stack = WaveVStack((wlist.real,))
+            imag_stack = WaveVStack((wlist.imag,))
+            self._real_stack, real_offset = self._normalize_stack(real_stack)
+            self._imag_stack, imag_offset = self._normalize_stack(imag_stack)
+            self.offset = complex(real_offset, imag_offset)
+            self.shift = 0.0
+        elif imag is not None or isinstance(wlist, (Waveform, WaveVStack)):
+            real_stack = self._coerce_stack(wlist)
+            imag_stack = self._coerce_stack(WaveVStack() if imag is None else imag)
+            self._real_stack, real_offset = self._normalize_stack(real_stack)
+            self._imag_stack, imag_offset = self._normalize_stack(imag_stack)
+            self.offset = complex(real_offset, imag_offset)
+            self.shift = 0.0
+        else:
+            real_waves = []
+            imag_waves = []
+            for wav in wlist:
+                if isinstance(wav, ComplexWaveform):
+                    real_waves.append(wav.real)
+                    imag_waves.append(wav.imag)
+                elif isinstance(wav, Waveform):
+                    real_waves.append(wav)
+                else:
+                    raise TypeError(
+                        "ComplexWaveVStack accepts Waveform and ComplexWaveform objects"
+                    )
+            self._real_stack = WaveVStack(real_waves)
+            self._imag_stack = WaveVStack(imag_waves)
+            self.offset = 0j
+            self.shift = 0.0
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+        self.filters = None
+        self.label = None
+        self.function_lib = None
+
+    @staticmethod
+    def _coerce_stack(value):
+        if isinstance(value, WaveVStack):
+            return value
+        if isinstance(value, Waveform):
+            return WaveVStack((value,))
+        raise TypeError("complex stack components must be real waveforms or stacks")
+
+    @staticmethod
+    def _normalize_stack(stack):
+        events = tuple((core, quantize_time(delay + stack.shift), scale)
+                       for core, delay, scale in stack._stack.events())
+        return WaveVStack._from_stack(PackedStack.from_events(events)), stack.offset
+
+    @property
+    def real(self):
+        result = WaveVStack._from_stack(self._real_stack._stack)
+        result.offset = self.offset.real
+        result.shift = self.shift
+        return _copy_sampling_metadata(self, result)
+
+    @property
+    def imag(self):
+        result = WaveVStack._from_stack(self._imag_stack._stack)
+        result.offset = self.offset.imag
+        result.shift = self.shift
+        return _copy_sampling_metadata(self, result)
+
+    @property
+    def wlist(self):
+        return [*self.real.wlist,
+                *(ComplexWaveform(_real_const(0), wav)
+                  for wav in self.imag.wlist)]
+
+    @property
+    def begin(self):
+        values = []
+        if self._real_stack._stack.events() or self.offset.real != 0:
+            values.append(self.real.begin)
+        if self._imag_stack._stack.events() or self.offset.imag != 0:
+            values.append(self.imag.begin)
+        value = min(values) if values else inf
+        return value if self.start is None else max(self.start, value)
+
+    @property
+    def end(self):
+        values = []
+        if self._real_stack._stack.events() or self.offset.real != 0:
+            values.append(self.real.end)
+        if self._imag_stack._stack.events() or self.offset.imag != 0:
+            values.append(self.imag.end)
+        value = max(values) if values else -inf
+        return value if self.stop is None else min(self.stop, value)
+
+    def __call__(self, x, frag=False, out=None, accumulate=False,
+                 function_lib=None):
+        if frag:
+            raise AssertionError("ComplexWaveVStack does not support frag mode")
+        if function_lib is not None or self.function_lib is not None:
+            raise NotImplementedError("custom waveform functions are not supported")
+        scalar = isinstance(x, (int, float, np.number))
+        values = np.asarray([x]) if scalar else np.asarray(x)
+        if out is None:
+            out = np.zeros(values.shape, dtype=np.complex128)
+        elif not np.iscomplexobj(out):
+            raise TypeError("complex waveform output must have a complex dtype")
+        elif not accumulate:
+            out[...] = 0
+        self.real(values, out=out.real, accumulate=True)
+        self.imag(values, out=out.imag, accumulate=True)
+        return out[0] if scalar else out
+
+    def to_bytes(self):
+        return _pack_complex(
+            _COMPLEX_STACK_MAGIC, self.real.to_bytes(), self.imag.to_bytes()
+        )
+
+    @classmethod
+    def from_bytes(cls, data):
+        real_data, imag_data = _unpack_complex(data, _COMPLEX_STACK_MAGIC)
+        return cls(WaveVStack.from_bytes(real_data),
+                   WaveVStack.from_bytes(imag_data))
+
+    def simplify(self, eps=1e-15):
+        return ComplexWaveform(self.real.simplify(eps),
+                               self.imag.simplify(eps))
+
+    def __rshift__(self, time):
+        result = ComplexWaveVStack(self)
+        _copy_sampling_metadata(self, result)
+        result.shift = quantize_time(self.shift + time)
+        return result
+
+    def __lshift__(self, time):
+        return self >> -time
+
+    def __add__(self, other):
+        if isinstance(other, ComplexWaveVStack):
+            result = ComplexWaveVStack(self.real + other.real,
+                                       self.imag + other.imag)
+        elif isinstance(other, WaveVStack):
+            result = ComplexWaveVStack(self.real + other, self.imag)
+        elif isinstance(other, ComplexWaveform):
+            result = ComplexWaveVStack(self.real + other.real,
+                                       self.imag + other.imag)
+        elif isinstance(other, Waveform):
+            result = ComplexWaveVStack(self.real + other, self.imag)
+        else:
+            real, imag = _number_parts(other)
+            result = ComplexWaveVStack(self.real + real, self.imag + imag)
+        result.filters = self.filters
+        result.label = self.label
+        return result
+
+    def __radd__(self, other):
+        return self + other
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __rsub__(self, other):
+        return (-self) + other
+
+    def __mul__(self, other):
+        if isinstance(other, ComplexWaveVStack):
+            raise TypeError("multiplication of two waveform stacks is unsupported")
+        if isinstance(other, WaveVStack):
+            raise TypeError("multiplication of two waveform stacks is unsupported")
+        if isinstance(other, ComplexWaveform):
+            result = ComplexWaveVStack(
+                self.real * other.real - self.imag * other.imag,
+                self.real * other.imag + self.imag * other.real,
+            )
+        elif isinstance(other, Waveform):
+            result = ComplexWaveVStack(self.real * other,
+                                       self.imag * other)
+        else:
+            real, imag = _number_parts(other)
+            result = ComplexWaveVStack(
+                self.real * real - self.imag * imag,
+                self.real * imag + self.imag * real,
+            )
+        result.filters = self.filters
+        result.label = self.label
+        return result
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __truediv__(self, other):
+        if isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
+                              ComplexWaveVStack)):
+            raise TypeError("division by waveform")
+        return self * (1 / other)
+
+    def __neg__(self):
+        return ComplexWaveVStack(-self.real, -self.imag)
+
+    def __pow__(self, n):
+        return self.simplify() ** n
+
+    def filter(self, low=0, high=inf, eps=1e-15):
+        return self.simplify(eps).filter(low, high, eps)
+
+    @property
+    def marker(self):
+        return self.real.marker | self.imag.marker
+
+    def mask(self, edge=0):
+        return self.marker.mask(edge)
+
+    def __or__(self, other):
+        return self.marker | other
+
+    def __and__(self, other):
+        return self.marker & other
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if isinstance(other, ComplexWaveVStack):
+            return self.simplify() == other.simplify()
+        if isinstance(other, WaveVStack):
+            return self.simplify() == other.simplify()
+        return self.simplify() == other
+
+    __hash__ = None
+
+    def __repr__(self):
+        return (f"ComplexWaveVStack(real_events={len(self._real_stack.wlist)}, "
+                f"imag_events={len(self._imag_stack.wlist)}, "
+                f"bytes={len(self.to_bytes())})")
+
+    def _repr_latex_(self):
+        return rf"\sum f_I(t)+i\sum f_Q(t)\quad\mathrm{{on}}\ [{self.begin:g},\,{self.end:g}]"
+
+    def __getstate__(self):
+        return (self.to_bytes(), self.start, self.stop, self.sample_rate,
+                self.filters, self.label)
+
+    def __setstate__(self, state):
+        (data, self.start, self.stop, self.sample_rate,
+         self.filters, self.label) = state
+        restored = type(self).from_bytes(data)
+        self._real_stack = restored._real_stack
+        self._imag_stack = restored._imag_stack
+        self.offset = restored.offset
+        self.shift = restored.shift
+        self.function_lib = None
+
+
+def _real_const(value):
+    real, imag = _number_parts(value)
+    if imag != 0:
+        raise TypeError("real waveform constant cannot have an imaginary part")
+    return Waveform._from_core(constant(real))
+
+
 def zero():
-    return Waveform._from_core(constant(0))
+    return _real_const(0)
 
 
 def one():
-    return Waveform._from_core(constant(1.0))
+    return _real_const(1.0)
 
 
 def const(value):
-    return Waveform._from_core(constant(value))
+    real, imag = _number_parts(value)
+    if imag != 0:
+        return ComplexWaveform(_real_const(real), _real_const(imag))
+    return _real_const(real)
 
 
-def D(wav: Waveform, d: int = 1):
+def D(wav: Waveform | ComplexWaveform, d: int = 1):
+    if isinstance(wav, ComplexWaveform):
+        return ComplexWaveform(D(wav.real, d), D(wav.imag, d))
     if not isinstance(wav, Waveform):
-        raise TypeError("D expects a Waveform")
+        raise TypeError("D expects a Waveform or ComplexWaveform")
     if d < 0 or not isinstance(d, int):
         raise ValueError("d must be a non-negative integer")
     return Waveform._from_core(wav._materialized_core().derivative(d))
@@ -875,6 +1495,8 @@ def interp(x, y):
     y = np.asarray(y)
     if x.ndim != 1 or y.ndim != 1 or len(x) != len(y) or len(x) == 0:
         raise ValueError("x and y must be non-empty one-dimensional arrays of equal size")
+    if np.iscomplexobj(y):
+        return ComplexWaveform(interp(x, y.real), interp(x, y.imag))
     bounds = [x[0]]
     expressions = [0]
     for x1, x2, y1, y2 in zip(x[:-1], x[1:], y[:-1], y[1:]):
@@ -913,6 +1535,12 @@ def function(fun, *args, start=None, stop=None):
 
 
 def samplingPoints(start, stop, points):
+    points = np.asarray(points)
+    if np.iscomplexobj(points):
+        return ComplexWaveform(
+            samplingPoints(start, stop, points.real),
+            samplingPoints(start, stop, points.imag),
+        )
     core = _scalar(INTERP, start, stop, tuple(points))
     return _piecewise((start, stop, inf), 0, core, 0)
 
@@ -963,7 +1591,7 @@ def play(data, rate=48_000):
 
 
 @lru_cache(maxsize=1024)
-def wave_eval(expr: str) -> Waveform:
+def wave_eval(expr: str) -> Waveform | ComplexWaveform:
     """Parse an expression directly against the packed waveform backend."""
     import sys
 
@@ -977,7 +1605,8 @@ def wave_eval(expr: str) -> Waveform:
 
 
 __all__ = [
-    "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
+    "D", "ComplexWaveform", "ComplexWaveVStack", "Waveform", "WaveVStack",
+    "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning",

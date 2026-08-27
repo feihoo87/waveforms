@@ -12,7 +12,8 @@ import waveforms as wf
 
 
 PUBLIC_NAMES = {
-    "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
+    "ComplexWaveform", "ComplexWaveVStack", "D", "Waveform", "WaveVStack",
+    "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning", "interp", "mixing",
@@ -296,6 +297,109 @@ def test_notebook_constructors_and_wave_eval():
     expected += 0.5 * (wf.gaussian(12) >> 35) * wf.cos(16.2, 2)
     assert isinstance(actual, wf.Waveform)
     assert np.allclose(actual(x), expected(x))
+
+
+def test_complex_waveform_is_two_real_channels():
+    x = np.linspace(-2, 2, 2001)
+    envelope = wf.gaussian(1.2)
+    carrier = wf.cos(1.7, 0.3)
+    wav = (2 + 3j) * envelope + (4 - 0.5j) * carrier
+    expected = ((2 + 3j) * envelope(x)
+                + (4 - 0.5j) * carrier(x))
+
+    assert isinstance(wav, wf.ComplexWaveform)
+    assert np.allclose(wf.ComplexWaveform(2 + 3j)(x), 2 + 3j)
+    real_as_complex = wf.ComplexWaveform(envelope, wf.zero())
+    assert real_as_complex == envelope
+    assert hash(real_as_complex) == hash(envelope)
+    assert isinstance(wav.real, wf.Waveform)
+    assert isinstance(wav.imag, wf.Waveform)
+    assert np.allclose(wav(x), expected)
+    assert np.allclose(wav.real(x), expected.real)
+    assert np.allclose(wav.imag(x), expected.imag)
+    assert np.allclose((wav * (0.25 - 0.75j))(x),
+                       expected * (0.25 - 0.75j))
+    assert np.allclose((wav * wav)(x), expected**2)
+    assert np.allclose((wav >> 0.4)(x + 0.4), expected)
+    assert np.allclose(wf.D(wav)(x),
+                       wf.D(wav.real)(x) + 1j * wf.D(wav.imag)(x))
+
+    out = np.full(x.shape, 7 + 11j, dtype=np.complex128)
+    assert wav(x, out=out) is out
+    assert np.allclose(out, expected)
+    wav(x, out=out, accumulate=True)
+    assert np.allclose(out, 2 * expected)
+
+    data = wav.to_bytes()
+    assert data[:4] == b"CWF1"
+    assert wf.ComplexWaveform.from_bytes(data) == wav
+    assert isinstance(wf.Waveform.from_bytes(data), wf.ComplexWaveform)
+    assert pickle.loads(pickle.dumps(wav)) == wav
+
+    parsed = wf.wave_eval("(2+3j)*gaussian(1.2) + (4-0.5j)*cos(1.7, 0.3)")
+    assert isinstance(parsed, wf.ComplexWaveform)
+    assert np.allclose(parsed(x), expected)
+
+
+def test_complex_interpolation_and_stack_roundtrip():
+    x = np.linspace(0, 3, 3001, endpoint=False)
+    points = np.array([1 + 2j, -0.5 + 0.25j, 2 - 3j, 0.75 + 0.5j])
+    sampled = wf.samplingPoints(0, 3, points)
+    expected_sampled = (
+        np.interp(x, np.linspace(0, 3, len(points)), points.real)
+        + 1j * np.interp(x, np.linspace(0, 3, len(points)), points.imag)
+    )
+    assert isinstance(sampled, wf.ComplexWaveform)
+    assert np.allclose(sampled(x), expected_sampled)
+    linear = wf.interp([0, 1, 3], [1 + 2j, -1 + 0.5j, 2 - 3j])
+    expected_linear = (
+        np.interp(x, [0, 1, 3], [1, -1, 2])
+        + 1j * np.interp(x, [0, 1, 3], [2, 0.5, -3])
+    )
+    assert isinstance(linear, wf.ComplexWaveform)
+    assert np.allclose(linear(x), expected_linear)
+
+    template = wf.gaussian(0.2) * wf.cos(17)
+    waves = [(index + 1j * (index + 1)) * (template >> (0.3 * index))
+             for index in range(8)]
+    stack = wf.ComplexWaveVStack(waves)
+    expected = sum((wav(x) for wav in waves), np.zeros_like(x, dtype=complex))
+    assert np.allclose(stack(x), expected)
+    assert np.allclose(stack.simplify()(x), expected)
+
+    data = stack.to_bytes()
+    assert data[:4] == b"CWS1"
+    assert isinstance(wf.WaveVStack.from_bytes(data), wf.ComplexWaveVStack)
+    assert np.allclose(wf.ComplexWaveVStack.from_bytes(data)(x), expected)
+    assert pickle.loads(pickle.dumps(stack)) == stack
+
+    promoted = wf.WaveVStack([template]) * (2 - 0.25j)
+    assert isinstance(promoted, wf.ComplexWaveVStack)
+    assert np.allclose(promoted(x), (2 - 0.25j) * template(x))
+    direct = wf.ComplexWaveVStack(waves[0])
+    assert np.allclose(direct(x), waves[0](x))
+    real_only = wf.ComplexWaveVStack(wf.WaveVStack([template]))
+    assert real_only.begin == template.begin
+    assert real_only.end == template.end
+    with pytest.raises(TypeError, match="real-only"):
+        wf.WaveVStack(waves)
+
+
+def test_packed_backend_rejects_complex_coefficients_and_scales():
+    wav = wf.gaussian(1.0)
+    stack = wf.WaveVStack([wav, 2 * (wav >> 3)])
+    assert wav.to_bytes()[:4] == b"WFM3"
+    assert stack.to_bytes()[:4] == b"WVS3"
+    assert all(isinstance(scale, float)
+               for _, _, scale in stack._stack.events())
+    assert stack(np.linspace(-1, 4, 101)).dtype == np.float64
+
+    with pytest.raises(TypeError, match="must be real"):
+        wav._core.scaled(1j)
+    with pytest.raises(TypeError, match="must be real"):
+        stack._stack.scaled(1j)
+    with pytest.raises(TypeError, match="positions must be real"):
+        wav(np.array([0.0 + 0.0j]))
 
 
 def test_time_is_global_configuration_and_blocks_store_integer_ticks():

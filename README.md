@@ -76,6 +76,21 @@ process loading a block must therefore use the same resolution as the process
 that created it. The setting is locked when the first waveform object is
 created or loaded.
 
+The packed core stores and evaluates real-valued signals only. Complex signals
+are represented in Python as independent real and imaginary channels:
+
+```python
+z = (1 + 0.25j) * wf.gaussian(12e-9)
+assert isinstance(z, wf.ComplexWaveform)
+
+stack = wf.ComplexWaveVStack([z, z >> 20e-9])
+samples = stack(t)  # complex NumPy array
+```
+
+`Waveform` and `WaveVStack` therefore avoid complex storage and arithmetic for
+the common real-valued case. `ComplexWaveform.real` and `.imag` expose the two
+real channel waveforms.
+
 ## Reporting Issues
 Please report all issues [on github](https://github.com/feihoo87/waveforms/issues).
 

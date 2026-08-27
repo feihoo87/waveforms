@@ -1,11 +1,11 @@
 # cython: language_level=3
-"""Packed binary core for :mod:`waveforms.waveform`.
+"""Real-only packed binary core for :mod:`waveforms.waveform`.
 
 The binary block is the authoritative representation; a cached normalized
-expression is decoded only when sampling or symbolic algebra needs it. WFM2
+expression is decoded only when sampling or symbolic algebra needs it. WFM3
 stores int64 boundary ticks, expression-template ids, int64 per-segment shifts,
-and deduplicated expression bytecode. WVS2 stores deduplicated WFM2 templates
-followed by struct-of-arrays event ids, delay ticks, and complex scales.
+and deduplicated real expression bytecode. WVS3 stores deduplicated WFM3
+templates followed by struct-of-arrays event ids, delay ticks, and real scales.
 """
 
 import struct
@@ -42,9 +42,9 @@ DRAG_SINX = 17
 _zero = ((), ())
 _one = ((((), ()),), (1.0,))
 
-_MAGIC = b"WFM2"
-_STACK_MAGIC = b"WVS2"
-_VERSION = 2
+_MAGIC = b"WFM3"
+_STACK_MAGIC = b"WVS3"
+_VERSION = 3
 _HEADER = struct.Struct("<4sHHII")
 _STACK_HEADER = struct.Struct("<4sHHIII")
 
@@ -427,6 +427,16 @@ def _normal_number(value):
     return value
 
 
+def _real_number(value):
+    value = _normal_number(value)
+    if np.iscomplexobj(value):
+        value = complex(value)
+        if value.imag != 0:
+            raise TypeError("packed waveform coefficients must be real")
+        value = value.real
+    return float(value)
+
+
 def _encode_builtin_args(bytearray out, int opcode, args):
     args = tuple(_normal_number(value) for value in args)
     if opcode == LINEAR:
@@ -537,13 +547,8 @@ def _encode_expr(expr):
     terms, coefficients = expr
     out = bytearray(struct.pack("<I", len(coefficients)))
     for (functions, powers), coefficient in zip(terms, coefficients):
-        coefficient = complex(coefficient)
-        if coefficient.imag == 0:
-            out.extend(struct.pack("<BdI", 0, coefficient.real,
-                                   len(functions)))
-        else:
-            out.extend(struct.pack("<BddI", 1, coefficient.real,
-                                   coefficient.imag, len(functions)))
+        out.extend(struct.pack("<dI", _real_number(coefficient),
+                               len(functions)))
         for function, power in zip(functions, powers):
             opcode, *args = function
             out.extend(struct.pack("<Hi", int(opcode), int(power)))
@@ -558,18 +563,9 @@ def _decode_expr(bytes data):
     terms = []
     coefficients = []
     for _ in range(count):
-        coefficient_type = data[pos]
-        pos += 1
-        if coefficient_type == 0:
-            real, factor_count = struct.unpack_from("<dI", data, pos)
-            pos += 12
-            coefficients.append(real)
-        elif coefficient_type == 1:
-            real, imag, factor_count = struct.unpack_from("<ddI", data, pos)
-            pos += 20
-            coefficients.append(complex(real, imag))
-        else:
-            raise ValueError("invalid packed waveform coefficient type")
+        coefficient, factor_count = struct.unpack_from("<dI", data, pos)
+        pos += 12
+        coefficients.append(coefficient)
         functions = []
         powers = []
         for _ in range(factor_count):
@@ -775,7 +771,7 @@ cdef class PackedWaveform:
 
     def scaled(self, value):
         bounds, seq, shifts = self._decode_normalized()
-        constant = _const_expr(value)
+        constant = _const_expr(_real_number(value))
         scaled_seq = tuple(_expr_mul(expr, constant) for expr in seq)
         scaled_shifts = tuple(0 if expr == _zero else shift
                               for expr, shift in zip(scaled_seq, shifts))
@@ -863,8 +859,8 @@ cdef class PackedWaveform:
                                                derived_shifts))
 
     def evaluate(self, x, lower=-inf, upper=inf):
-        parts, dtype = self.parts_shifted(x, 0.0, lower, upper)
-        out = np.zeros_like(x, dtype=dtype)
+        parts, _ = self.parts_shifted(x, 0.0, lower, upper)
+        out = np.zeros_like(x, dtype=float)
         for start, stop, part in parts:
             out[start:stop] += part
         return out
@@ -879,10 +875,11 @@ cdef class PackedWaveform:
         return self.parts_with_bounds(x, bounds, delay, lower, upper)
 
     def parts_with_bounds(self, x, bounds, delay, lower=-inf, upper=inf):
+        if np.iscomplexobj(x):
+            raise TypeError("waveform sample positions must be real")
         _, seq, shifts = self._decode_normalized()
         ranges = np.searchsorted(x, bounds)
         parts = []
-        dtype = float
         start = 0
         should_clip = lower != -inf or upper != inf
         for i, stop in enumerate(ranges):
@@ -894,24 +891,22 @@ cdef class PackedWaveform:
                     else x[start:stop] - total_shift)
                 if should_clip:
                     values = np.clip(values, lower, upper)
-                if np.iscomplexobj(values):
-                    dtype = complex
                 parts.append((start, stop, values))
             start = stop
-        return parts, dtype
+        return parts, float
 
     def evaluate_shifted(self, x, delay, lower=-inf, upper=inf):
-        parts, dtype = self.parts_shifted(x, delay, lower, upper)
-        out = np.zeros_like(x, dtype=dtype)
+        parts, _ = self.parts_shifted(x, delay, lower, upper)
+        out = np.zeros_like(x, dtype=float)
         for start, stop, part in parts:
             out[start:stop] += part
         return out
 
 
 def _const_expr(value):
+    value = _real_number(value)
     if value == 0:
         return _zero
-    value = _normal_number(value)
     return ((((), ()),), (value,))
 
 
@@ -1183,53 +1178,33 @@ def _simplify_expr(expr, eps):
     for term, value in zip(*expr):
         for reduced_term, reduced_value in zip(*_exp_trig_reduce(term, value)):
             frequency, shift_value, base_term = _frequency_parts(reduced_term)
-            real_value = reduced_value.real
-            imag_value = reduced_value.imag
-            real_shift = imag_shift = shift_value
+            value = _real_number(reduced_value)
+            phase_shift = shift_value
             if (base_term, frequency) in groups:
-                old_real, old_real_shift, old_imag, old_imag_shift = groups[(base_term, frequency)]
+                old_value, old_shift = groups[(base_term, frequency)]
                 if frequency == 0:
-                    real_value += old_real
-                    imag_value += old_imag
+                    value += old_value
                 else:
-                    a = (old_real * np.cos(frequency * old_real_shift)
-                         + real_value * np.cos(frequency * real_shift))
-                    b = (old_real * np.sin(frequency * old_real_shift)
-                         + real_value * np.sin(frequency * real_shift))
-                    real_shift = np.arctan2(b, a) / frequency
-                    real_value = np.hypot(a, b)
-                    a = (old_imag * np.cos(frequency * old_imag_shift)
-                         + imag_value * np.cos(frequency * imag_shift))
-                    b = (old_imag * np.sin(frequency * old_imag_shift)
-                         + imag_value * np.sin(frequency * imag_shift))
-                    imag_shift = np.arctan2(b, a) / frequency
-                    imag_value = np.hypot(a, b)
-            groups[(base_term, frequency)] = (real_value, real_shift,
-                                               imag_value, imag_shift)
+                    a = (old_value * np.cos(frequency * old_shift)
+                         + value * np.cos(frequency * phase_shift))
+                    b = (old_value * np.sin(frequency * old_shift)
+                         + value * np.sin(frequency * phase_shift))
+                    phase_shift = np.arctan2(b, a) / frequency
+                    value = np.hypot(a, b)
+            groups[(base_term, frequency)] = value, phase_shift
 
     result = _zero
-    for (base_term, frequency), values in groups.items():
-        real_value, real_shift, imag_value, imag_shift = values
+    for (base_term, frequency), (value, phase_shift) in groups.items():
         if frequency == 0:
-            coefficient = real_value + 1j * imag_value
-            if abs(coefficient) >= eps:
-                if coefficient.imag == 0:
-                    coefficient = coefficient.real
-                result = _expr_add(result, ((base_term,), (coefficient,)))
+            if abs(value) >= eps:
+                result = _expr_add(result, ((base_term,), (value,)))
             continue
-        terms = []
-        coefficients = []
-        if abs(real_value) >= eps:
-            terms.append((((COS, frequency, real_shift),), (1,)))
-            coefficients.append(real_value)
-        if abs(imag_value) >= eps:
-            terms.append((((COS, frequency, imag_shift),), (1,)))
-            coefficients.append(imag_value * 1j)
-        if terms:
+        if abs(value) >= eps:
             result = _expr_add(
                 result,
                 _expr_mul(((base_term,), (1.0,)),
-                          (tuple(terms), tuple(coefficients))))
+                          (((((COS, frequency, phase_shift),), (1,)),),
+                           (value,))))
     return result
 
 
@@ -1421,7 +1396,7 @@ def _pack_stack(events):
             templates.append(data)
         ids.append(template_id)
         delays.append(_time_to_tick(delay))
-        scales.append(complex(scale))
+        scales.append(_real_number(scale))
 
     offsets_size = 4 * (len(templates) + 1)
     template_start = _STACK_HEADER.size + offsets_size
@@ -1436,7 +1411,7 @@ def _pack_stack(events):
         out.extend(data)
     out.extend(np.asarray(ids, dtype="<u4").tobytes())
     out.extend(np.asarray(delays, dtype="<i8").tobytes())
-    out.extend(np.asarray(scales, dtype="<c16").tobytes())
+    out.extend(np.asarray(scales, dtype="<f8").tobytes())
     return bytes(out)
 
 
@@ -1447,7 +1422,7 @@ def _stack_layout(bytes data):
     if magic != _STACK_MAGIC or version != _VERSION or flags != 0:
         raise ValueError("unsupported packed waveform stack")
     offsets_end = _STACK_HEADER.size + 4 * (template_count + 1)
-    event_end = event_offset + 28 * event_count
+    event_end = event_offset + 20 * event_count
     if offsets_end > len(data) or event_end != len(data):
         raise ValueError("invalid packed waveform stack layout")
     offsets = np.frombuffer(data, dtype="<u4", count=template_count + 1,
@@ -1513,10 +1488,10 @@ cdef class PackedStack:
         delays = np.frombuffer(self._data, dtype="<i8", count=event_count,
                                offset=delay_offset)
         scale_offset = delay_offset + 8 * event_count
-        scales = np.frombuffer(self._data, dtype="<c16", count=event_count,
+        scales = np.frombuffer(self._data, dtype="<f8", count=event_count,
                                offset=scale_offset)
         self._events = tuple((templates[int(ids[i])], _tick_to_time(delays[i]),
-                              complex(scales[i])) for i in range(event_count))
+                              float(scales[i])) for i in range(event_count))
         return self._events
 
     def compiled_events(self):
@@ -1530,7 +1505,9 @@ cdef class PackedStack:
         return self._compiled
 
     def evaluate(self, x, offset=0, shift=0):
-        out = np.full_like(x, offset, dtype=np.complex128)
+        if np.iscomplexobj(x):
+            raise TypeError("waveform sample positions must be real")
+        out = np.full_like(x, _real_number(offset), dtype=np.float64)
         for core, bounds, delay, scale in self.compiled_events():
             if shift:
                 shifted_bounds = np.around(bounds + shift, NDIGITS)
@@ -1540,8 +1517,6 @@ cdef class PackedStack:
                                                shift + delay)
             for start, stop, values in parts:
                 out[start:stop] += scale * values
-        if not np.any(out.imag):
-            return out.real
         return out
 
     def simplified(self, shift=0, offset=0, eps=1e-15):
@@ -1551,6 +1526,7 @@ cdef class PackedStack:
         return PackedStack.from_events((*self.events(), *other.events()))
 
     def scaled(self, value):
+        value = _real_number(value)
         return PackedStack.from_events((core, delay, scale * value)
                                        for core, delay, scale in self.events())
 
