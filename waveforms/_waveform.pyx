@@ -1,375 +1,101 @@
-import pickle
+# cython: language_level=3
+"""Packed binary core for :mod:`waveforms.waveform`.
+
+The binary block is the authoritative representation; a cached normalized
+expression is decoded only when sampling or symbolic algebra needs it. WFM2
+stores int64 boundary ticks, expression-template ids, int64 per-segment shifts,
+and deduplicated expression bytecode. WVS2 stores deduplicated WFM2 templates
+followed by struct-of-arrays event ids, delay ticks, and complex scales.
+"""
+
+import struct
 from bisect import bisect_left
 from functools import lru_cache
 from itertools import chain, product
+from math import comb
 
 import numpy as np
 import scipy.special as special
-from numpy import e, inf, pi
+from numpy import inf, pi
 
 NDIGITS = 15
-__TypeIndex = 1
-_baseFunc = {}
-_derivativeBaseFunc = {}
-_baseFunc_latex = {}
+
+# Stable built-in opcodes.  They intentionally match the original module.
+LINEAR = 1
+GAUSSIAN = 2
+ERF = 3
+COS = 4
+SINC = 5
+EXP = 6
+INTERP = 7
+LINEARCHIRP = 8
+EXPONENTIALCHIRP = 9
+HYPERBOLICCHIRP = 10
+COSH = 11
+SINH = 12
+DRAG = 13
+MOLLIFIER = 14
+D_GAUSSIAN = 15
 
 _zero = ((), ())
-
-
-cdef int comb(int n, int k):
-    if k > n:
-        return 0
-    if k > n // 2:
-        k = n - k
-    c = 1
-    for i in range(k):
-        c = c * (n - i) // (i + 1)
-    return c
-
-
-def _const(c):
-    if c == 0:
-        return _zero
-    return (((), ()), ), (c, )
-
-
-_one = _const(1.0)
-_half = _const(1 / 2)
-_two = _const(2.0)
-_pi = _const(pi)
-_two_pi = _const(2 * pi)
-_half_pi = _const(pi / 2)
-
-
-def is_const(x):
-    return x == _zero or x[0] == (((), ()), )
-
-
-def basic_wave(Type, *args, shift=0):
-    return ((((Type, *args, shift), ), (1, )), ), (1.0, )
-
-
-def _insert_type_value_pair(t_list, v_list, t, v, lo, hi):
-    i = bisect_left(t_list, t, lo, hi)
-    if i < hi and t_list[i] == t:
-        v += v_list[i]
-        if v == 0:
-            t_list.pop(i)
-            v_list.pop(i)
-            return i, hi - 1
-        else:
-            v_list[i] = v
-            return i, hi
-    else:
-        t_list.insert(i, t)
-        v_list.insert(i, v)
-        return i, hi + 1
-
-
-def mul(x, y):
-    t_list, v_list = [], []
-    xt_list, xv_list = x
-    yt_list, yv_list = y
-    lo, hi = 0, 0
-    for (t1, t2), (v1, v2) in zip(product(xt_list, yt_list),
-                                  product(xv_list, yv_list)):
-        if v1 * v2 == 0:
-            continue
-        t = add(t1, t2)
-        lo, hi = _insert_type_value_pair(t_list, v_list, t, v1 * v2, lo, hi)
-    return tuple(t_list), tuple(v_list)
-
-
-def add(x, y):
-    # x, y = (x, y) if len(x[0]) >= len(y[0]) else (y, x)
-    t_list, v_list = list(x[0]), list(x[1])
-    lo, hi = 0, len(t_list)
-    for t, v in zip(*y):
-        lo, hi = _insert_type_value_pair(t_list, v_list, t, v, lo, hi)
-    return tuple(t_list), tuple(v_list)
-
-
-def shift(x, time):
-    if is_const(x):
-        return x
-
-    t_list = []
-
-    for pre_mtlist, nlist in x[0]:
-        mtlist = []
-        for Type, *args, shift in pre_mtlist:
-            mtlist.append((Type, *args, shift + time))
-        t_list.append((tuple(mtlist), nlist))
-    return tuple(t_list), x[1]
-
-
-def pow(x, n):
-    if x == _zero:
-        return _zero
-    if n == 0:
-        return _one
-    if is_const(x):
-        return _const(x[1][0]**n)
-
-    if len(x[0]) == 1:
-        t_list, v_list = [], []
-        for (mtlist, pre_nlist), v in zip(*x):
-            nlist = []
-            for m in pre_nlist:
-                nlist.append(n * m)
-            t_list.append((mtlist, tuple(nlist)))
-            v_list.append(v**n)
-        return tuple(t_list), tuple(v_list)
-    else:
-        assert isinstance(n, int) and n > 0
-        ret = _one
-        for i in range(n):
-            ret = mul(ret, x)
-        return ret
-
-
-cdef object _calc_impl(object wav, object x, object function_lib):
-    cdef dict value_cache = {}
-    cdef object term_list = wav[0]
-    cdef object coefficient_list = wav[1]
-    cdef object monomial
-    cdef object base_list
-    cdef object power_list
-    cdef object base
-    cdef object value
-    cdef object product_value
-    cdef object term_value
-    cdef object total = None
-    cdef object coefficient
-    cdef object func
-    cdef object shift
-    cdef object args
-    cdef Py_ssize_t i, j
-    cdef Py_ssize_t term_count = len(term_list)
-    cdef Py_ssize_t base_count
-
-    for i in range(term_count):
-        monomial = term_list[i]
-        base_list = monomial[0]
-        power_list = monomial[1]
-        coefficient = coefficient_list[i]
-        product_value = None
-        base_count = len(base_list)
-
-        for j in range(base_count):
-            base = base_list[j]
-            if base in value_cache:
-                value = value_cache[base]
-            else:
-                func = function_lib[base[0]]
-                shift = base[-1]
-                args = base[1:-1]
-                if shift == 0:
-                    value = func(x, *args)
-                else:
-                    value = func(x - shift, *args)
-                value_cache[base] = value
-
-            if power_list[j] != 1:
-                value = value**power_list[j]
-
-            if product_value is None:
-                product_value = value
-            else:
-                product_value = product_value * value
-
-        if product_value is None:
-            term_value = coefficient
-        elif coefficient == 1:
-            term_value = product_value
-        else:
-            term_value = coefficient * product_value
-
-        if total is None:
-            total = term_value
-        else:
-            total = total + term_value
-
-    if total is None:
-        return 0
-    return total
-
-
-def _calc(wav, x, function_lib):
-    return _calc_impl(wav, x, function_lib)
-
-
-def calc_parts(bounds, seq, x, function_lib, min=-inf, max=inf):
-    cdef object range_list = np.searchsorted(x, bounds)
-    cdef list parts = []
-    cdef object part
-    cdef object dtype = float
-    cdef Py_ssize_t i
-    cdef Py_ssize_t start = 0
-    cdef Py_ssize_t stop
-    cdef Py_ssize_t count = len(range_list)
-    cdef bint should_clip = min != -inf or max != inf
-
-    for i in range(count):
-        stop = range_list[i]
-        if start < stop and seq[i] != _zero:
-            part = _calc_impl(seq[i], x[start:stop], function_lib)
-            if should_clip:
-                part = np.clip(part, min, max)
-            if np.iscomplexobj(part):
-                dtype = complex
-            parts.append((start, stop, part))
-        start = stop
-    return parts, dtype
-
-
-cdef void _accumulate_expr(dict accumulator, object expr, int sign):
-    cdef object term_list = expr[0]
-    cdef object value_list = expr[1]
-    cdef object term
-    cdef object value
-    cdef Py_ssize_t i
-    cdef Py_ssize_t count = len(term_list)
-
-    for i in range(count):
-        term = term_list[i]
-        value = accumulator.get(term, 0) + sign * value_list[i]
-        if value == 0:
-            accumulator.pop(term, None)
-        else:
-            accumulator[term] = value
-
-
-cdef object _snapshot_expr(dict accumulator):
-    cdef list items
-    if not accumulator:
-        return _zero
-    items = sorted(accumulator.items())
-    return (tuple(item[0] for item in items),
-            tuple(item[1] for item in items))
-
-
-def wave_sum(waves):
-    cdef dict accumulator = {}
-    cdef dict events = {}
-    cdef list output_bounds = []
-    cdef list output_seq
-    cdef object bounds
-    cdef object seq
-    cdef object changes
-    cdef object old_expr
-    cdef object new_expr
-    cdef object expr
-    cdef object boundary
-    cdef Py_ssize_t i, j
-    cdef Py_ssize_t wave_count
-    cdef Py_ssize_t bound_count
-
-    if not waves:
-        return ((inf, ), (_zero, ))
-    if len(waves) == 1:
-        return waves[0]
-
-    wave_count = len(waves)
-    for i in range(wave_count):
-        bounds, seq = waves[i]
-        _accumulate_expr(accumulator, seq[0], 1)
-        bound_count = len(bounds)
-        for j in range(bound_count - 1):
-            boundary = bounds[j]
-            changes = events.get(boundary)
-            if changes is None:
-                changes = []
-                events[boundary] = changes
-            changes.append((seq[j], seq[j + 1]))
-
-    output_seq = [_snapshot_expr(accumulator)]
-    for boundary in sorted(events):
-        changes = events[boundary]
-        for old_expr, new_expr in changes:
-            _accumulate_expr(accumulator, old_expr, -1)
-            _accumulate_expr(accumulator, new_expr, 1)
-        expr = _snapshot_expr(accumulator)
-        if expr != output_seq[-1]:
-            output_bounds.append(boundary)
-            output_seq.append(expr)
-
-    output_bounds.append(inf)
-    return tuple(output_bounds), tuple(output_seq)
-
-
-def merge_waveform(b1, s1, b2, s2, oper):
-    bounds = []
-    seq = []
-    i1 = 0
-    i2 = 0
-    h1 = len(b1)
-    h2 = len(b2)
-    while i1 < h1 or i2 < h2:
-        s = oper(s1[i1], s2[i2])
-        b = min(b1[i1], b2[i2])
-        if seq and s == seq[-1]:
-            bounds[-1] = b
-        else:
-            bounds.append(b)
-            seq.append(s)
-        if b == b1[i1]:
-            i1 += 1
-        if b == b2[i2]:
-            i2 += 1
-    return tuple(bounds), tuple(seq)
-
-
-def _D_base(m):
-    Type, *args, shift = m
-    return _derivativeBaseFunc[Type](shift, *args)
-
-
-def _D(x):
-    if is_const(x):
-        return _zero
-    t_list, v_list = x
-    if len(v_list) == 1:
-        (m_list, n_list), v = t_list[0], v_list[0]
-        if len(m_list) == 1:
-            m, n = m_list[0], n_list[0]
-            if n == 1:
-                return mul(_D_base(m), _const(v))
-            else:
-                return mul(((((m, ), (n - 1, )), ), (n * v, )),
-                           _D(((((m, ), (1, )), ), (1, ))))
-        else:
-            a = (((m_list[:1], n_list[:1]), ), (v, ))
-            b = (((m_list[1:], n_list[1:]), ), (1, ))
-            return add(mul(a, _D(b)), mul(_D(a), b))
-    else:
-        return add(_D((t_list[:1], v_list[:1])), _D((t_list[1:], v_list[1:])))
-
-
-def registerBaseFunc(func):
-    global __TypeIndex
-    Type = __TypeIndex
-    __TypeIndex += 1
-
-    _baseFunc[Type] = func
-
-    return Type
-
-
-def packBaseFunc():
-    return pickle.dumps(_baseFunc)
-
-
-def updateBaseFunc(buf):
-    _baseFunc.update(pickle.loads(buf))
-
-
-def registerDerivative(Type, dFunc):
-    _derivativeBaseFunc[Type] = dFunc
-
-
-def registerBaseFuncLatex(Type, dFunc):
-    _baseFunc_latex[Type] = dFunc
+_one = ((((), ()),), (1.0,))
+
+_MAGIC = b"WFM2"
+_STACK_MAGIC = b"WVS2"
+_VERSION = 2
+_HEADER = struct.Struct("<4sHHII")
+_STACK_HEADER = struct.Struct("<4sHHIII")
+
+_TIME_RESOLUTION = 1e-12
+_TIME_LOCKED = False
+_INF_TICK = np.iinfo(np.int64).max
+
+
+def set_time_resolution(value):
+    """Set the process-wide tick duration before creating any packed object."""
+    global _TIME_RESOLUTION, _TIME_LOCKED
+    value = float(value)
+    if not np.isfinite(value) or value <= 0:
+        raise ValueError("time resolution must be a finite positive number")
+    if _TIME_LOCKED and value != _TIME_RESOLUTION:
+        raise RuntimeError("time resolution is locked by existing waveform objects")
+    _TIME_RESOLUTION = value
+
+
+def get_time_resolution():
+    return _TIME_RESOLUTION
+
+
+def quantize_time(value):
+    if value == inf:
+        return inf
+    if value == -inf:
+        return -inf
+    return _tick_to_time(_time_to_tick(value))
+
+
+def _lock_time_resolution():
+    global _TIME_LOCKED
+    _TIME_LOCKED = True
+
+
+def _time_to_tick(value):
+    if value == inf:
+        return int(_INF_TICK)
+    if value == -inf:
+        return -int(_INF_TICK)
+    tick = int(round(float(value) / _TIME_RESOLUTION))
+    if tick <= -int(_INF_TICK) or tick >= int(_INF_TICK):
+        raise OverflowError("time is outside the waveform tick range")
+    return tick
+
+
+def _tick_to_time(tick):
+    if tick == int(_INF_TICK):
+        return inf
+    if tick == -int(_INF_TICK):
+        return -inf
+    return int(tick) * _TIME_RESOLUTION
 
 
 def _LINEAR(t):
@@ -377,13 +103,13 @@ def _LINEAR(t):
 
 
 def _GAUSSIAN(t, std_sq2):
-    return np.exp(-(t / std_sq2)**2)
+    return np.exp(-(t / std_sq2) ** 2)
 
 
 def _D_GAUSSIAN(t, std_sq2, n):
     x = t / std_sq2
-    return ((-1)**n / std_sq2**n * special.eval_hermite(n, x)
-            * np.exp(-(x**2)))
+    return ((-1) ** n / std_sq2 ** n * special.eval_hermite(n, x)
+            * np.exp(-(x ** 2)))
 
 
 def _ERF(t, std_sq2):
@@ -411,8 +137,9 @@ def _INTERP(t, start, stop, points):
     return np.interp(t, _interp_grid(start, stop, len(points)), points)
 
 
-def _LINEARCHIRP(t, f0, f1, T, phi0):
-    return np.sin(phi0 + 2 * np.pi * ((f1 - f0) / (2 * T) * t**2 + f0 * t))
+def _LINEARCHIRP(t, f0, f1, duration, phi0):
+    return np.sin(phi0 + 2 * pi * ((f1 - f0) / (2 * duration) * t ** 2
+                                  + f0 * t))
 
 
 def _EXPONENTIALCHIRP(t, f0, alpha, phi0):
@@ -420,7 +147,7 @@ def _EXPONENTIALCHIRP(t, f0, alpha, phi0):
 
 
 def _HYPERBOLICCHIRP(t, f0, k, phi0):
-    return np.sin(phi0 + 2 * np.pi * f0 / k * np.log(1 + k * t))
+    return np.sin(phi0 + 2 * pi * f0 / k * np.log(1 + k * t))
 
 
 def _COSH(t, w):
@@ -431,320 +158,1197 @@ def _SINH(t, w):
     return np.sinh(w * t)
 
 
-def _drag(t: np.ndarray, t0: float, freq: float, width: float, delta: float,
-          block_freq: float | None, phase: float):
-
-    o = np.pi / width
-    Omega_x = np.sin(o * (t - t0))**2
-    wt = 2 * np.pi * (freq + delta) * t - (2 * np.pi * delta * t0 + phase)
-
+def _drag(t, t0, freq, width, delta, block_freq, phase):
+    omega = pi / width
+    omega_x = np.sin(omega * (t - t0)) ** 2
+    wt = 2 * pi * (freq + delta) * t - (2 * pi * delta * t0 + phase)
     if block_freq is None or block_freq - delta == 0:
-        return Omega_x * np.cos(wt)
-
-    b = 1 / np.pi / 2 / (block_freq - delta)
-    Omega_y = -b * o * np.sin(2 * o * (t - t0))
-
-    return Omega_x * np.cos(wt) + Omega_y * np.sin(wt)
+        return omega_x * np.cos(wt)
+    b = 1 / pi / 2 / (block_freq - delta)
+    omega_y = -b * omega * np.sin(2 * omega * (t - t0))
+    return omega_x * np.cos(wt) + omega_y * np.sin(wt)
 
 
 @lru_cache(maxsize=64)
 def _mollifier_poly(d):
-    p = np.poly1d([-2, 0])
+    polynomial = np.poly1d([-2, 0])
     for n in range(1, d):
-        p = (np.poly1d([1, 0, -2, 0, 1]) * p.deriv()
-             + np.poly1d([-4 * n, 0, 4 * n - 2, 0]) * p)
-    return p
+        polynomial = (np.poly1d([1, 0, -2, 0, 1]) * polynomial.deriv()
+                      + np.poly1d([-4 * n, 0, 4 * n - 2, 0]) * polynomial)
+    return polynomial
 
 
-def _mollifier(t: np.ndarray, r: float, d: int):
-    x = t / r
+def _MOLLIFIER(t, radius, derivative):
+    x = t / radius
     xx_1 = x * x - 1
-    if d == 0:
+    if derivative == 0:
         return np.where(xx_1 >= 0, 0, np.exp(1 / xx_1 + 1))
-    p = _mollifier_poly(d)
+    polynomial = _mollifier_poly(derivative)
     return (np.where(xx_1 >= 0, 0,
-                     np.exp(1 / xx_1 + 1) / (-xx_1)**(2 * d))
-            * p(x) / r**d)
+                     np.exp(1 / xx_1 + 1) / (-xx_1) ** (2 * derivative))
+            * polynomial(x) / radius ** derivative)
 
 
-LINEAR = registerBaseFunc(_LINEAR)
-GAUSSIAN = registerBaseFunc(_GAUSSIAN)
-ERF = registerBaseFunc(_ERF)
-COS = registerBaseFunc(_COS)
-SINC = registerBaseFunc(_SINC)
-EXP = registerBaseFunc(_EXP)
-INTERP = registerBaseFunc(_INTERP)
-LINEARCHIRP = registerBaseFunc(_LINEARCHIRP)
-EXPONENTIALCHIRP = registerBaseFunc(_EXPONENTIALCHIRP)
-HYPERBOLICCHIRP = registerBaseFunc(_HYPERBOLICCHIRP)
-COSH = registerBaseFunc(_COSH)
-SINH = registerBaseFunc(_SINH)
-DRAG = registerBaseFunc(_drag)
-MOLLIFIER = registerBaseFunc(_mollifier)
-D_GAUSSIAN = registerBaseFunc(_D_GAUSSIAN)
+_base_functions = {
+    LINEAR: _LINEAR,
+    GAUSSIAN: _GAUSSIAN,
+    ERF: _ERF,
+    COS: _COS,
+    SINC: _SINC,
+    EXP: _EXP,
+    INTERP: _INTERP,
+    LINEARCHIRP: _LINEARCHIRP,
+    EXPONENTIALCHIRP: _EXPONENTIALCHIRP,
+    HYPERBOLICCHIRP: _HYPERBOLICCHIRP,
+    COSH: _COSH,
+    SINH: _SINH,
+    DRAG: _drag,
+    MOLLIFIER: _MOLLIFIER,
+    D_GAUSSIAN: _D_GAUSSIAN,
+}
 
 
-def _d_LINEAR(shift, *args):
-    return _one
+cdef object _calc_expr(object expression, object x):
+    cdef dict cache = {}
+    cdef object total = None
+    cdef object product_value
+    cdef object value
+    cdef object function
+    cdef object args
+    cdef object shift_value
+    cdef object term_value
+    cdef Py_ssize_t i, j
+    terms, coefficients = expression
+    for i in range(len(terms)):
+        functions, powers = terms[i]
+        product_value = None
+        for j in range(len(functions)):
+            function = functions[j]
+            value = cache.get(function)
+            if value is None:
+                args = function[1:-1]
+                shift_value = function[-1]
+                value = _base_functions[function[0]](
+                    x if shift_value == 0 else x - shift_value, *args)
+                cache[function] = value
+            if powers[j] != 1:
+                value = value ** powers[j]
+            product_value = value if product_value is None else product_value * value
+        if product_value is None:
+            term_value = coefficients[i]
+        elif coefficients[i] == 1:
+            term_value = product_value
+        else:
+            term_value = coefficients[i] * product_value
+        total = term_value if total is None else total + term_value
+    return 0 if total is None else total
 
 
-def _d_GAUSSIAN(shift, *args):
-    return (((((LINEAR, shift), (GAUSSIAN, *args, shift)), (1, 1)), ),
-            (-2 / args[0]**2, ))
+def _normal_number(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
 
 
-def _d_ERF(shift, *args):
-    return (((((GAUSSIAN, *args, shift), ), (1, )), ),
-            (2 / args[0] / np.sqrt(pi), ))
-
-
-def _d_COS(shift, *args):
-    return (((((COS, args[0], shift - pi / args[0] / 2), ), (1, )), ),
-            (args[0], ))
-
-
-def _d_SINC(shift, *args):
-    return (((((LINEAR, shift), (COS, *args, shift)), (-1, 1)),
-             (((LINEAR, shift), (COS, args[0], args[1] - pi / 2, shift)),
-              (-2, 1))), (1, -1 / args[0]))
-
-
-def _d_EXP(shift, *args):
-    return (((((EXP, *args, shift), ), (1, )), ), (args[0], ))
-
-
-def _d_INTERP(shift, start, stop, points):
-    return (((((INTERP, start, stop, tuple(np.gradient(np.asarray(points))),
-                shift), ), (1, )), ), ((len(points) - 1) / (stop - start), ))
-
-
-def _d_COSH(shift, *args):
-    return (((((SINH, *args, shift), ), (1, )), ), (args[0], ))
-
-
-def _d_SINH(shift, *args):
-    return (((((COSH, *args, shift), ), (1, )), ), (args[0], ))
-
-
-def _d_LINEARCHIRP(shift, f0, f1, T, phi0):
-    tlist = (
-        (((LINEARCHIRP, f0, f1, T, phi0 + pi / 2, shift), ), (1, )),
-        (((LINEAR, shift), (LINEARCHIRP, f0, f1, T, phi0 + pi / 2, shift)),
-         (1, 1)),
-    )
-    alist = (2 * pi * f0, 2 * pi * (f1 - f0) / T)
-
-    if f0 == 0:
-        return tlist[1:], alist[1:]
+def _encode_builtin_args(bytearray out, int opcode, args):
+    args = tuple(_normal_number(value) for value in args)
+    if opcode == LINEAR:
+        out.extend(struct.pack("<q", _time_to_tick(args[0])))
+    elif opcode in (GAUSSIAN, ERF):
+        out.extend(struct.pack("<2q", _time_to_tick(args[0]),
+                               _time_to_tick(args[1])))
+    elif opcode in (COS, SINC, EXP, COSH, SINH):
+        out.extend(struct.pack("<dq", float(args[0]), _time_to_tick(args[1])))
+    elif opcode == INTERP:
+        start, stop, points, shift = args
+        points = np.asarray(points, dtype="<f8").reshape(-1)
+        out.extend(struct.pack("<3qI", _time_to_tick(start),
+                               _time_to_tick(stop), _time_to_tick(shift),
+                               len(points)))
+        out.extend(points.tobytes())
+    elif opcode == LINEARCHIRP:
+        out.extend(struct.pack("<ddqdq", float(args[0]), float(args[1]),
+                               _time_to_tick(args[2]), float(args[3]),
+                               _time_to_tick(args[4])))
+    elif opcode in (EXPONENTIALCHIRP, HYPERBOLICCHIRP):
+        out.extend(struct.pack("<3dq", *(float(value) for value in args[:-1]),
+                               _time_to_tick(args[-1])))
+    elif opcode == DRAG:
+        values = list(args)
+        values[4] = np.nan if values[4] is None else values[4]
+        out.extend(struct.pack("<qdqdddq", _time_to_tick(values[0]),
+                               float(values[1]), _time_to_tick(values[2]),
+                               float(values[3]), float(values[4]),
+                               float(values[5]), _time_to_tick(values[6])))
+    elif opcode in (MOLLIFIER, D_GAUSSIAN):
+        out.extend(struct.pack("<qiq", _time_to_tick(args[0]), int(args[1]),
+                               _time_to_tick(args[2])))
     else:
-        return tlist, alist
+        raise ValueError(f"unsupported waveform opcode {opcode}")
 
 
-def _d_EXPONENTIALCHIRP(shift, f0, alpha, phi0):
-    return (((((EXP, alpha, shift), (EXPONENTIALCHIRP, f0, alpha,
-                                     phi0 + pi / 2, shift)), (1, 1)), ),
-            (2 * pi * f0, ))
+def _decode_builtin_args(bytes data, Py_ssize_t pos, int opcode):
+    if opcode == LINEAR:
+        shift = struct.unpack_from("<q", data, pos)[0]
+        return (_tick_to_time(shift),), pos + 8
+    if opcode in (GAUSSIAN, ERF):
+        value, shift = struct.unpack_from("<2q", data, pos)
+        return (_tick_to_time(value), _tick_to_time(shift)), pos + 16
+    if opcode in (COS, SINC, EXP, COSH, SINH):
+        value, shift = struct.unpack_from("<dq", data, pos)
+        return (value, _tick_to_time(shift)), pos + 16
+    if opcode == INTERP:
+        start, stop, shift, count = struct.unpack_from("<3qI", data, pos)
+        pos += 28
+        points = struct.unpack_from(f"<{count}d", data, pos)
+        return (_tick_to_time(start), _tick_to_time(stop), points,
+                _tick_to_time(shift)), pos + 8 * count
+    if opcode == LINEARCHIRP:
+        f0, f1, duration, phi0, shift = struct.unpack_from("<ddqdq", data, pos)
+        return (f0, f1, _tick_to_time(duration), phi0,
+                _tick_to_time(shift)), pos + 40
+    if opcode in (EXPONENTIALCHIRP, HYPERBOLICCHIRP):
+        a, b, c, shift = struct.unpack_from("<3dq", data, pos)
+        return (a, b, c, _tick_to_time(shift)), pos + 32
+    if opcode == DRAG:
+        values = list(struct.unpack_from("<qdqdddq", data, pos))
+        values[0] = _tick_to_time(values[0])
+        values[2] = _tick_to_time(values[2])
+        if np.isnan(values[4]):
+            values[4] = None
+        values[-1] = _tick_to_time(values[-1])
+        return tuple(values), pos + 56
+    if opcode in (MOLLIFIER, D_GAUSSIAN):
+        first, order, shift = struct.unpack_from("<qiq", data, pos)
+        return (_tick_to_time(first), order, _tick_to_time(shift)), pos + 20
+    raise ValueError(f"unsupported waveform opcode {opcode}")
 
 
-def _d_HYPERBOLICCHIRP(shift, f0, k, phi0):
-    return (((((LINEAR, shift - 1 / k), (HYPERBOLICCHIRP, f0, k, phi0 + pi / 2,
-                                         shift)), (-1, 1)), ), (2 * pi * f0, ))
+def _encode_expr(expr):
+    terms, coefficients = expr
+    out = bytearray(struct.pack("<I", len(coefficients)))
+    for (functions, powers), coefficient in zip(terms, coefficients):
+        coefficient = complex(coefficient)
+        if coefficient.imag == 0:
+            out.extend(struct.pack("<BdI", 0, coefficient.real,
+                                   len(functions)))
+        else:
+            out.extend(struct.pack("<BddI", 1, coefficient.real,
+                                   coefficient.imag, len(functions)))
+        for function, power in zip(functions, powers):
+            opcode, *args = function
+            out.extend(struct.pack("<Hi", int(opcode), int(power)))
+            _encode_builtin_args(out, int(opcode), args)
+    return bytes(out)
 
 
-def _d_MOLLIFIER(shift, r, d):
-    return (((((MOLLIFIER, r, d + 1, shift), ), (1, )), ), (1, ))
+def _decode_expr(bytes data):
+    cdef Py_ssize_t pos = 0
+    count = struct.unpack_from("<I", data, pos)[0]
+    pos += 4
+    terms = []
+    coefficients = []
+    for _ in range(count):
+        coefficient_type = data[pos]
+        pos += 1
+        if coefficient_type == 0:
+            real, factor_count = struct.unpack_from("<dI", data, pos)
+            pos += 12
+            coefficients.append(real)
+        elif coefficient_type == 1:
+            real, imag, factor_count = struct.unpack_from("<ddI", data, pos)
+            pos += 20
+            coefficients.append(complex(real, imag))
+        else:
+            raise ValueError("invalid packed waveform coefficient type")
+        functions = []
+        powers = []
+        for _ in range(factor_count):
+            opcode, power = struct.unpack_from("<Hi", data, pos)
+            pos += 6
+            args, pos = _decode_builtin_args(data, pos, opcode)
+            functions.append((opcode, *args))
+            powers.append(power)
+        terms.append((tuple(functions), tuple(powers)))
+    if pos != len(data):
+        raise ValueError("trailing data in packed expression")
+    return tuple(terms), tuple(coefficients)
 
 
-def _d_D_GAUSSIAN(shift, std_sq2, n):
-    return (((((D_GAUSSIAN, std_sq2, n + 1, shift), ), (1, )), ), (1, ))
+def _normalize_expression(expr, outer_shift=0.0):
+    inner_shift = 0.0
+    has_function = False
+    for term in expr[0]:
+        if term[0]:
+            has_function = True
+            inner_shift = quantize_time(term[0][0][-1])
+            break
+    if not has_function:
+        return expr, 0.0
+    if inner_shift:
+        expr = _expr_shift(expr, -inner_shift)
+    return expr, quantize_time(outer_shift + inner_shift)
 
 
-# register derivative
-registerDerivative(LINEAR, _d_LINEAR)
-registerDerivative(GAUSSIAN, _d_GAUSSIAN)
-registerDerivative(ERF, _d_ERF)
-registerDerivative(COS, _d_COS)
-registerDerivative(SINC, _d_SINC)
-registerDerivative(EXP, _d_EXP)
-registerDerivative(INTERP, _d_INTERP)
-registerDerivative(COSH, _d_COSH)
-registerDerivative(SINH, _d_SINH)
-registerDerivative(LINEARCHIRP, _d_LINEARCHIRP)
-registerDerivative(EXPONENTIALCHIRP, _d_EXPONENTIALCHIRP)
-registerDerivative(HYPERBOLICCHIRP, _d_HYPERBOLICCHIRP)
-registerDerivative(MOLLIFIER, _d_MOLLIFIER)
-registerDerivative(D_GAUSSIAN, _d_D_GAUSSIAN)
+def _pack_normalized(bounds, seq, expr_shifts):
+    _lock_time_resolution()
+    bound_ticks = tuple(_time_to_tick(bound) for bound in bounds)
+    seq = tuple(seq)
+    expr_shifts = tuple(expr_shifts)
+    if (len(bound_ticks) != len(seq) or not bound_ticks
+            or bound_ticks[-1] != int(_INF_TICK)):
+        raise ValueError("bounds and seq must have equal non-zero lengths ending at +inf")
+    if len(expr_shifts) != len(seq):
+        raise ValueError("expression shifts and seq must have equal lengths")
+    if any(bound_ticks[i] >= bound_ticks[i + 1]
+           for i in range(len(bound_ticks) - 1)):
+        raise ValueError("bounds must be strictly increasing")
+
+    expr_map = {}
+    expr_blobs = []
+    expr_ids = []
+    shift_ticks = []
+    for expr, expression_shift in zip(seq, expr_shifts):
+        expr_id = expr_map.get(expr)
+        if expr_id is None and expr not in expr_map:
+            expr_id = len(expr_blobs)
+            expr_map[expr] = expr_id
+            expr_blobs.append(_encode_expr(expr))
+        expr_ids.append(expr_id)
+        if expr == _zero or expr[0] == (((), ()),):
+            expression_shift = 0.0
+        shift_ticks.append(_time_to_tick(expression_shift))
+
+    out = bytearray(_HEADER.pack(_MAGIC, _VERSION, 0, len(bound_ticks),
+                                 len(expr_blobs)))
+    out.extend(np.asarray(bound_ticks, dtype="<i8").tobytes())
+    out.extend(np.asarray(expr_ids, dtype="<u4").tobytes())
+    out.extend(np.asarray(shift_ticks, dtype="<i8").tobytes())
+    offsets = [0]
+    for blob in expr_blobs:
+        offsets.append(offsets[-1] + len(blob))
+    out.extend(np.asarray(offsets, dtype="<u4").tobytes())
+    for blob in expr_blobs:
+        out.extend(blob)
+    return bytes(out)
 
 
-def _cos_power_n(x, n):
-    _, w, shift = x
-    ret = _zero
+def _pack_block(bounds, seq):
+    normalized = []
+    shifts = []
+    for expr in seq:
+        expr, shift = _normalize_expression(expr)
+        normalized.append(expr)
+        shifts.append(shift)
+    return _pack_normalized(bounds, normalized, shifts)
+
+
+def _block_layout(bytes data):
+    if len(data) < _HEADER.size:
+        raise ValueError("truncated packed waveform")
+    magic, version, flags, segment_count, expr_count = _HEADER.unpack_from(data)
+    if magic != _MAGIC or version != _VERSION or flags != 0:
+        raise ValueError("unsupported packed waveform")
+    bounds_offset = _HEADER.size
+    ids_offset = bounds_offset + 8 * segment_count
+    shifts_offset = ids_offset + 4 * segment_count
+    offsets_offset = shifts_offset + 8 * segment_count
+    expr_data_offset = offsets_offset + 4 * (expr_count + 1)
+    if expr_data_offset > len(data):
+        raise ValueError("truncated packed waveform sections")
+    offsets = np.frombuffer(data, dtype="<u4", count=expr_count + 1,
+                            offset=offsets_offset)
+    if offsets[0] != 0 or expr_data_offset + int(offsets[-1]) != len(data):
+        raise ValueError("invalid packed waveform expression offsets")
+    if np.any(offsets[1:] < offsets[:-1]):
+        raise ValueError("invalid packed waveform expression ordering")
+    ids = np.frombuffer(data, dtype="<u4", count=segment_count,
+                        offset=ids_offset)
+    if len(ids) and int(ids.max()) >= expr_count:
+        raise ValueError("invalid packed waveform expression id")
+    return (segment_count, expr_count, bounds_offset, ids_offset,
+            shifts_offset, offsets_offset, expr_data_offset)
+
+
+cdef class PackedWaveform:
+    cdef bytes _data
+    cdef object _decoded
+    cdef object _normalized
+
+    def __cinit__(self, data=None):
+        self._decoded = None
+        self._normalized = None
+        if data is not None:
+            _lock_time_resolution()
+            self._data = data if isinstance(data, bytes) else bytes(data)
+            _block_layout(self._data)
+
+    @classmethod
+    def from_legacy(cls, bounds, seq):
+        return cls(_pack_block(bounds, seq))
+
+    @classmethod
+    def from_bytes(cls, data):
+        return cls(data)
+
+    def to_bytes(self):
+        return self._data
+
+    def __bytes__(self):
+        return self._data
+
+    def __len__(self):
+        return len(self._data)
+
+    def __hash__(self):
+        return hash(self._data)
+
+    def __eq__(self, other):
+        return isinstance(other, PackedWaveform) and self._data == other._data
+
+    def __reduce__(self):
+        return (type(self).from_bytes, (self._data,))
+
+    def get_bounds(self):
+        segment_count, _, bounds_offset, _, _, _, _ = _block_layout(self._data)
+        ticks = np.frombuffer(self._data, dtype="<i8", count=segment_count,
+                              offset=bounds_offset)
+        view = ticks.astype(np.float64) * _TIME_RESOLUTION
+        if len(view) and ticks[-1] == _INF_TICK:
+            view[-1] = inf
+        view.flags.writeable = False
+        return view
+
+    def get_bound_ticks(self):
+        segment_count, _, bounds_offset, _, _, _, _ = _block_layout(self._data)
+        view = np.frombuffer(self._data, dtype="<i8", count=segment_count,
+                             offset=bounds_offset)
+        view.flags.writeable = False
+        return view
+
+    cdef object _decode_normalized(self):
+        if self._normalized is not None:
+            return self._normalized
+        segment_count, expr_count, bounds_offset, ids_offset, shifts_offset, offsets_offset, expr_data_offset = _block_layout(self._data)
+        ticks = np.frombuffer(self._data, dtype="<i8", count=segment_count,
+                              offset=bounds_offset)
+        bounds = tuple(_tick_to_time(tick) for tick in ticks)
+        ids = np.frombuffer(self._data, dtype="<u4", count=segment_count,
+                            offset=ids_offset)
+        shift_ticks = np.frombuffer(self._data, dtype="<i8", count=segment_count,
+                                    offset=shifts_offset)
+        shifts = tuple(_tick_to_time(tick) for tick in shift_ticks)
+        offsets = np.frombuffer(self._data, dtype="<u4", count=expr_count + 1,
+                                offset=offsets_offset)
+        exprs = []
+        for i in range(expr_count):
+            start = expr_data_offset + int(offsets[i])
+            stop = expr_data_offset + int(offsets[i + 1])
+            exprs.append(_decode_expr(self._data[start:stop]))
+        seq = tuple(exprs[int(i)] for i in ids)
+        self._normalized = bounds, seq, shifts
+        return self._normalized
+
+    def to_legacy(self):
+        if self._decoded is not None:
+            return self._decoded
+        bounds, seq, shifts = self._decode_normalized()
+        seq = tuple(_expr_shift(expr, shift) if shift else expr
+                    for expr, shift in zip(seq, shifts))
+        self._decoded = bounds, seq
+        return self._decoded
+
+    def shifted(self, time):
+        bounds, seq, shifts = self._decode_normalized()
+        return PackedWaveform(_pack_normalized(
+            tuple(round(bound + time, NDIGITS) for bound in bounds), seq,
+            tuple(quantize_time(shift + time) for shift in shifts)))
+
+    def scaled(self, value):
+        bounds, seq, shifts = self._decode_normalized()
+        constant = _const_expr(value)
+        scaled_seq = tuple(_expr_mul(expr, constant) for expr in seq)
+        scaled_shifts = tuple(0 if expr == _zero else shift
+                              for expr, shift in zip(scaled_seq, shifts))
+        return PackedWaveform(_pack_normalized(bounds, scaled_seq,
+                                               scaled_shifts))
+
+    def add(self, PackedWaveform other):
+        return _merge_blocks(self, other, False)
+
+    def mul(self, PackedWaveform other):
+        return _merge_blocks(self, other, True)
+
+    def power(self, n):
+        bounds, seq, shifts = self._decode_normalized()
+        powered = []
+        powered_shifts = []
+        cache = {}
+        for expr, shift in zip(seq, shifts):
+            result = cache.get(expr)
+            if result is None:
+                result = _expr_pow(expr, n)
+                cache[expr] = result
+            result, shift = _normalize_expression(result, shift)
+            powered.append(result)
+            powered_shifts.append(shift)
+        return PackedWaveform(_pack_normalized(bounds, powered,
+                                               powered_shifts))
+
+    def simplify(self, eps=1e-15):
+        bounds, seq, shifts = self._decode_normalized()
+        new_bounds = []
+        new_seq = []
+        new_shifts = []
+        cache = {}
+        for bound, expr, shift in zip(bounds, seq, shifts):
+            simplified = cache.get(expr)
+            if simplified is None:
+                simplified = _simplify_expr(expr, eps)
+                cache[expr] = simplified
+            simplified, shift = _normalize_expression(simplified, shift)
+            if (new_seq and simplified == new_seq[-1]
+                    and shift == new_shifts[-1]):
+                new_bounds[-1] = bound
+            else:
+                new_bounds.append(bound)
+                new_seq.append(simplified)
+                new_shifts.append(shift)
+        return PackedWaveform(_pack_normalized(tuple(new_bounds), new_seq,
+                                               new_shifts))
+
+    def filtered(self, low=0, high=inf, eps=1e-15):
+        bounds, seq, shifts = self._decode_normalized()
+        filtered_seq = []
+        filtered_shifts = []
+        cache = {}
+        for expr, shift in zip(seq, shifts):
+            result = cache.get(expr)
+            if result is None:
+                result = _filter_expr(expr, low, high, eps)
+                cache[expr] = result
+            result, shift = _normalize_expression(result, shift)
+            filtered_seq.append(result)
+            filtered_shifts.append(shift)
+        return PackedWaveform(_pack_normalized(bounds, filtered_seq,
+                                               filtered_shifts))
+
+    def derivative(self, order=1):
+        if order < 0 or not isinstance(order, int):
+            raise ValueError("order must be a non-negative integer")
+        bounds, seq, shifts = self._decode_normalized()
+        derived_seq = []
+        derived_shifts = []
+        cache = {}
+        for expr, shift in zip(seq, shifts):
+            result = cache.get(expr)
+            if result is None:
+                result = expr
+                for _ in range(order):
+                    result = _derivative_expr(result)
+                cache[expr] = result
+            result, shift = _normalize_expression(result, shift)
+            derived_seq.append(result)
+            derived_shifts.append(shift)
+        return PackedWaveform(_pack_normalized(bounds, derived_seq,
+                                               derived_shifts))
+
+    def evaluate(self, x, lower=-inf, upper=inf):
+        parts, dtype = self.parts_shifted(x, 0.0, lower, upper)
+        out = np.zeros_like(x, dtype=dtype)
+        for start, stop, part in parts:
+            out[start:stop] += part
+        return out
+
+    def parts(self, x, lower=-inf, upper=inf):
+        return self.parts_shifted(x, 0.0, lower, upper)
+
+    def parts_shifted(self, x, delay, lower=-inf, upper=inf):
+        bounds, _, _ = self._decode_normalized()
+        if delay:
+            bounds = tuple(round(bound + delay, NDIGITS) for bound in bounds)
+        return self.parts_with_bounds(x, bounds, delay, lower, upper)
+
+    def parts_with_bounds(self, x, bounds, delay, lower=-inf, upper=inf):
+        _, seq, shifts = self._decode_normalized()
+        ranges = np.searchsorted(x, bounds)
+        parts = []
+        dtype = float
+        start = 0
+        should_clip = lower != -inf or upper != inf
+        for i, stop in enumerate(ranges):
+            stop = int(stop)
+            if start < stop and seq[i] != _zero:
+                total_shift = delay + shifts[i]
+                values = _calc_expr(
+                    seq[i], x[start:stop] if total_shift == 0
+                    else x[start:stop] - total_shift)
+                if should_clip:
+                    values = np.clip(values, lower, upper)
+                if np.iscomplexobj(values):
+                    dtype = complex
+                parts.append((start, stop, values))
+            start = stop
+        return parts, dtype
+
+    def evaluate_shifted(self, x, delay, lower=-inf, upper=inf):
+        parts, dtype = self.parts_shifted(x, delay, lower, upper)
+        out = np.zeros_like(x, dtype=dtype)
+        for start, stop, part in parts:
+            out[start:stop] += part
+        return out
+
+
+def _const_expr(value):
+    if value == 0:
+        return _zero
+    value = _normal_number(value)
+    return ((((), ()),), (value,))
+
+
+def _insert_pair(t_list, v_list, term, value, lo, hi):
+    i = bisect_left(t_list, term, lo, hi)
+    if i < hi and t_list[i] == term:
+        value += v_list[i]
+        if value == 0:
+            t_list.pop(i)
+            v_list.pop(i)
+            return i, hi - 1
+        v_list[i] = value
+        return i, hi
+    t_list.insert(i, term)
+    v_list.insert(i, value)
+    return i, hi + 1
+
+
+def _expr_add(x, y):
+    t_list, v_list = list(x[0]), list(x[1])
+    lo, hi = 0, len(t_list)
+    for term, value in zip(*y):
+        lo, hi = _insert_pair(t_list, v_list, term, value, lo, hi)
+    return tuple(t_list), tuple(v_list)
+
+
+def _expr_mul(x, y):
+    t_list, v_list = [], []
+    lo = hi = 0
+    for (t1, t2), (v1, v2) in zip(product(x[0], y[0]),
+                                  product(x[1], y[1])):
+        value = v1 * v2
+        if value == 0:
+            continue
+        term = _expr_add(t1, t2)
+        lo, hi = _insert_pair(t_list, v_list, term, value, lo, hi)
+    return tuple(t_list), tuple(v_list)
+
+
+def _expr_shift(expr, time):
+    if expr == _zero or expr[0] == (((), ()),):
+        return expr
+    terms = []
+    for functions, powers in expr[0]:
+        terms.append((tuple((*function[:-1], function[-1] + time)
+                            for function in functions), powers))
+    return tuple(terms), expr[1]
+
+
+def _expr_pow(expr, n):
+    if expr == _zero:
+        return _zero
+    if n == 0:
+        return _one
+    if expr[0] == (((), ()),):
+        return _const_expr(expr[1][0] ** n)
+    if len(expr[0]) == 1:
+        terms = []
+        values = []
+        for (functions, powers), value in zip(*expr):
+            terms.append((functions, tuple(n * power for power in powers)))
+            values.append(value ** n)
+        return tuple(terms), tuple(values)
+    if not isinstance(n, int) or n < 0:
+        raise ValueError("non-constant waveform powers must be non-negative integers")
+    result = _one
+    for _ in range(n):
+        result = _expr_mul(result, expr)
+    return result
+
+
+def _derivative_base(function):
+    opcode, *args, shift_value = function
+    if opcode == LINEAR:
+        return _one
+    if opcode == GAUSSIAN:
+        return (((((LINEAR, shift_value), (GAUSSIAN, *args, shift_value)),
+                   (1, 1)),), (-2 / args[0] ** 2,))
+    if opcode == ERF:
+        return (((((GAUSSIAN, *args, shift_value),), (1,)),),
+                (2 / args[0] / np.sqrt(pi),))
+    if opcode == COS:
+        return (((((COS, args[0], shift_value - pi / args[0] / 2),),
+                   (1,)),), (args[0],))
+    if opcode == SINC:
+        frequency = pi * args[0]
+        return (((((LINEAR, shift_value),
+                    (COS, frequency, shift_value)), (-1, 1)),
+                 (((LINEAR, shift_value),
+                    (COS, frequency, shift_value + pi / (2 * frequency))),
+                  (-2, 1))),
+                (1.0, -1 / frequency))
+    if opcode == EXP:
+        return (((((EXP, *args, shift_value),), (1,)),), (args[0],))
+    if opcode == INTERP:
+        start, stop, points = args
+        gradient = tuple(np.gradient(np.asarray(points)))
+        return (((((INTERP, start, stop, gradient, shift_value),), (1,)),),
+                ((len(points) - 1) / (stop - start),))
+    if opcode == COSH:
+        return (((((SINH, *args, shift_value),), (1,)),), (args[0],))
+    if opcode == SINH:
+        return (((((COSH, *args, shift_value),), (1,)),), (args[0],))
+    if opcode == LINEARCHIRP:
+        f0, f1, duration, phi0 = args
+        terms = (
+            (((LINEARCHIRP, f0, f1, duration, phi0 + pi / 2, shift_value),),
+             (1,)),
+            (((LINEAR, shift_value),
+              (LINEARCHIRP, f0, f1, duration, phi0 + pi / 2, shift_value)),
+             (1, 1)),
+        )
+        values = (2 * pi * f0, 2 * pi * (f1 - f0) / duration)
+        return (terms[1:], values[1:]) if f0 == 0 else (terms, values)
+    if opcode == EXPONENTIALCHIRP:
+        f0, alpha, phi0 = args
+        return (((((EXP, alpha, shift_value),
+                    (EXPONENTIALCHIRP, f0, alpha, phi0 + pi / 2,
+                     shift_value)), (1, 1)),), (2 * pi * f0,))
+    if opcode == HYPERBOLICCHIRP:
+        f0, k, phi0 = args
+        return (((((LINEAR, shift_value - 1 / k),
+                    (HYPERBOLICCHIRP, f0, k, phi0 + pi / 2,
+                     shift_value)), (-1, 1)),), (2 * pi * f0,))
+    if opcode == MOLLIFIER:
+        radius, derivative = args
+        return (((((MOLLIFIER, radius, derivative + 1, shift_value),),
+                   (1,)),), (1.0,))
+    if opcode == D_GAUSSIAN:
+        std_sq2, derivative = args
+        return (((((D_GAUSSIAN, std_sq2, derivative + 1, shift_value),),
+                   (1,)),), (1.0,))
+    raise ValueError(f"derivative is not registered for opcode {opcode}")
+
+
+def _derivative_expr(expr):
+    if expr == _zero or expr[0] == (((), ()),):
+        return _zero
+    terms, values = expr
+    result = _zero
+    for (functions, powers), coefficient in zip(terms, values):
+        for index, (function, power) in enumerate(zip(functions, powers)):
+            remaining_functions = list(functions)
+            remaining_powers = list(powers)
+            if power == 1:
+                remaining_functions.pop(index)
+                remaining_powers.pop(index)
+            else:
+                remaining_powers[index] = power - 1
+            remaining = (((tuple(remaining_functions),
+                           tuple(remaining_powers)),),
+                         (coefficient * power,))
+            result = _expr_add(result,
+                               _expr_mul(remaining,
+                                         _derivative_base(function)))
+    return result
+
+
+def _cos_power_n(function, n):
+    _, frequency, shift_value = function
+    result = _zero
     for k in range(0, n // 2 + 1):
         if n == 2 * k:
-            a = _const(comb(n, k) / 2**n)
-            ret = add(ret, a)
+            result = _expr_add(result, _const_expr(comb(n, k) / 2 ** n))
         else:
-            expr = (((((COS, (n - 2 * k) * w, shift), ), (1, )), ),
-                    (comb(n, k) / 2**(n - 1), ))
-            ret = add(ret, expr)
-    return ret
+            expr = (((((COS, (n - 2 * k) * frequency, shift_value),),
+                       (1,)),), (comb(n, k) / 2 ** (n - 1),))
+            result = _expr_add(result, expr)
+    return result
 
 
-def _trigMul_t(x, y, v):
-    """cos(a)cos(b) = 0.5*cos(a+b)+0.5*cos(a-b)"""
-    _, w1, t1 = x
-    _, w2, t2 = y
+def _trig_mul_pair(left, right, value):
+    _, w1, t1 = left
+    _, w2, t2 = right
     if w2 > w1:
         t1, t2 = t2, t1
         w1, w2 = w2, w1
-    exp1 = (COS, w1 + w2, (w1 * t1 + w2 * t2) / (w1 + w2))
+    sum_function = (COS, w1 + w2, (w1 * t1 + w2 * t2) / (w1 + w2))
     if w1 == w2:
-        c = v * np.cos(w1 * t1 - w2 * t2) / 2
-        if c == 0:
-            return (((exp1, ), (1, )), ), (0.5 * v, )
-        else:
-            return (((), ()), ((exp1, ), (1, ))), (c, 0.5 * v)
-    else:
-        exp2 = (COS, w1 - w2, (w1 * t1 - w2 * t2) / (w1 - w2))
-        if exp2[1] > exp1[1]:
-            exp2, exp1 = exp1, exp2
-        return (((exp2, ), (1, )), ((exp1, ), (1, ))), (0.5 * v, 0.5 * v)
+        constant_value = value * np.cos(w1 * t1 - w2 * t2) / 2
+        if constant_value == 0:
+            return ((((sum_function,), (1,)),), (0.5 * value,))
+        return ((((), ()), ((sum_function,), (1,))),
+                (constant_value, 0.5 * value))
+    difference_function = (COS, w1 - w2,
+                           (w1 * t1 - w2 * t2) / (w1 - w2))
+    if difference_function[1] > sum_function[1]:
+        difference_function, sum_function = sum_function, difference_function
+    return ((((difference_function,), (1,)), ((sum_function,), (1,))),
+            (0.5 * value, 0.5 * value))
 
 
-def _trigMul(x, y):
-    if is_const(x) or is_const(y):
-        return mul(x, y)
-    ret = _zero
-    for (t1, t2), (v1, v2) in zip(product(x[0], y[0]), product(x[1], y[1])):
-        v = v1 * v2
-        tmp = _one
+def _trig_mul(left, right):
+    if left == _zero or right == _zero:
+        return _zero
+    if left[0] == (((), ()),) or right[0] == (((), ()),):
+        return _expr_mul(left, right)
+    result = _zero
+    for (term1, term2), (value1, value2) in zip(
+            product(left[0], right[0]), product(left[1], right[1])):
+        value = value1 * value2
+        non_trig = _one
         trig = []
-        for mt, n in zip(chain(t1[0], t2[0]), chain(t1[1], t2[1])):
-            if mt[0] == COS:
-                trig.append(mt)
+        for function, power in zip(chain(term1[0], term2[0]),
+                                   chain(term1[1], term2[1])):
+            if function[0] == COS:
+                trig.extend([function] * power)
             else:
-                tmp = mul(tmp, ((((mt, ), (n, )), ), (1, )))
+                non_trig = _expr_mul(
+                    non_trig, ((((function,), (power,)),), (1.0,)))
         if len(trig) == 1:
-            x = ((((trig[0], ), (1, )), ), (v, ))
-            expr = mul(tmp, x)
+            expr = ((((trig[0],), (1,)),), (value,))
         elif len(trig) == 2:
-            expr = _trigMul_t(trig[0], trig[1], v)
-            expr = mul(tmp, expr)
+            expr = _trig_mul_pair(trig[0], trig[1], value)
         else:
-            expr = mul(tmp, _const(v))
-        ret = add(ret, expr)
-    return ret
+            expr = _const_expr(value)
+            for function in trig:
+                expr = _expr_mul(expr, ((((function,), (1,)),), (1.0,)))
+        result = _expr_add(result, _expr_mul(non_trig, expr))
+    return result
 
 
-def _exp_trig_Reduce(mtlist, v):
+def _exp_trig_reduce(term, value):
     trig = _one
     alpha = 0
-    shift = 0
-    ml, nl = [], []
-    for mt, n in zip(*mtlist):
-        if mt[0] == COS:
-            trig = _trigMul(trig, _cos_power_n(mt, n))
-        elif mt[0] == EXP:
-            x = alpha * shift + n * mt[1] * mt[-1]
-            alpha += n * mt[1]
-            if alpha == 0:
-                shift = 0
-            else:
-                shift = x / alpha
-        elif mt[0] == GAUSSIAN and n != 1:
-            ml.append((mt[0], mt[1] / np.sqrt(n), mt[2]))
-            nl.append(1)
+    exp_shift = 0
+    functions = []
+    powers = []
+    for function, power in zip(*term):
+        if function[0] == COS:
+            trig = _trig_mul(trig, _cos_power_n(function, power))
+        elif function[0] == EXP:
+            new_weight = alpha * exp_shift + power * function[1] * function[-1]
+            alpha += power * function[1]
+            exp_shift = 0 if alpha == 0 else new_weight / alpha
+        elif function[0] == GAUSSIAN and power != 1:
+            functions.append((function[0], function[1] / np.sqrt(power),
+                              function[2]))
+            powers.append(1)
         else:
-            ml.append(mt)
-            nl.append(n)
-    ret = (((tuple(ml), tuple(nl)), ), (v, ))
-
+            functions.append(function)
+            powers.append(power)
+    result = (((tuple(functions), tuple(powers)),), (value,))
     if alpha != 0:
-        ret = mul(ret, basic_wave(EXP, alpha, shift=shift))
+        result = _expr_mul(
+            result, (((((EXP, alpha, exp_shift),), (1,)),), (1.0,)))
+    return _expr_mul(result, trig)
 
-    return mul(ret, trig)
 
-
-def _get_freq(t):
-    t2 = [[], []]
-    freq, shift = 0, 0
-    for mt, n in zip(*t):
-        if mt[0] == COS:
-            if freq != 0:
-                raise ValueError("run _exp_trig_Reduce first")
-            freq = mt[1]
-            shift = mt[-1]
+def _frequency_parts(term):
+    functions = []
+    powers = []
+    frequency = 0
+    shift_value = 0
+    for function, power in zip(*term):
+        if function[0] == COS:
+            if frequency != 0:
+                raise ValueError("trigonometric expression was not reduced")
+            frequency = function[1]
+            shift_value = function[-1]
         else:
-            t2[0].append(mt)
-            t2[1].append(n)
-    t2 = (tuple(t2[0]), tuple(t2[1]))
-    return freq, shift, t2
+            functions.append(function)
+            powers.append(power)
+    return frequency, shift_value, (tuple(functions), tuple(powers))
 
 
-def simplify(expr, eps):
-    d = {}
-    for t, v in zip(*expr):
-        for t, v in zip(*_exp_trig_Reduce(t, v)):
-            freq, shift, t = _get_freq(t)
-            v_r, v_i, shift_r, shift_i = v.real, v.imag, shift, shift
-            if (t, freq) in d:
-                v0_r, shift0_r, v0_i, shift0_i = d[(t, freq)]
-                if freq == 0:
-                    v_r, v_i = v.real + v0_r, v.imag + v0_i
+def _simplify_expr(expr, eps):
+    groups = {}
+    for term, value in zip(*expr):
+        for reduced_term, reduced_value in zip(*_exp_trig_reduce(term, value)):
+            frequency, shift_value, base_term = _frequency_parts(reduced_term)
+            real_value = reduced_value.real
+            imag_value = reduced_value.imag
+            real_shift = imag_shift = shift_value
+            if (base_term, frequency) in groups:
+                old_real, old_real_shift, old_imag, old_imag_shift = groups[(base_term, frequency)]
+                if frequency == 0:
+                    real_value += old_real
+                    imag_value += old_imag
                 else:
-                    a = v0_r * np.cos(freq * shift0_r) + v_r * np.cos(
-                        freq * shift_r)
-                    b = v0_r * np.sin(freq * shift0_r) + v_r * np.sin(
-                        freq * shift_r)
-                    shift_r = np.arctan2(b, a) / freq
-                    v_r = np.sqrt(a**2 + b**2)
+                    a = (old_real * np.cos(frequency * old_real_shift)
+                         + real_value * np.cos(frequency * real_shift))
+                    b = (old_real * np.sin(frequency * old_real_shift)
+                         + real_value * np.sin(frequency * real_shift))
+                    real_shift = np.arctan2(b, a) / frequency
+                    real_value = np.hypot(a, b)
+                    a = (old_imag * np.cos(frequency * old_imag_shift)
+                         + imag_value * np.cos(frequency * imag_shift))
+                    b = (old_imag * np.sin(frequency * old_imag_shift)
+                         + imag_value * np.sin(frequency * imag_shift))
+                    imag_shift = np.arctan2(b, a) / frequency
+                    imag_value = np.hypot(a, b)
+            groups[(base_term, frequency)] = (real_value, real_shift,
+                                               imag_value, imag_shift)
 
-                    a = v0_i * np.cos(freq * shift0_i) + v_i * np.cos(
-                        freq * shift_i)
-                    b = v0_i * np.sin(freq * shift0_i) + v_i * np.sin(
-                        freq * shift_i)
-                    shift_i = np.arctan2(b, a) / freq
-                    v_i = np.sqrt(a**2 + b**2)
-            d[(t, freq)] = v_r, shift_r, v_i, shift_i
-    ret = _zero
-    for (t, freq), (v_r, shift_r, v_i, shift_i) in d.items():
-        if freq == 0 and abs(v) >= eps:
-            if v_i == 0:
-                ret = add(ret, ((t, ), (v_r, )))
-            else:
-                ret = add(ret, ((t, ), (v_r + 1j * v_i, )))
-        else:
-            if abs(v_i) < eps and abs(v_r) < eps:
-                continue
-            elif abs(v_i) < eps and abs(v_r) >= eps:
-                expr = (((((COS, freq, shift_r), ), (1, )), ), (v_r, ))
-            elif abs(v_i) >= eps and abs(v_r) < eps:
-                expr = (((((COS, freq, shift_i), ), (1, )), ), (v_i * 1j, ))
-            elif abs(v_i) >= eps and abs(v_r) >= eps:
-                expr = (((((COS, freq, shift_r), ), (1, )),
-                         (((COS, freq, shift_i), ), (1, ))), (v_r, v_i * 1j))
-            else:
-                pass  # Never reach here
-
-            expr = mul(((t, ), (1, )), expr)
-            ret = add(ret, expr)
-    return ret
+    result = _zero
+    for (base_term, frequency), values in groups.items():
+        real_value, real_shift, imag_value, imag_shift = values
+        if frequency == 0:
+            coefficient = real_value + 1j * imag_value
+            if abs(coefficient) >= eps:
+                if coefficient.imag == 0:
+                    coefficient = coefficient.real
+                result = _expr_add(result, ((base_term,), (coefficient,)))
+            continue
+        terms = []
+        coefficients = []
+        if abs(real_value) >= eps:
+            terms.append((((COS, frequency, real_shift),), (1,)))
+            coefficients.append(real_value)
+        if abs(imag_value) >= eps:
+            terms.append((((COS, frequency, imag_shift),), (1,)))
+            coefficients.append(imag_value * 1j)
+        if terms:
+            result = _expr_add(
+                result,
+                _expr_mul(((base_term,), (1.0,)),
+                          (tuple(terms), tuple(coefficients))))
+    return result
 
 
-def filter(expr, low, high, eps):
-    expr = simplify(expr, eps)
-    ret = _zero
-    for t, v in zip(*expr):
-        for i, (mt, n) in enumerate(zip(*t)):
-            if mt[0] == COS:
-                if low <= mt[1] < high:
-                    ret = add(ret, ((t, ), (v, )))
+def _filter_expr(expr, low, high, eps):
+    expr = _simplify_expr(expr, eps)
+    result = _zero
+    for term, value in zip(*expr):
+        for function, power in zip(*term):
+            if function[0] == COS:
+                if low <= function[1] < high:
+                    result = _expr_add(result, ((term,), (value,)))
                 break
-            elif mt[0] == SINC and n == 1:
-                pass
-            elif mt[0] == GAUSSIAN and n == 1:
-                pass
         else:
             if low <= 0:
-                ret = add(ret, ((t, ), (v, )))
-    return ret
+                result = _expr_add(result, ((term,), (value,)))
+    return result
+
+
+def _merge_blocks(PackedWaveform left, PackedWaveform right, bint multiply):
+    b1, s1 = left.to_legacy()
+    b2, s2 = right.to_legacy()
+    bounds = []
+    seq = []
+    i = j = 0
+    while i < len(b1) and j < len(b2):
+        bound = min(b1[i], b2[j])
+        expr = _expr_mul(s1[i], s2[j]) if multiply else _expr_add(s1[i], s2[j])
+        if seq and expr == seq[-1]:
+            bounds[-1] = bound
+        else:
+            bounds.append(bound)
+            seq.append(expr)
+        if bound == b1[i]:
+            i += 1
+        if bound == b2[j]:
+            j += 1
+    return PackedWaveform.from_legacy(tuple(bounds), tuple(seq))
+
+
+def constant(value):
+    return PackedWaveform.from_legacy((inf,), (_const_expr(value),))
+
+
+def basic(opcode, args=(), shift=0.0):
+    expr = (((((int(opcode), *tuple(args), float(shift)),), (1,)),), (1.0,))
+    return PackedWaveform.from_legacy((inf,), (expr,))
+
+
+def piecewise(bounds, expressions):
+    seq = []
+    for expression in expressions:
+        if isinstance(expression, PackedWaveform):
+            eb, es = expression.to_legacy()
+            if len(eb) != 1:
+                raise ValueError("piecewise expressions must be scalar cores")
+            seq.append(es[0])
+        elif isinstance(expression, (int, float, complex, np.number)):
+            seq.append(_const_expr(expression))
+        else:
+            seq.append(expression)
+    return PackedWaveform.from_legacy(bounds, tuple(seq))
+
+
+def sum_cores(cores):
+    cores = list(cores)
+    if not cores:
+        return constant(0)
+    accumulator = {}
+    events = {}
+    for core in cores:
+        bounds, seq = core.to_legacy()
+        for term, value in zip(*seq[0]):
+            accumulator[term] = accumulator.get(term, 0) + value
+            if accumulator[term] == 0:
+                del accumulator[term]
+        for i, boundary in enumerate(bounds[:-1]):
+            events.setdefault(boundary, []).append((seq[i], seq[i + 1]))
+
+    def snapshot():
+        if not accumulator:
+            return _zero
+        items = sorted(accumulator.items())
+        return tuple(item[0] for item in items), tuple(item[1] for item in items)
+
+    output_bounds = []
+    output_seq = [snapshot()]
+    for boundary in sorted(events):
+        for old, new in events[boundary]:
+            for term, value in zip(*old):
+                accumulator[term] = accumulator.get(term, 0) - value
+                if accumulator[term] == 0:
+                    del accumulator[term]
+            for term, value in zip(*new):
+                accumulator[term] = accumulator.get(term, 0) + value
+                if accumulator[term] == 0:
+                    del accumulator[term]
+        expr = snapshot()
+        if expr != output_seq[-1]:
+            output_bounds.append(boundary)
+            output_seq.append(expr)
+    output_bounds.append(inf)
+    return PackedWaveform.from_legacy(tuple(output_bounds), tuple(output_seq))
+
+
+def _sum_events(events, global_shift=0, offset=0):
+    cdef PackedWaveform packed_core
+    accumulator = {}
+    boundary_events = {}
+    for core, delay, scale in events:
+        packed_core = core
+        bounds, seq, shifts = packed_core._decode_normalized()
+        delay = quantize_time(delay + global_shift)
+        first_key = (seq[0], quantize_time(shifts[0] + delay))
+        if seq[0] != _zero:
+            accumulator[first_key] = accumulator.get(first_key, 0) + scale
+            if accumulator[first_key] == 0:
+                del accumulator[first_key]
+        for i, boundary in enumerate(bounds[:-1]):
+            boundary = quantize_time(boundary + delay)
+            old_key = (seq[i], quantize_time(shifts[i] + delay))
+            new_key = (seq[i + 1], quantize_time(shifts[i + 1] + delay))
+            boundary_events.setdefault(boundary, []).append(
+                (old_key, new_key, scale))
+
+    if offset != 0:
+        accumulator[(_one, 0.0)] = offset
+
+    def snapshot():
+        if not accumulator:
+            return _zero, 0.0
+        if len(accumulator) == 1:
+            (expr, shift), scale = next(iter(accumulator.items()))
+            if scale == 1:
+                return expr, shift
+            result = _expr_mul(expr, _const_expr(scale))
+            return _normalize_expression(result, shift)
+        origin = 0.0
+        for (expr, shift), scale in accumulator.items():
+            if scale != 0 and expr != _zero and expr[0] != (((), ()),):
+                origin = shift
+                break
+        result = _zero
+        for (expr, shift), scale in accumulator.items():
+            if expr == _zero or scale == 0:
+                continue
+            term = expr if scale == 1 else _expr_mul(expr, _const_expr(scale))
+            if shift != origin:
+                term = _expr_shift(term, shift - origin)
+            result = _expr_add(result, term)
+        return _normalize_expression(result, origin)
+
+    output_bounds = []
+    first_expr, first_shift = snapshot()
+    output_seq = [first_expr]
+    output_shifts = [first_shift]
+    for boundary in sorted(boundary_events):
+        for old_key, new_key, scale in boundary_events[boundary]:
+            if old_key[0] != _zero:
+                accumulator[old_key] = accumulator.get(old_key, 0) - scale
+                if accumulator[old_key] == 0:
+                    del accumulator[old_key]
+            if new_key[0] != _zero:
+                accumulator[new_key] = accumulator.get(new_key, 0) + scale
+                if accumulator[new_key] == 0:
+                    del accumulator[new_key]
+        expr, shift = snapshot()
+        if expr != output_seq[-1] or shift != output_shifts[-1]:
+            output_bounds.append(boundary)
+            output_seq.append(expr)
+            output_shifts.append(shift)
+    output_bounds.append(inf)
+    return PackedWaveform(_pack_normalized(tuple(output_bounds), output_seq,
+                                           output_shifts))
+
+
+def _pack_stack(events):
+    _lock_time_resolution()
+    templates = []
+    template_map = {}
+    ids = []
+    delays = []
+    scales = []
+    for core, delay, scale in events:
+        data = core.to_bytes()
+        template_id = template_map.get(data)
+        if template_id is None:
+            template_id = len(templates)
+            template_map[data] = template_id
+            templates.append(data)
+        ids.append(template_id)
+        delays.append(_time_to_tick(delay))
+        scales.append(complex(scale))
+
+    offsets_size = 4 * (len(templates) + 1)
+    template_start = _STACK_HEADER.size + offsets_size
+    offsets = [template_start]
+    for data in templates:
+        offsets.append(offsets[-1] + len(data))
+    event_offset = offsets[-1]
+    out = bytearray(_STACK_HEADER.pack(_STACK_MAGIC, _VERSION, 0,
+                                       len(templates), len(ids), event_offset))
+    out.extend(np.asarray(offsets, dtype="<u4").tobytes())
+    for data in templates:
+        out.extend(data)
+    out.extend(np.asarray(ids, dtype="<u4").tobytes())
+    out.extend(np.asarray(delays, dtype="<i8").tobytes())
+    out.extend(np.asarray(scales, dtype="<c16").tobytes())
+    return bytes(out)
+
+
+def _stack_layout(bytes data):
+    if len(data) < _STACK_HEADER.size:
+        raise ValueError("truncated packed waveform stack")
+    magic, version, flags, template_count, event_count, event_offset = _STACK_HEADER.unpack_from(data)
+    if magic != _STACK_MAGIC or version != _VERSION or flags != 0:
+        raise ValueError("unsupported packed waveform stack")
+    offsets_end = _STACK_HEADER.size + 4 * (template_count + 1)
+    event_end = event_offset + 28 * event_count
+    if offsets_end > len(data) or event_end != len(data):
+        raise ValueError("invalid packed waveform stack layout")
+    offsets = np.frombuffer(data, dtype="<u4", count=template_count + 1,
+                            offset=_STACK_HEADER.size)
+    if offsets[0] != offsets_end or offsets[-1] != event_offset or np.any(offsets[1:] < offsets[:-1]):
+        raise ValueError("invalid packed waveform template offsets")
+    return template_count, event_count, event_offset, offsets
+
+
+cdef class PackedStack:
+    cdef bytes _data
+    cdef object _events
+    cdef object _compiled
+
+    def __cinit__(self, data=None):
+        self._events = None
+        self._compiled = None
+        if data is None:
+            self._data = _pack_stack(())
+        elif isinstance(data, bytes):
+            _lock_time_resolution()
+            self._data = data
+            _stack_layout(data)
+        else:
+            self._data = _pack_stack(data)
+
+    @classmethod
+    def from_bytes(cls, data):
+        return cls(data if isinstance(data, bytes) else bytes(data))
+
+    @classmethod
+    def from_events(cls, events):
+        return cls(events)
+
+    def to_bytes(self):
+        return self._data
+
+    def __bytes__(self):
+        return self._data
+
+    def __len__(self):
+        return len(self._data)
+
+    def __hash__(self):
+        return hash(self._data)
+
+    def __eq__(self, other):
+        return isinstance(other, PackedStack) and self._data == other._data
+
+    def __reduce__(self):
+        return (type(self).from_bytes, (self._data,))
+
+    def events(self):
+        if self._events is not None:
+            return self._events
+        template_count, event_count, event_offset, offsets = _stack_layout(self._data)
+        templates = []
+        for i in range(template_count):
+            templates.append(PackedWaveform(self._data[int(offsets[i]):int(offsets[i + 1])]))
+        ids = np.frombuffer(self._data, dtype="<u4", count=event_count,
+                            offset=event_offset)
+        delay_offset = event_offset + 4 * event_count
+        delays = np.frombuffer(self._data, dtype="<i8", count=event_count,
+                               offset=delay_offset)
+        scale_offset = delay_offset + 8 * event_count
+        scales = np.frombuffer(self._data, dtype="<c16", count=event_count,
+                               offset=scale_offset)
+        self._events = tuple((templates[int(ids[i])], _tick_to_time(delays[i]),
+                              complex(scales[i])) for i in range(event_count))
+        return self._events
+
+    def compiled_events(self):
+        if self._compiled is None:
+            compiled = []
+            for core, delay, scale in self.events():
+                bounds = np.around(core.get_bounds() + delay, NDIGITS)
+                bounds.flags.writeable = False
+                compiled.append((core, bounds, delay, scale))
+            self._compiled = tuple(compiled)
+        return self._compiled
+
+    def evaluate(self, x, offset=0, shift=0):
+        out = np.full_like(x, offset, dtype=np.complex128)
+        for core, bounds, delay, scale in self.compiled_events():
+            if shift:
+                shifted_bounds = np.around(bounds + shift, NDIGITS)
+            else:
+                shifted_bounds = bounds
+            parts, _ = core.parts_with_bounds(x, shifted_bounds,
+                                               shift + delay)
+            for start, stop, values in parts:
+                out[start:stop] += scale * values
+        if not np.any(out.imag):
+            return out.real
+        return out
+
+    def simplified(self, shift=0, offset=0, eps=1e-15):
+        return _sum_events(self.events(), shift, offset).simplify(eps)
+
+    def combined(self, PackedStack other):
+        return PackedStack.from_events((*self.events(), *other.events()))
+
+    def scaled(self, value):
+        return PackedStack.from_events((core, delay, scale * value)
+                                       for core, delay, scale in self.events())
+
+
+def registerBaseFunc(*args, **kwargs):
+    raise NotImplementedError("custom waveform base functions are not supported")
+
+
+def registerDerivative(*args, **kwargs):
+    raise NotImplementedError("custom waveform derivatives are not supported")

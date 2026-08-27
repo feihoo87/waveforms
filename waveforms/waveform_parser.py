@@ -7,9 +7,6 @@ from pathlib import Path
 from antlr4 import CommonTokenStream, InputStream
 from antlr4.error.ErrorListener import ErrorListener
 
-from . import multy_drag, waveform
-
-
 class WaveformParseError(Exception):
     """Custom exception for waveform parsing errors."""
     pass
@@ -26,23 +23,29 @@ class WaveformErrorListener(ErrorListener):
 class WaveformVisitor:
     """Visitor class to evaluate waveform expressions."""
 
-    def __init__(self):
+    def __init__(self, backend=None, extra_modules=None):
+        if backend is None:
+            from . import waveform as backend
+        if extra_modules is None:
+            extra_modules = ()
+        self.backend = backend
+        self.extra_modules = tuple(extra_modules)
         self.functions = [
             'D', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
-            'cut', 'drag', 'drag_sin', 'drag_sinx', 'exp', 'gaussian',
+            'cut', 'drag', 'exp', 'gaussian',
             'general_cosine', 'hanning', 'interp', 'mixing', 'mollifier',
             'one', 'poly', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
             'square', 'step', 't', 'zero'
         ]
         self.constants = {
-            'pi': waveform.pi,
-            'e': waveform.e,
-            'inf': waveform.inf
+            'pi': backend.pi,
+            'e': backend.e,
+            'inf': backend.inf
         }
 
     def get_function(self, name):
-        """Get function from waveform or multy_drag modules."""
-        for mod in [waveform, multy_drag]:
+        """Get a function from the configured waveform backend."""
+        for mod in (self.backend, *self.extra_modules):
             try:
                 return getattr(mod, name)
             except AttributeError:
@@ -252,7 +255,7 @@ def _generate_antlr_parser():
             )
 
 
-def parse_waveform_expression(expr: str) -> waveform.Waveform:
+def parse_waveform_expression(expr: str, backend=None, extra_modules=None):
     """Parse a waveform expression using ANTLR4."""
     try:
         # Generate parser files if they don't exist
@@ -277,12 +280,13 @@ def parse_waveform_expression(expr: str) -> waveform.Waveform:
         tree = parser.expr()
 
         # Visit tree and evaluate
-        visitor = WaveformVisitor()
+        visitor = WaveformVisitor(backend, extra_modules)
+        backend = visitor.backend
         result = visitor.visit(tree)
 
         # Convert numeric results to waveforms
         if isinstance(result, (int, float, complex)):
-            result = waveform.const(result)
+            result = backend.const(result)
 
         return result.simplify()
 
@@ -294,7 +298,7 @@ def parse_waveform_expression(expr: str) -> waveform.Waveform:
 
 
 @lru_cache(maxsize=1024)
-def wave_eval(expr: str) -> "waveform.Waveform":
+def wave_eval(expr: str):
     """
     Parse and evaluate a waveform expression using ANTLR 4.
     

@@ -54,6 +54,28 @@ plt.plot(t, y_wav(t))
 plt.show()
 ```
 
+### Packed binary representation
+
+Starting with version 3, `Waveform` and `WaveVStack` use a packed-binary backend.
+It is intended for workloads with many small pulses and for low-overhead
+serialization.
+
+```python
+import waveforms as wf
+
+# Optional; call this once, before constructing or loading waveform objects.
+wf.set_time_resolution(1e-12)
+
+pulse = (wf.gaussian(12e-9) >> 20e-9) * wf.cos(2 * wf.pi * 5e9)
+data = pulse.to_bytes()
+restored = wf.Waveform.from_bytes(data)
+```
+
+Time resolution is process-wide and is not stored in each binary block. A
+process loading a block must therefore use the same resolution as the process
+that created it. The setting is locked when the first waveform object is
+created or loaded.
+
 ## Reporting Issues
 Please report all issues [on github](https://github.com/feihoo87/waveforms/issues).
 

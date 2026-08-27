@@ -1,644 +1,412 @@
+"""Independent packed-binary waveform implementation.
+
+``Waveform`` and ``WaveVStack`` keep their signal representation in immutable
+binary blocks owned by :mod:`waveforms._waveform`. Times in those blocks are
+signed 64-bit ticks. The tick duration is process-wide configuration and is
+intentionally not repeated in every block.
+"""
+
 from __future__ import annotations
 
-from fractions import Fraction
-from typing import Generator, Iterable, cast
+from functools import lru_cache
+from typing import Iterable, cast
 
 import numpy as np
 from numpy import e, inf, pi
-from numpy.typing import NDArray
 from scipy.signal import sosfilt
 
-from ._waveform import (_D, COS, COSH, D_GAUSSIAN, DRAG, ERF, EXP,
-                        EXPONENTIALCHIRP, GAUSSIAN, HYPERBOLICCHIRP, INTERP,
-                        LINEAR, LINEARCHIRP, MOLLIFIER, NDIGITS, SINC, SINH,
-                        _baseFunc, _baseFunc_latex, _const, _half, _one, _zero,
-                        add, basic_wave, calc_parts, filter, is_const,
-                        merge_waveform, mul, pow, registerBaseFunc,
-                        registerBaseFuncLatex, registerDerivative, shift,
-                        simplify, wave_sum)
+from ._waveform import (
+    COS, COSH, D_GAUSSIAN, DRAG, ERF, EXP, EXPONENTIALCHIRP, GAUSSIAN,
+    HYPERBOLICCHIRP, INTERP, LINEAR, LINEARCHIRP, MOLLIFIER, SINC, SINH,
+    PackedStack, PackedWaveform, basic, constant, get_time_resolution,
+    piecewise, quantize_time, registerBaseFunc, registerDerivative,
+    set_time_resolution,
+)
+
+_ZERO_EXPR = ((), ())
+_ONE_EXPR = ((((), ()),), (1.0,))
 
 
-def _test_spec_num(num, spec):
-    x = Fraction(num / spec).limit_denominator(1000000000)
-    if x.denominator <= 24:
-        return True, x, 1
-    x = Fraction(spec * num).limit_denominator(1000000000)
-    if x.denominator <= 24:
-        return True, x, -1
-    return False, x, 0
+def _copy_sampling_metadata(source, target):
+    target.start = source.start
+    target.stop = source.stop
+    target.sample_rate = source.sample_rate
+    target.filters = source.filters
+    target.label = source.label
+    return target
 
 
-def _exp_num(s):
-    if "e" in s:
-        a, n = s.split("e")
-        n = float(n)
-        s = f"{a} \\times 10^{{{n:g}}}"
-    return s
+def _scalar(opcode, *args, shift=0.0):
+    return basic(opcode, args, shift)
 
 
-def _spec_num_latex(num):
-    for spec, spec_latex in [(1, ''), (np.sqrt(2), '\\sqrt{2}'),
-                             (np.sqrt(3), '\\sqrt{3}'),
-                             (np.sqrt(5), '\\sqrt{5}'),
-                             (np.log(2), '\\log{2}'), (np.log(3), '\\log{3}'),
-                             (np.log(5), '\\log{5}'), (np.e, 'e'),
-                             (np.pi, '\\pi'), (np.pi**2, '\\pi^2'),
-                             (np.sqrt(np.pi), '\\sqrt{\\pi}')]:
-        flag, x, sign = _test_spec_num(num, spec)
-        if flag:
-            if sign < 0:
-                spec_latex = f"\\frac{{{1}}}{{{spec_latex}}}"
-            if x.denominator == 1:
-                if x.numerator == 1:
-                    return f"{spec_latex}"
-                else:
-                    s = _exp_num(f"{x.numerator:g}")
-                    return f"{s}{spec_latex}"
+def _piecewise(bounds, *expressions):
+    return Waveform._from_core(piecewise(tuple(bounds), expressions))
+
+
+class _SamplingMixin:
+    start: float | None
+    stop: float | None
+    sample_rate: float | None
+    filters: tuple[np.ndarray, float] | None
+
+    def sample(self, sample_rate=None, out: np.ndarray | None = None,
+               chunk_size=None, function_lib=None,
+               filters: tuple[np.ndarray, float] | None = None):
+        if function_lib is not None:
+            raise NotImplementedError("custom waveform functions are not supported")
+        if sample_rate is None:
+            sample_rate = self.sample_rate
+        if self.start is None or self.stop is None or sample_rate is None:
+            raise ValueError(
+                f"Waveform is not initialized. {self.start=}, {self.stop=}, "
+                f"{sample_rate=}"
+            )
+        if filters is None:
+            filters = self.filters
+        if chunk_size is not None:
+            return self._sample_iter(sample_rate, int(chunk_size), out, filters)
+
+        x = np.arange(self.start, self.stop, 1 / sample_rate)
+        sig = cast(np.ndarray, self(x, out=out))
+        if filters is not None:
+            sos, initial = filters
+            sos = np.asarray(sos)
+            if not sos.flags.writeable:
+                sos = sos.copy()
+            sig = sosfilt(sos, sig - initial) + initial if initial else sosfilt(sos, sig)
+        return cast(np.ndarray, sig)
+
+    def _sample_iter(self, sample_rate, chunk_size, out, filters):
+        start = cast(float, self.start)
+        stop_limit = cast(float, self.stop)
+        output_index = 0
+        zi = None
+        initial = 0
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if filters is not None:
+            sos, initial = filters
+            sos = np.asarray(sos)
+            if not sos.flags.writeable:
+                sos = sos.copy()
+            zi = np.zeros((sos.shape[0], 2))
+
+        while start < stop_limit:
+            size = min(chunk_size, round((stop_limit - start) * sample_rate))
+            if size <= 0:
+                break
+            stop = start + size / sample_rate
+            x = np.linspace(start, stop, size, endpoint=False)
+            sig = cast(np.ndarray, self(x))
+            if filters is not None:
+                if initial:
+                    sig = sig - initial
+                sig, zi = sosfilt(sos, sig, zi=zi)
+                if initial:
+                    sig = sig + initial
+            if out is not None:
+                out[output_index:output_index + size] = sig
+                yield out[output_index:output_index + size]
             else:
-                if x.numerator < 0:
-                    return f"-\\frac{{{-x.numerator}}}{{{x.denominator}}}{spec_latex}"
-                else:
-                    return f"\\frac{{{x.numerator}}}{{{x.denominator}}}{spec_latex}"
-    return _exp_num(f"{num:g}")
+                yield sig
+            start = stop
+            output_index += size
+
+    def _play(self, time_unit, volume):
+        import pyaudio
+
+        rate = 48_000
+        dynamic_volume = 1.0
+        amp = 2**15 * 0.999 * volume
+        audio = pyaudio.PyAudio()
+        try:
+            stream = audio.open(format=pyaudio.paInt16, channels=1,
+                                rate=rate, output=True)
+            try:
+                for data in self.sample(sample_rate=rate / time_unit,
+                                        chunk_size=1024):
+                    limit = np.abs(data).max()
+                    if limit > 0 and dynamic_volume > 1.0 / limit:
+                        dynamic_volume = 1.0 / limit
+                        amp = 2**15 * 0.99 * volume * dynamic_volume
+                    stream.write(bytes((amp * data).astype(np.int16).data))
+            finally:
+                stream.stop_stream()
+                stream.close()
+        finally:
+            audio.terminate()
+
+    def play(self, time_unit=1, volume=1.0):
+        import multiprocessing as mp
+
+        process = mp.Process(target=self._play, args=(time_unit, volume),
+                             daemon=True)
+        process.start()
 
 
-def _num_latex(num):
-    if num == -np.inf:
-        return r"-\infty"
-    elif num == np.inf:
-        return r"\infty"
-    if num.imag > 0:
-        return f"\\left({_num_latex(num.real)}+{_num_latex(num.imag)}j\\right)"
-    elif num.imag < 0:
-        return f"\\left({_num_latex(num.real)}-{_num_latex(-num.imag)}j\\right)"
-    s = _spec_num_latex(num.real)
-    if s == '' and round(num.real) == 1:
-        return '1'
-    return s
+class Waveform(_SamplingMixin):
+    __slots__ = (
+        "_core", "_delay", "_scale", "max", "min", "start", "stop",
+        "sample_rate", "filters", "label",
+    )
 
-
-def _fun_latex(fun):
-    funID, *args, shift = fun
-    if _baseFunc_latex[funID] is None:
-        shift = _num_latex(shift)
-        if shift == "0":
-            shift = ""
-        elif shift[0] != '-':
-            shift = "+" + shift
-        return r"\mathrm{Func}" + f"{funID}(t{shift}, ...)"
-    return _baseFunc_latex[funID](shift, *args)
-
-
-def _wav_latex(wav):
-
-    if wav == _zero:
-        return "0"
-    elif is_const(wav):
-        return f"{wav[1][0]}"
-
-    sum_expr = []
-    for mul, amp in zip(*wav):
-        if mul == ((), ()):
-            sum_expr.append(_num_latex(amp))
-            continue
-        mul_expr = []
-        amp = _num_latex(amp)
-        if amp != "1":
-            mul_expr.append(amp)
-        for fun, n in zip(*mul):
-            fun_expr = _fun_latex(fun)
-            if n != 1:
-                mul_expr.append(fun_expr + "^{" + f"{n}" + "}")
-            else:
-                mul_expr.append(fun_expr)
-        sum_expr.append(''.join(mul_expr))
-
-    ret = sum_expr[0]
-    for expr in sum_expr[1:]:
-        if expr[0] == '-':
-            ret += expr
-        else:
-            ret += "+" + expr
-    return ret
-
-
-class Waveform:
-    __slots__ = ('bounds', 'seq', 'max', 'min', 'start', 'stop', 'sample_rate',
-                 'filters', 'label')
-
-    def __init__(self, bounds=(+inf, ), seq=(_zero, ), min=-inf, max=inf):
-        self.bounds = bounds
-        self.seq = seq
+    def __init__(self, bounds=(inf,), seq=None, min=-inf, max=inf, *,
+                 _core=None, _delay=0.0, _scale=1.0):
+        if _core is None:
+            if seq is None:
+                seq = (_ZERO_EXPR,)
+            _core = PackedWaveform.from_legacy(tuple(bounds), tuple(seq))
+        self._core = _core
+        self._delay = quantize_time(_delay)
+        self._scale = complex(_scale) if isinstance(_scale, complex) else _scale
         self.max = max
         self.min = min
         self.start = None
         self.stop = None
         self.sample_rate = None
-        self.filters: tuple[np.ndarray, float] | None = None
+        self.filters = None
         self.label = None
+
+    @classmethod
+    def _from_core(cls, core, delay=0.0, scale=1.0):
+        return cls(_core=core, _delay=delay, _scale=scale)
+
+    def _materialized_core(self):
+        core = self._core
+        if self._scale != 1:
+            core = core.scaled(self._scale)
+        if self._delay != 0:
+            core = core.shifted(self._delay)
+        return core
+
+    @property
+    def bounds(self):
+        return tuple(self._materialized_core().get_bounds())
+
+    @property
+    def seq(self):
+        return self._materialized_core().to_legacy()[1]
 
     @staticmethod
     def _begin(bounds, seq):
-        for i, s in enumerate(seq):
-            if s != _zero:
-                if i == 0:
-                    return -inf
-                return bounds[i - 1]
+        for index, expression in enumerate(seq):
+            if expression != _ZERO_EXPR:
+                return -inf if index == 0 else bounds[index - 1]
         return inf
 
     @staticmethod
     def _end(bounds, seq):
-        N = len(bounds)
-        for i, s in enumerate(seq[::-1]):
-            if s != _zero:
-                if i == 0:
-                    return inf
-                return bounds[N - i - 1]
+        count = len(bounds)
+        for index, expression in enumerate(reversed(seq)):
+            if expression != _ZERO_EXPR:
+                return inf if index == 0 else bounds[count - index - 1]
         return -inf
 
     @property
     def begin(self):
-        if self.start is None:
-            return self._begin(self.bounds, self.seq)
-        else:
-            return max(self.start, self._begin(self.bounds, self.seq))
+        value = self._begin(*self._core.to_legacy()) + self._delay
+        return value if self.start is None else max(self.start, value)
 
     @property
     def end(self):
-        if self.stop is None:
-            return self._end(self.bounds, self.seq)
-        else:
-            return min(self.stop, self._end(self.bounds, self.seq))
+        value = self._end(*self._core.to_legacy()) + self._delay
+        return value if self.stop is None else min(self.stop, value)
 
-    def sample(
-        self,
-        sample_rate=None,
-        out: np.ndarray | None = None,
-        chunk_size=None,
-        function_lib=None,
-        filters: tuple[np.ndarray, float] | None = None
-    ) -> np.ndarray | Iterable[np.ndarray]:
-        if sample_rate is None:
-            sample_rate = self.sample_rate
-        if self.start is None or self.stop is None or sample_rate is None:
-            raise ValueError(
-                f'Waveform is not initialized. {self.start=}, {self.stop=}, {sample_rate=}'
-            )
-        if filters is None:
-            filters = self.filters
-        if chunk_size is None:
-            x = np.arange(self.start, self.stop, 1 / sample_rate)
-            sig = cast(np.ndarray,
-                       self.__call__(x, out=out, function_lib=function_lib))
-            if filters is not None:
-                sos, initial = filters
-                if not isinstance(sos, np.ndarray):
-                    sos = np.array(sos)
-                elif not sos.flags.writeable:
-                    sos = sos.copy()
-                if initial:
-                    sig = cast(np.ndarray, sosfilt(sos,
-                                                   sig - initial)) + initial
-                else:
-                    sig = cast(np.ndarray, sosfilt(sos, sig))
-            return cast(np.ndarray, sig)
-        else:
-            return self._sample_iter(sample_rate, chunk_size, out,
-                                     function_lib, filters)
-
-    def _sample_iter(
-        self, sample_rate, chunk_size, out: np.ndarray | None, function_lib,
-        filters: tuple[np.ndarray, float] | None
-    ) -> Generator[np.ndarray, None, None]:
-        start = cast(float, self.start)
-        start_n = 0
-        if filters is not None:
-            sos, initial = filters
-            if not isinstance(sos, np.ndarray):
-                sos = np.array(sos)
-            elif not sos.flags.writeable:
-                sos = sos.copy()
-            # zi = sosfilt_zi(sos)
-            zi = np.zeros((sos.shape[0], 2))
-        length = chunk_size / sample_rate
-        while start < cast(float, self.stop):
-            if start + length > cast(float, self.stop):
-                length = cast(float, self.stop) - start
-                stop = cast(float, self.stop)
-                size = round((stop - start) * sample_rate)
-            else:
-                stop = start + length
-                size = chunk_size
-            x = np.linspace(start, stop, size, endpoint=False)
-
-            if filters is None:
-                if out is not None:
-                    yield cast(
-                        np.ndarray,
-                        self.__call__(x,
-                                      out=out[start_n:],
-                                      function_lib=function_lib))
-                else:
-                    yield cast(np.ndarray,
-                               self.__call__(x, function_lib=function_lib))
-            else:
-                sig = cast(np.ndarray,
-                           self.__call__(x, function_lib=function_lib))
-                if initial:
-                    sig -= initial
-                sig, zi = sosfilt(sos, sig, zi=zi)
-                if initial:
-                    sig += initial
-                if out is not None:
-                    out[start_n:start_n + size] = sig
-                yield cast(np.ndarray, sig)
-
-            start = stop
-            start_n += chunk_size
-
-    @staticmethod
-    def _tolist(bounds, seq, ret=None):
-        if ret is None:
-            ret = []
-        ret.append(len(bounds))
-        for seq, b in zip(seq, bounds):
-            ret.append(b)
-            tlist, amplist = seq
-            ret.append(len(amplist))
-            for t, amp in zip(tlist, amplist):
-                ret.append(amp)
-                mtlist, nlist = t
-                ret.append(len(nlist))
-                for fun, n in zip(mtlist, nlist):
-                    ret.append(n)
-                    ret.append(len(fun))
-                    ret.extend(fun)
-        return ret
-
-    @staticmethod
-    def _fromlist(l, pos=0):
-
-        def _read(l, pos, size):
-            try:
-                return tuple(l[pos:pos + size]), pos + size
-            except:
-                raise ValueError('Invalid waveform format')
-
-        (nseg, ), pos = _read(l, pos, 1)
-        bounds = []
-        seq = []
-        for _ in range(nseg):
-            (b, nsum), pos = _read(l, pos, 2)
-            bounds.append(b)
-            amp = []
-            t = []
-            for _ in range(nsum):
-                (a, nmul), pos = _read(l, pos, 2)
-                amp.append(a)
-                nlst = []
-                mt = []
-                for _ in range(nmul):
-                    (n, nfun), pos = _read(l, pos, 2)
-                    nlst.append(n)
-                    fun, pos = _read(l, pos, nfun)
-                    mt.append(fun)
-                t.append((tuple(mt), tuple(nlst)))
-            seq.append((tuple(t), tuple(amp)))
-
-        return tuple(bounds), tuple(seq), pos
-
-    def tolist(self):
-        l = [self.max, self.min, self.start, self.stop, self.sample_rate]
-        if self.filters is None:
-            l.append(None)
-        else:
-            sos, initial = self.filters
-            sos = list(sos.reshape(-1))
-            l.append(len(sos))
-            l.extend(sos)
-            l.append(initial)
-
-        return self._tolist(self.bounds, self.seq, l)
+    def to_bytes(self):
+        """Return the canonical signal block; sampling metadata is separate."""
+        return self._materialized_core().to_bytes()
 
     @classmethod
-    def fromlist(cls, l):
-        w = cls()
-        pos = 6
-        (w.max, w.min, w.start, w.stop, w.sample_rate, sos_size) = l[:pos]
-        if sos_size is not None:
-            sos = np.array(l[pos:pos + sos_size]).reshape(-1, 6)
-            pos += sos_size
-            initial = l[pos]
-            pos += 1
-            w.filters = sos, initial
-
-        w.bounds, w.seq, pos = cls._fromlist(l, pos)
-        return w
-
-    def totree(self):
-        if self.filters is None:
-            header = (self.max, self.min, self.start, self.stop,
-                      self.sample_rate, None)
-        else:
-            header = (self.max, self.min, self.start, self.stop,
-                      self.sample_rate, self.filters)
-        body = []
-
-        for seq, b in zip(self.seq, self.bounds):
-            tlist, amplist = seq
-            new_seq = []
-            for t, amp in zip(tlist, amplist):
-                mtlist, nlist = t
-                new_t = []
-                for fun, n in zip(mtlist, nlist):
-                    new_t.append((n, fun))
-                new_seq.append((amp, tuple(new_t)))
-            body.append((b, tuple(new_seq)))
-        return header, tuple(body)
-
-    @staticmethod
-    def fromtree(tree):
-        w = Waveform()
-        header, body = tree
-
-        (w.max, w.min, w.start, w.stop, w.sample_rate, w.filters) = header
-        bounds = []
-        seqs = []
-        for b, seq in body:
-            bounds.append(b)
-            amp_list = []
-            t_list = []
-            for amp, t in seq:
-                amp_list.append(amp)
-                n_list = []
-                mt_list = []
-                for n, mt in t:
-                    n_list.append(n)
-                    mt_list.append(mt)
-                t_list.append((tuple(mt_list), tuple(n_list)))
-            seqs.append((tuple(t_list), tuple(amp_list)))
-        w.bounds = tuple(bounds)
-        w.seq = tuple(seqs)
-        return w
+    def from_bytes(cls, data):
+        return cls._from_core(PackedWaveform.from_bytes(data))
 
     def simplify(self, eps=1e-15):
-        seq = [simplify(self.seq[0], eps)]
-        bounds = [self.bounds[0]]
-        for expr, b in zip(self.seq[1:], self.bounds[1:]):
-            expr = simplify(expr, eps)
-            if expr == seq[-1]:
-                seq.pop()
-                bounds.pop()
-            seq.append(expr)
-            bounds.append(b)
-        return Waveform(tuple(bounds), tuple(seq))
+        return Waveform._from_core(self._materialized_core().simplify(eps))
 
     def filter(self, low=0, high=inf, eps=1e-15):
-        seq = []
-        for expr in self.seq:
-            seq.append(filter(expr, low, high, eps))
-        return Waveform(self.bounds, tuple(seq))
+        return Waveform._from_core(self._materialized_core().filtered(low, high, eps))
 
-    def _comb(self, other, oper):
-        return Waveform(*merge_waveform(self.bounds, self.seq, other.bounds,
-                                        other.seq, oper))
+    def __pow__(self, n):
+        return Waveform._from_core(self._materialized_core().power(n))
 
-    def __pow__(self, n) -> Waveform:
-        return Waveform(self.bounds, tuple(pow(w, n) for w in self.seq))
+    def __add__(self, other):
+        if not isinstance(other, Waveform):
+            other = const(other)
+        return Waveform._from_core(
+            self._materialized_core().add(other._materialized_core())
+        )
 
-    def __add__(self, other) -> Waveform:
+    def __radd__(self, value):
+        return self + value
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __rsub__(self, value):
+        return value + (-self)
+
+    def __mul__(self, other):
         if isinstance(other, Waveform):
-            return self._comb(other, add)
-        else:
-            return self + const(other)
+            return Waveform._from_core(
+                self._materialized_core().mul(other._materialized_core())
+            )
+        return Waveform._from_core(self._core, self._delay, self._scale * other)
 
-    def __radd__(self, v) -> Waveform:
-        return const(v) + self
+    def __rmul__(self, value):
+        return self * value
 
-    def __ior__(self, other) -> Waveform:
-        return self | other
+    def __truediv__(self, other):
+        if isinstance(other, (Waveform, WaveVStack)):
+            raise TypeError("division by waveform")
+        return self * (1 / other)
 
-    def __or__(self, other) -> Waveform:
-        if isinstance(other, (int, float, complex)):
-            other = const(other)
-        w = self.marker + other.marker
+    def __neg__(self):
+        return self * -1
 
-        def _or(a, b):
-            if a != _zero or b != _zero:
-                return _one
-            else:
-                return _zero
+    def __rshift__(self, time):
+        delay = quantize_time(self._delay + time)
+        return Waveform._from_core(self._core, delay, self._scale)
 
-        return self._comb(other, _or)
-
-    def __iand__(self, other) -> Waveform:
-        return self & other
-
-    def __and__(self, other) -> Waveform:
-        if isinstance(other, (int, float, complex)):
-            other = const(other)
-        w = self.marker + other.marker
-
-        def _and(a, b):
-            if a != _zero and b != _zero:
-                return _one
-            else:
-                return _zero
-
-        return self._comb(other, _and)
+    def __lshift__(self, time):
+        return self >> -time
 
     @property
     def marker(self):
-        w = self.simplify()
-        return Waveform(w.bounds,
-                        tuple(_zero if s == _zero else _one for s in w.seq))
+        core = self._materialized_core().simplify()
+        bounds, expressions = core.to_legacy()
+        return Waveform(bounds, tuple(
+            _ZERO_EXPR if expression == _ZERO_EXPR else _ONE_EXPR
+            for expression in expressions
+        ))
 
-    def mask(self, edge: float = 0) -> Waveform:
-        w = self.marker
-        in_wave = w.seq[0] == _zero
-        bounds = []
-        seq = []
+    def mask(self, edge=0):
+        marker = self.marker
+        bounds = marker.bounds
+        expressions = marker.seq
+        out_bounds = []
+        out_expressions = []
+        in_wave = expressions[0] != _ZERO_EXPR
 
-        if w.seq[0] == _zero:
-            in_wave = False
-            b = w.bounds[0] - edge
-            bounds.append(b)
-            seq.append(_zero)
+        if expressions[0] == _ZERO_EXPR:
+            out_bounds.append(bounds[0] - edge)
+            out_expressions.append(_ZERO_EXPR)
 
-        for b, s in zip(w.bounds[1:], w.seq[1:]):
-            if not in_wave and s != _zero:
+        for boundary, expression in zip(bounds[1:], expressions[1:]):
+            if not in_wave and expression != _ZERO_EXPR:
                 in_wave = True
-                bounds.append(b + edge)
-                seq.append(_one)
-            elif in_wave and s == _zero:
+                out_bounds.append(boundary + edge)
+                out_expressions.append(_ONE_EXPR)
+            elif in_wave and expression == _ZERO_EXPR:
                 in_wave = False
-                b = b - edge
-                if b > bounds[-1]:
-                    bounds.append(b)
-                    seq.append(_zero)
+                boundary -= edge
+                if boundary > out_bounds[-1]:
+                    out_bounds.append(boundary)
+                    out_expressions.append(_ZERO_EXPR)
                 else:
-                    bounds.pop()
-                    bounds.append(b)
-        return Waveform(tuple(bounds), tuple(seq))
+                    out_bounds[-1] = boundary
+        return Waveform(tuple(out_bounds), tuple(out_expressions))
 
-    def __mul__(self, other) -> Waveform:
-        if isinstance(other, Waveform):
-            return self._comb(other, mul)
-        else:
-            return self * const(other)
+    def __or__(self, other):
+        if not isinstance(other, Waveform):
+            other = const(other)
+        return (self.marker + other.marker).marker
 
-    def __rmul__(self, v) -> Waveform:
-        return const(v) * self
+    def __ior__(self, other):
+        return self | other
 
-    def __truediv__(self, other) -> Waveform:
-        if isinstance(other, Waveform):
-            raise TypeError('division by waveform')
-        else:
-            return self * const(1 / other)
+    def __and__(self, other):
+        if not isinstance(other, Waveform):
+            other = const(other)
+        return (self.marker * other.marker).marker
 
-    def __neg__(self) -> Waveform:
-        return -1 * self
+    def __iand__(self, other):
+        return self & other
 
-    def __sub__(self, other) -> Waveform:
-        return self + (-other)
-
-    def __rsub__(self, v) -> Waveform:
-        return v + (-self)
-
-    def __rshift__(self, time) -> Waveform:
-        return Waveform(
-            tuple(round(bound + time, NDIGITS) for bound in self.bounds),
-            tuple(shift(expr, time) for expr in self.seq))
-
-    def __lshift__(self, time):
-        return self >> (-time)
-
-    @staticmethod
-    def _merge_parts(
-        parts: list[tuple[int, int, np.ndarray | int | float | complex]],
-        out: list[tuple[int, int, np.ndarray | int | float | complex]]
-    ) -> list[tuple[int, int, np.ndarray | int | float | complex]]:
-        # TODO: merge parts
-        raise NotImplementedError
-
-    @staticmethod
-    def _fill_parts(parts, out):
+    def __call__(self, x, frag=False, out=None, accumulate=False,
+                 function_lib=None):
+        if function_lib is not None:
+            raise NotImplementedError("custom waveform functions are not supported")
+        scalar = isinstance(x, (int, float, complex, np.number))
+        values = np.asarray([x]) if scalar else np.asarray(x)
+        parts, _ = self._core.parts_shifted(values, self._delay)
+        scaled_parts = []
+        complex_output = False
+        should_scale = self._scale != 1
+        should_clip = self.min != -inf or self.max != inf
         for start, stop, part in parts:
-            out[start:stop] += part
+            if should_scale:
+                part = part * self._scale
+            if should_clip:
+                part = np.clip(part, self.min, self.max)
+            complex_output |= np.iscomplexobj(part)
+            scaled_parts.append((start, stop, part))
+        if frag:
+            if out is None:
+                return scaled_parts
+            if not accumulate:
+                out.clear()
+            out.extend(scaled_parts)
+            return out
 
-    def __call__(
-        self,
-        x,
-        frag=False,
-        out: np.ndarray | list | None = None,
-        accumulate=False,
-        function_lib=None
-    ) -> NDArray[np.float64 | np.complex128] | list[
-            tuple[int, int, NDArray[np.float64 | np.complex128]] | int
-            | float | complex] | np.float64:
-        if function_lib is None:
-            function_lib = _baseFunc
-        if isinstance(x, (int, float, complex)):
-            return cast(
-                NDArray[np.float64],
-                self.__call__(np.array([x]), function_lib=function_lib))[0]
-        parts, dtype = calc_parts(self.bounds, self.seq, x, function_lib,
-                                  self.min, self.max)
-        if not frag:
-            if out is None:
-                out = np.zeros_like(x, dtype=dtype)
-            elif not accumulate:
-                out *= 0
-            self._fill_parts(parts, out)
-        else:
-            if out is None:
-                return cast(list, parts)
-            else:
-                out = cast(list, out)
-                if not accumulate:
-                    out.clear()
-                    out.extend(parts)
-                else:
-                    self._merge_parts(parts, out)
-        return out
+        if out is None:
+            out = np.zeros_like(values, dtype=complex if complex_output else float)
+        elif not accumulate:
+            out[...] = 0
+        for start, stop, part in scaled_parts:
+            out[start:stop] += part
+        return out[0] if scalar else out
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if isinstance(other, (int, float, complex, np.number)):
+            other = const(other)
+        if not isinstance(other, Waveform):
+            return False
+        if (self.max, self.min, self.start, self.stop) != (
+                other.max, other.min, other.start, other.stop):
+            return False
+        return self.simplify().to_bytes() == other.simplify().to_bytes()
 
     def __hash__(self):
-        return hash((self.max, self.min, self.start, self.stop,
-                     self.sample_rate, self.bounds, self.seq))
+        return hash((self.simplify().to_bytes(), self.max, self.min,
+                     self.start, self.stop))
 
-    def __eq__(self, o: object) -> bool:
-        if isinstance(o, (int, float, complex)):
-            return self == const(o)
-        elif isinstance(o, Waveform):
-            a = self.simplify()
-            b = o.simplify()
-            return a.seq == b.seq and a.bounds == b.bounds and (
-                a.max, a.min, a.start, a.stop) == (b.max, b.min, b.start,
-                                                   b.stop)
-        else:
-            return False
+    def __repr__(self):
+        return (f"Waveform(segments={len(self.bounds)}, bytes={len(self.to_bytes())}, "
+                f"begin={self.begin}, end={self.end})")
 
     def _repr_latex_(self):
-        parts = []
-        start = -np.inf
-        for end, wav in zip(self.bounds, self.seq):
-            e_str = _wav_latex(wav)
-            start_str = _num_latex(start)
-            end_str = _num_latex(end)
-            parts.append(e_str + r",~~&t\in" + f"({start_str},{end_str}" +
-                         (']' if end < np.inf else ')'))
-            start = end
-        if len(parts) == 1:
-            expr = ''.join(['f(t)=', *parts[0].split('&')])
+        return rf"f(t)\quad\mathrm{{on}}\ [{self.begin:g},\,{self.end:g}]"
+
+    def __getstate__(self):
+        return (self._core.to_bytes(), self._delay, self._scale, self.max,
+                self.min, self.start, self.stop, self.sample_rate,
+                self.filters, self.label)
+
+    def __setstate__(self, state):
+        (data, self._delay, self._scale, self.max, self.min, self.start,
+         self.stop, self.sample_rate, self.filters, self.label) = state
+        self._core = PackedWaveform.from_bytes(data)
+
+
+class WaveVStack(_SamplingMixin):
+    __slots__ = (
+        "_stack", "start", "stop", "sample_rate", "offset", "shift",
+        "filters", "label", "function_lib",
+    )
+
+    def __init__(self, wlist=()):
+        if isinstance(wlist, WaveVStack):
+            self._stack = wlist._stack
         else:
-            expr = '\n'.join([
-                r"f(t)=\begin{cases}", (r"\\" + '\n').join(parts),
-                r"\end{cases}"
-            ])
-        return "$$\n{}\n$$".format(expr)
-
-    def _play(self, time_unit, volume=1.0):
-        import pyaudio
-
-        CHUNK = 1024
-        RATE = 48000
-
-        dynamic_volume = 1.0
-        amp = 2**15 * 0.999 * volume * dynamic_volume
-
-        p = pyaudio.PyAudio()
-        try:
-            stream = p.open(format=pyaudio.paInt16,
-                            channels=1,
-                            rate=RATE,
-                            output=True)
-            try:
-                for data in self.sample(sample_rate=RATE / time_unit,
-                                        chunk_size=CHUNK):
-                    lim = np.abs(data).max()
-                    if lim > 0 and dynamic_volume > 1.0 / lim:
-                        dynamic_volume = 1.0 / lim
-                        amp = 2**15 * 0.99 * volume * dynamic_volume
-                    data = (amp * data).astype(np.int16)
-                    stream.write(bytes(data.data))
-            finally:
-                stream.stop_stream()
-                stream.close()
-        finally:
-            p.terminate()
-
-    def play(self, time_unit=1, volume=1.0):
-        import multiprocessing as mp
-        p = mp.Process(target=self._play,
-                       args=(time_unit, volume),
-                       daemon=True)
-        p.start()
-
-
-class WaveVStack(Waveform):
-
-    def __init__(self, wlist: list[Waveform] = []):
-        self.wlist = [(w.bounds, w.seq) for w in wlist]
+            events = []
+            for wav in wlist:
+                if not isinstance(wav, Waveform):
+                    raise TypeError("WaveVStack accepts Waveform objects")
+                events.append((wav._core, wav._delay, wav._scale))
+            self._stack = PackedStack.from_events(events)
         self.start = None
         self.stop = None
         self.sample_rate = None
@@ -648,889 +416,535 @@ class WaveVStack(Waveform):
         self.label = None
         self.function_lib = None
 
-    def __begin(self):
-        if self.wlist:
-            v = [self._begin(bounds, seq) for bounds, seq in self.wlist]
-            return min(v)
-        else:
-            return -inf
+    @classmethod
+    def _from_stack(cls, stack):
+        result = cls()
+        result._stack = stack
+        return result
 
-    def __end(self):
-        if self.wlist:
-            v = [self._end(bounds, seq) for bounds, seq in self.wlist]
-            return max(v)
-        else:
-            return inf
+    @property
+    def wlist(self):
+        return [Waveform._from_core(core, delay, scale)
+                for core, delay, scale in self._stack.events()]
 
     @property
     def begin(self):
-        if self.start is None:
-            return self.__begin()
+        events = self._stack.events()
+        if events:
+            value = min(Waveform._from_core(core, delay + self.shift, scale).begin
+                        for core, delay, scale in events)
         else:
-            return max(self.start, self.__begin())
+            value = -inf
+        return value if self.start is None else max(self.start, value)
 
     @property
     def end(self):
-        if self.stop is None:
-            return self.__end()
+        events = self._stack.events()
+        if events:
+            value = max(Waveform._from_core(core, delay + self.shift, scale).end
+                        for core, delay, scale in events)
         else:
-            return min(self.stop, self.__end())
+            value = inf
+        return value if self.stop is None else min(self.stop, value)
 
-    def __call__(self, x, frag=False, out=None, function_lib=None):
-        assert frag is False, 'WaveVStack does not support frag mode'
-        out = np.full_like(x, self.offset, dtype=np.complex128)
-        out = cast(NDArray[np.complex128], out)
-        if self.shift != 0:
-            x = x - self.shift
-        if function_lib is None:
-            if self.function_lib is None:
-                function_lib = _baseFunc
+    def __call__(self, x, frag=False, out=None, accumulate=False,
+                 function_lib=None):
+        if frag:
+            raise AssertionError("WaveVStack does not support frag mode")
+        if function_lib is not None or self.function_lib is not None:
+            raise NotImplementedError("custom waveform functions are not supported")
+        scalar = isinstance(x, (int, float, complex, np.number))
+        values = self._stack.evaluate(
+            np.asarray([x]) if scalar else np.asarray(x), self.offset, self.shift
+        )
+        if out is not None:
+            if accumulate:
+                out[...] += values
             else:
-                function_lib = self.function_lib
-        for bounds, seq in self.wlist:
-            parts, dtype = calc_parts(bounds, seq, x, function_lib)
-            self._fill_parts(parts, out)
-        return out.real
+                out[...] = values
+            values = out
+        return values[0] if scalar else values
 
-    def tolist(self):
-        l = [
-            self.start,
-            self.stop,
-            self.offset,
-            self.shift,
-            self.sample_rate,
-        ]
-        if self.filters is None:
-            l.append(None)
-        else:
-            sos, initial = self.filters
-            sos = list(sos.reshape(-1))
-            l.append(len(sos))
-            l.extend(sos)
-            l.append(initial)
-        l.append(len(self.wlist))
-        for bounds, seq in self.wlist:
-            self._tolist(bounds, seq, l)
-        return l
+    def to_bytes(self):
+        if self.shift == 0 and self.offset == 0:
+            return self._stack.to_bytes()
+        events = [(core, quantize_time(delay + self.shift), scale)
+                  for core, delay, scale in self._stack.events()]
+        if self.offset != 0:
+            events.append((constant(self.offset), 0.0, 1.0))
+        return PackedStack.from_events(events).to_bytes()
 
     @classmethod
-    def fromlist(cls, l):
-        w = cls()
-        pos = 6
-        w.start, w.stop, w.offset, w.shift, w.sample_rate, sos_size = l[:pos]
-        if sos_size is not None:
-            sos = np.array(l[pos:pos + sos_size]).reshape(-1, 6)
-            pos += sos_size
-            initial = l[pos]
-            pos += 1
-            w.filters = sos, initial
-        n = l[pos]
-        pos += 1
-        for _ in range(n):
-            bounds, seq, pos = cls._fromlist(l, pos)
-            w.wlist.append((bounds, seq))
-        return w
+    def from_bytes(cls, data):
+        return cls._from_stack(PackedStack.from_bytes(data))
 
     def simplify(self, eps=1e-15):
-        if not self.wlist:
-            return zero()
-        bounds, seq = wave_sum(self.wlist)
-        wav = Waveform(bounds=bounds, seq=seq)
-        if self.offset != 0:
-            wav += self.offset
-        if self.shift != 0:
-            wav >>= self.shift
-        wav = wav.simplify(eps)
-        wav.start = self.start
-        wav.stop = self.stop
-        wav.sample_rate = self.sample_rate
-        wav.filters = self.filters
-        wav.label = self.label
-        return wav
-
-    @staticmethod
-    def _rshift(wlist, time):
-        if time == 0:
-            return wlist
-        return [(tuple(round(bound + time, NDIGITS) for bound in bounds),
-                 tuple(shift(expr, time) for expr in seq))
-                for bounds, seq in wlist]
+        wav = Waveform._from_core(
+            self._stack.simplified(self.shift, self.offset, eps)
+        )
+        return _copy_sampling_metadata(self, wav)
 
     def __rshift__(self, time):
-        ret = WaveVStack()
-        ret.wlist = self.wlist
-        ret.sample_rate = self.sample_rate
-        ret.start = self.start
-        ret.stop = self.stop
-        ret.shift = self.shift + time
-        ret.offset = self.offset
-        ret.filters = self.filters
-        ret.label = self.label
-        return ret
+        result = self._from_stack(self._stack)
+        _copy_sampling_metadata(self, result)
+        result.offset = self.offset
+        result.shift = quantize_time(self.shift + time)
+        return result
 
-    def __add__(self, other) -> WaveVStack:
-        ret = WaveVStack()
-        ret.wlist.extend(self.wlist)
+    def __lshift__(self, time):
+        return self >> -time
+
+    def __add__(self, other):
         if isinstance(other, WaveVStack):
-            if other.shift != self.shift:
-                ret.wlist = self._rshift(ret.wlist, self.shift)
-                ret.wlist.extend(self._rshift(other.wlist, other.shift))
-            else:
-                ret.wlist.extend(other.wlist)
-            ret.offset = self.offset + other.offset
+            left = [(core, delay + self.shift, scale)
+                    for core, delay, scale in self._stack.events()]
+            right = [(core, delay + other.shift, scale)
+                     for core, delay, scale in other._stack.events()]
+            result = self._from_stack(PackedStack.from_events((*left, *right)))
+            result.offset = self.offset + other.offset
         elif isinstance(other, Waveform):
-            other <<= self.shift
-            ret.wlist.append((other.bounds, other.seq))
+            events = [*self._stack.events(),
+                      (other._core, other._delay - self.shift, other._scale)]
+            result = self._from_stack(PackedStack.from_events(events))
+            result.offset = self.offset
+            result.shift = self.shift
         else:
-            # ret.wlist.append(((+inf, ), (_const(1.0 * other), )))
-            ret.offset += other
-        ret.filters = self.filters
-        ret.label = self.label
-        return ret
+            result = self._from_stack(self._stack)
+            result.offset = self.offset + other
+            result.shift = self.shift
+        result.filters = self.filters
+        result.label = self.label
+        return result
 
-    def __radd__(self, v) -> WaveVStack:
-        return self + v
+    def __radd__(self, value):
+        return self + value
 
-    def __mul__(self, other) -> WaveVStack:
-        if isinstance(other, Waveform):
-            other = other.simplify() << self.shift
-            ret = WaveVStack([Waveform(*w) * other for w in self.wlist])
-            if self.offset != 0:
-                w = other * self.offset
-                ret.wlist.append((w.bounds, w.seq))
-            ret.filters = self.filters
-            ret.label = self.label
-            return ret
-        else:
-            ret = WaveVStack([Waveform(*w) * other for w in self.wlist])
-            ret.offset = self.offset * other
-            ret.filters = self.filters
-            ret.label = self.label
-            return ret
+    def __sub__(self, other):
+        return self + (-other)
 
-    def __rmul__(self, v) -> WaveVStack:
-        return self * v
+    def __rsub__(self, value):
+        return (-self) + value
 
-    def __eq__(self, other) -> bool:
-        if self.wlist:
-            return False
-        else:
-            return zero() == other
+    def __mul__(self, other):
+        if not isinstance(other, Waveform):
+            result = self._from_stack(self._stack.scaled(other))
+            result.offset = self.offset * other
+            result.shift = self.shift
+            result.filters = self.filters
+            result.label = self.label
+            return result
+
+        waves = [Waveform._from_core(core, delay + self.shift, scale) * other
+                 for core, delay, scale in self._stack.events()]
+        if self.offset != 0:
+            waves.append(self.offset * other)
+        result = WaveVStack(waves)
+        result.filters = self.filters
+        result.label = self.label
+        return result
+
+    def __rmul__(self, value):
+        return self * value
+
+    def __truediv__(self, other):
+        if isinstance(other, (Waveform, WaveVStack)):
+            raise TypeError("division by waveform")
+        return self * (1 / other)
+
+    def __neg__(self):
+        return self * -1
+
+    def __pow__(self, n):
+        return self.simplify() ** n
+
+    def filter(self, low=0, high=inf, eps=1e-15):
+        return self.simplify(eps).filter(low, high, eps)
+
+    @property
+    def marker(self):
+        return self.simplify().marker
+
+    def mask(self, edge=0):
+        return self.simplify().mask(edge)
+
+    def __or__(self, other):
+        return self.simplify() | other
+
+    def __and__(self, other):
+        return self.simplify() & other
+
+    def __eq__(self, other):
+        if self is other:
+            return True
+        if isinstance(other, WaveVStack):
+            return self.simplify() == other.simplify()
+        return self.simplify() == other
+
+    __hash__ = None
+
+    def __repr__(self):
+        return (f"WaveVStack(events={len(self._stack.events())}, "
+                f"bytes={len(self.to_bytes())})")
 
     def _repr_latex_(self):
-        return r"\sum_{i=1}^{" + f"{len(self.wlist)}" + r"}" + r"f_i(t)"
+        return rf"\sum_{{i=1}}^{{{len(self._stack.events())}}}f_i(t)"
 
-    def __getstate__(self) -> tuple:
-        function_lib = self.function_lib
-        if function_lib:
-            try:
-                import dill
-                function_lib = dill.dumps(function_lib)
-            except:
-                function_lib = None
-        return (self.wlist, self.start, self.stop, self.sample_rate,
-                self.offset, self.shift, self.filters, self.label,
-                function_lib)
+    def __getstate__(self):
+        return (self._stack.to_bytes(), self.start, self.stop,
+                self.sample_rate, self.offset, self.shift, self.filters,
+                self.label)
 
-    def __setstate__(self, state: tuple) -> None:
-        (self.wlist, self.start, self.stop, self.sample_rate, self.offset,
-         self.shift, self.filters, self.label, function_lib) = state
-        if function_lib:
-            try:
-                import dill
-                function_lib = dill.loads(function_lib)
-            except:
-                function_lib = None
-        self.function_lib = function_lib
-
-
-def play(data, rate=48000):
-    import io
-
-    import pyaudio
-
-    CHUNK = 1024
-
-    max_amp = np.max(np.abs(data))
-
-    if max_amp > 1:
-        data /= max_amp
-
-    data = np.array(2**15 * 0.999 * data, dtype=np.int16)
-    buff = io.BytesIO(data.data)
-    p = pyaudio.PyAudio()
-
-    try:
-        stream = p.open(format=pyaudio.paInt16,
-                        channels=1,
-                        rate=rate,
-                        output=True)
-        try:
-            while True:
-                data = buff.read(CHUNK)
-                if data:
-                    stream.write(data)
-                else:
-                    break
-        finally:
-            stream.stop_stream()
-            stream.close()
-    finally:
-        p.terminate()
-
-
-_zero_waveform = Waveform()
-_one_waveform = Waveform(seq=(_one, ))
+    def __setstate__(self, state):
+        (data, self.start, self.stop, self.sample_rate, self.offset,
+         self.shift, self.filters, self.label) = state
+        self._stack = PackedStack.from_bytes(data)
+        self.function_lib = None
 
 
 def zero():
-    return _zero_waveform
+    return Waveform._from_core(constant(0))
 
 
 def one():
-    return _one_waveform
+    return Waveform._from_core(constant(1.0))
 
 
-def const(c):
-    return Waveform(seq=(_const(1.0 * c), ))
+def const(value):
+    return Waveform._from_core(constant(value))
 
 
-# register base function
-def _format_LINEAR(shift, *args):
-    if shift != 0:
-        shift = _num_latex(-shift)
-        if shift[0] == '-':
-            return f"(t{shift})"
-        else:
-            return f"(t+{shift})"
-    else:
-        return 't'
-
-
-def _format_GAUSSIAN(shift, *args):
-    sigma = _num_latex(args[0] / np.sqrt(2))
-    shift = _num_latex(-shift)
-    if shift != '0':
-        if shift[0] != '-':
-            shift = '+' + shift
-        if sigma == '1':
-            return ('\\exp\\left[-\\frac{\\left(t' + shift +
-                    '\\right)^2}{2}\\right]')
-        else:
-            return ('\\exp\\left[-\\frac{1}{2}\\left(\\frac{t' + shift + '}{' +
-                    sigma + '}\\right)^2\\right]')
-    else:
-        if sigma == '1':
-            return ('\\exp\\left(-\\frac{t^2}{2}\\right)')
-        else:
-            return ('\\exp\\left[-\\frac{1}{2}\\left(\\frac{t}{' + sigma +
-                    '}\\right)^2\\right]')
-
-
-def _format_SINC(shift, *args):
-    shift = _num_latex(-shift)
-    bw = _num_latex(args[0])
-    if shift != '0':
-        if shift[0] != '-':
-            shift = '+' + shift
-        if bw == '1':
-            return '\\mathrm{sinc}(t' + shift + ')'
-        else:
-            return '\\mathrm{sinc}[' + bw + '(t' + shift + ')]'
-    else:
-        if bw == '1':
-            return '\\mathrm{sinc}(t)'
-        else:
-            return '\\mathrm{sinc}(' + bw + 't)'
-
-
-def _format_COSINE(shift, *args):
-    freq = args[0] / 2 / np.pi
-    phase = -shift * freq
-    freq = _num_latex(freq)
-    if freq == '1':
-        freq = ''
-    phase = _num_latex(phase)
-    if phase == '0':
-        phase = ''
-    elif phase[0] != '-':
-        phase = '+' + phase
-    if phase != '':
-        return f'\\cos\\left[2\\pi\\left({freq}t{phase}\\right)\\right]'
-    elif freq != '':
-        return f'\\cos\\left(2\\pi\\times {freq}t\\right)'
-    else:
-        return '\\cos\\left(2\\pi t\\right)'
-
-
-def _format_ERF(shift, *args):
-    if shift > 0:
-        return '\\mathrm{erf}(\\frac{t-' + f"{_num_latex(shift)}" + '}{' + f'{args[0]:g}' + '})'
-    elif shift < 0:
-        return '\\mathrm{erf}(\\frac{t+' + f"{_num_latex(-shift)}" + '}{' + f'{args[0]:g}' + '})'
-    else:
-        return '\\mathrm{erf}(\\frac{t}{' + f'{args[0]:g}' + '})'
-
-
-def _format_COSH(shift, *args):
-    if shift > 0:
-        return '\\cosh(\\frac{t-' + f"{_num_latex(shift)}" + '}{' + f'{1/args[0]:g}' + '})'
-    elif shift < 0:
-        return '\\cosh(\\frac{t+' + f"{_num_latex(-shift)}" + '}{' + f'{1/args[0]:g}' + '})'
-    else:
-        return '\\cosh(\\frac{t}{' + f'{1/args[0]:g}' + '})'
-
-
-def _format_SINH(shift, *args):
-    if shift > 0:
-        return '\\sinh(\\frac{t-' + f"{_num_latex(shift)}" + '}{' + f'{args[0]:g}' + '})'
-    elif shift < 0:
-        return '\\sinh(\\frac{t+' + f"{_num_latex(-shift)}" + '}{' + f'{args[0]:g}' + '})'
-    else:
-        return '\\sinh(\\frac{t}{' + f'{args[0]:g}' + '})'
-
-
-def _format_EXP(shift, *args):
-    if _num_latex(shift) and shift > 0:
-        return '\\exp\\left(-' + f'{args[0]:g}' + '\\left(t-' + f"{_num_latex(shift)}" + '\\right)\\right)'
-    elif _num_latex(-shift) and shift < 0:
-        return '\\exp\\left(-' + f'{args[0]:g}' + '\\left(t+' + f"{_num_latex(-shift)}" + '\\right)\\right)'
-    else:
-        return '\\exp\\left(-' + f'{args[0]:g}' + 't\\right)'
-
-
-def _format_DRAG(shift, *args):
-    return f"DRAG(...)"
-
-
-def _format_MOLLIFIER(shift, *args):
-    r = _num_latex(args[0])
-    d = _num_latex(args[1])
-    shift_str = _num_latex(-shift)
-    if shift_str == '0':
-        shift_str = ''
-    elif shift_str[0] != '-':
-        shift_str = '+' + shift_str
-
-    if d == '0':
-        return f"\\mathrm{{Mollifier}}\\left(t{shift_str}, r={r}\\right)"
-    elif d == '1':
-        return f"\\mathrm{{Mollifier}}'\\left(t{shift_str}, r={r}\\right)"
-    elif d == '2':
-        return f"\\mathrm{{Mollifier}}''\\left(t{shift_str}, r={r}\\right)"
-    else:
-        return f"\\mathrm{{Mollifier}}^{{({d})}}\\left(t{shift_str}, r={r}\\right)"
-
-
-def _format_D_GAUSSIAN(shift, *args):
-    sigma = _num_latex(args[0] / np.sqrt(2))
-    d = args[1]
-    shift_str = _num_latex(-shift)
-    if shift_str == '0':
-        shift_str = ''
-    elif shift_str[0] != '-':
-        shift_str = '+' + shift_str
-
-    if d == 0:
-        return f"\\mathrm{{Gaussian}}\\left(t{shift_str}, \\sigma={sigma}\\right)"
-    elif d == 1:
-        return f"\\frac{{\\mathrm{{d}}}}{{\\mathrm{{d}}t}}\\mathrm{{Gaussian}}\\left(t{shift_str}, \\sigma={sigma}\\right)"
-    else:
-        return f"\\frac{{\\mathrm{{d}}^{{{d}}}}}{{\\mathrm{{d}}t^{{{d}}}}}\\mathrm{{Gaussian}}\\left(t{shift_str}, \\sigma={sigma}\\right)"
-
-
-registerBaseFuncLatex(LINEAR, _format_LINEAR)
-registerBaseFuncLatex(GAUSSIAN, _format_GAUSSIAN)
-registerBaseFuncLatex(ERF, _format_ERF)
-registerBaseFuncLatex(COS, _format_COSINE)
-registerBaseFuncLatex(SINC, _format_SINC)
-registerBaseFuncLatex(EXP, _format_EXP)
-registerBaseFuncLatex(COSH, _format_COSH)
-registerBaseFuncLatex(SINH, _format_SINH)
-registerBaseFuncLatex(DRAG, _format_DRAG)
-registerBaseFuncLatex(MOLLIFIER, _format_MOLLIFIER)
-registerBaseFuncLatex(D_GAUSSIAN, _format_D_GAUSSIAN)
-
-
-def D(wav: Waveform, d: int = 1) -> Waveform:
-    """derivative
-
-    Parameters
-    ----------
-    wav : Waveform
-        The waveform to take the derivative of.
-    d : int, optional
-        The order of the derivative, by default 1.
-    """
-    assert d >= 0 and isinstance(d, int), "d must be a non-negative integer"
-    if d == 0:
-        return wav
-    elif d == 1:
-        return Waveform(bounds=wav.bounds, seq=tuple(_D(x) for x in wav.seq))
-    else:
-        return D(D(wav, d - 1), 1)
-
-
-def convolve(a, b):
-    pass
+def D(wav: Waveform, d: int = 1):
+    if not isinstance(wav, Waveform):
+        raise TypeError("D expects a Waveform")
+    if d < 0 or not isinstance(d, int):
+        raise ValueError("d must be a non-negative integer")
+    return Waveform._from_core(wav._materialized_core().derivative(d))
 
 
 def sign():
-    return Waveform(bounds=(0, +inf), seq=(_const(-1), _one))
+    return _piecewise((0, inf), -1, 1)
 
 
-def step(edge, type='erf'):
-    """
-    type: "erf", "cos", "linear"
-    """
+def step(edge, type="erf"):
     if edge == 0:
-        return Waveform(bounds=(0, +inf), seq=(_zero, _one))
-    if type == 'cos':
-        rise = add(_half,
-                   mul(_half, basic_wave(COS, pi / edge, shift=0.5 * edge)))
-        return Waveform(bounds=(round(-edge / 2,
-                                      NDIGITS), round(edge / 2,
-                                                      NDIGITS), +inf),
-                        seq=(_zero, rise, _one))
-    elif type == 'linear':
-        rise = add(_half, mul(_const(1 / edge), basic_wave(LINEAR)))
-        return Waveform(bounds=(round(-edge / 2,
-                                      NDIGITS), round(edge / 2,
-                                                      NDIGITS), +inf),
-                        seq=(_zero, rise, _one))
-    else:
-        std_sq2 = edge / 5
-        # rise = add(_half, mul(_half, basic_wave(ERF, std_sq2)))
-        rise = ((((), ()), (((ERF, std_sq2, 0), ), (1, ))), (0.5, 0.5))
-        return Waveform(bounds=(-round(edge, NDIGITS), round(edge,
-                                                             NDIGITS), +inf),
-                        seq=(_zero, rise, _one))
+        return _piecewise((0, inf), 0, 1)
+    if type == "cos":
+        rise = constant(0.5).add(
+            _scalar(COS, pi / edge, shift=0.5 * edge).scaled(0.5)
+        )
+        return _piecewise((-edge / 2, edge / 2, inf), 0, rise, 1)
+    if type == "linear":
+        rise = constant(0.5).add(_scalar(LINEAR).scaled(1 / edge))
+        return _piecewise((-edge / 2, edge / 2, inf), 0, rise, 1)
+    rise = constant(0.5).add(_scalar(ERF, edge / 5).scaled(0.5))
+    return _piecewise((-edge, edge, inf), 0, rise, 1)
 
 
-def square(width: float, edge: float = 0, type: str = 'erf') -> Waveform:
+def square(width, edge=0, type="erf"):
     if width <= 0:
         return zero()
     if edge == 0:
-        return Waveform(bounds=(round(-0.5 * width,
-                                      NDIGITS), round(0.5 * width,
-                                                      NDIGITS), +inf),
-                        seq=(_zero, _one, _zero))
-    else:
-        return ((step(edge, type=type) << width / 2) -
-                (step(edge, type=type) >> width / 2))
+        return _piecewise((-width / 2, width / 2, inf), 0, 1, 0)
+    return (step(edge, type=type) << width / 2) - (step(edge, type=type) >> width / 2)
 
 
-def gaussian(width: float,
-             plateau: float = 0.0,
-             d: int | None = None) -> Waveform:
-    if width <= 0 and plateau <= 0.0:
+def gaussian(width, plateau=0.0, d=None):
+    if width <= 0 and plateau <= 0:
         return zero()
-    # width is two times FWHM
-    # std_sq2 = width / (4 * np.sqrt(np.log(2)))
     std_sq2 = width / 3.3302184446307908
-    # std is set to give total pulse area same as a square
-    # std_sq2 = width/np.sqrt(np.pi)
-    if d is None:
-        base = lambda shift: basic_wave(GAUSSIAN, std_sq2, shift=shift)
-    else:
-        base = lambda shift: basic_wave(D_GAUSSIAN, std_sq2, d, shift=shift)
+    opcode = GAUSSIAN if d is None else D_GAUSSIAN
 
-    if round(0.5 * plateau, NDIGITS) <= 0.0:
-        return Waveform(bounds=(round(-0.75 * width,
-                                      NDIGITS), round(0.75 * width,
-                                                      NDIGITS), +inf),
-                        seq=(_zero, base(0), _zero))
-    else:
-        return Waveform(bounds=(round(-0.75 * width - 0.5 * plateau,
-                                      NDIGITS), round(-0.5 * plateau, NDIGITS),
-                                round(0.5 * plateau, NDIGITS),
-                                round(0.75 * width + 0.5 * plateau,
-                                      NDIGITS), +inf),
-                        seq=(_zero, base(-0.5 * plateau), _one,
-                             base(0.5 * plateau), _zero))
+    def base(shift):
+        args = (std_sq2,) if d is None else (std_sq2, d)
+        return _scalar(opcode, *args, shift=shift)
+
+    if quantize_time(plateau / 2) <= 0:
+        return _piecewise((-0.75 * width, 0.75 * width, inf), 0, base(0), 0)
+    return _piecewise(
+        (-0.75 * width - plateau / 2, -plateau / 2, plateau / 2,
+         0.75 * width + plateau / 2, inf),
+        0, base(-plateau / 2), 1, base(plateau / 2), 0,
+    )
 
 
-def cos(w: float, phi: float = 0) -> Waveform:
+def cos(w, phi=0):
     if w == 0:
         return const(np.cos(phi))
     if w < 0:
         phi = -phi
         w = -w
-    return Waveform(seq=(basic_wave(COS, w, shift=-phi / w), ))
+    return Waveform._from_core(_scalar(COS, w, shift=-phi / w))
 
 
-def sin(w: float, phi: float = 0) -> Waveform:
+def sin(w, phi=0):
     if w == 0:
         return const(np.sin(phi))
     if w < 0:
         phi = -phi + pi
         w = -w
-    return Waveform(seq=(basic_wave(COS, w, shift=(pi / 2 - phi) / w), ))
+    return Waveform._from_core(_scalar(COS, w, shift=(pi / 2 - phi) / w))
 
 
-def exp(alpha: float | complex) -> Waveform:
-    if isinstance(alpha, complex):
-        if alpha.real == 0:
-            return cos(alpha.imag) + 1j * sin(alpha.imag)
-        else:
-            return exp(alpha.real) * (cos(alpha.imag) + 1j * sin(alpha.imag))
-    else:
-        return Waveform(seq=(basic_wave(EXP, alpha), ))
+def exp(alpha):
+    if np.iscomplexobj(alpha):
+        alpha = complex(alpha)
+        carrier = cos(alpha.imag) + 1j * sin(alpha.imag)
+        return carrier if alpha.real == 0 else exp(alpha.real) * carrier
+    return Waveform._from_core(_scalar(EXP, alpha))
 
 
-def sinc(bw: float) -> Waveform:
+def sinc(bw):
     if bw <= 0:
         return zero()
     width = 100 / bw
-    return Waveform(bounds=(round(-0.5 * width,
-                                  NDIGITS), round(0.5 * width, NDIGITS), +inf),
-                    seq=(_zero, basic_wave(SINC, bw), _zero))
+    return _piecewise((-width / 2, width / 2, inf), 0, _scalar(SINC, bw), 0)
 
 
-def cosPulse(width: float, plateau: float = 0.0) -> Waveform:
-    # cos = basic_wave(COS, 2*np.pi/width)
-    # pulse = mul(add(cos, _one), _half)
-    if round(0.5 * plateau, NDIGITS) > 0:
-        return square(plateau + 0.5 * width, edge=0.5 * width, type='cos')
+def cosPulse(width, plateau=0.0):
+    if quantize_time(plateau / 2) > 0:
+        return square(plateau + width / 2, edge=width / 2, type="cos")
     if width <= 0:
         return zero()
-    pulse = ((((), ()), (((COS, 6.283185307179586 / width, 0), ), (1, ))),
-             (0.5, 0.5))
-    return Waveform(bounds=(round(-0.5 * width,
-                                  NDIGITS), round(0.5 * width, NDIGITS), +inf),
-                    seq=(_zero, pulse, _zero))
+    pulse = constant(0.5).add(
+        _scalar(COS, 2 * pi / width).scaled(0.5)
+    )
+    return _piecewise((-width / 2, width / 2, inf), 0, pulse, 0)
 
 
-def hanning(width: float, plateau: float = 0.0) -> Waveform:
-    return cosPulse(width, plateau=plateau)
+def hanning(width, plateau=0.0):
+    return cosPulse(width, plateau)
 
 
-def cosh(w: float) -> Waveform:
-    return Waveform(seq=(basic_wave(COSH, w), ))
+def cosh(w):
+    return Waveform._from_core(_scalar(COSH, w))
 
 
-def sinh(w: float) -> Waveform:
-    return Waveform(seq=(basic_wave(SINH, w), ))
+def sinh(w):
+    return Waveform._from_core(_scalar(SINH, w))
 
 
-def coshPulse(width: float,
-              eps: float = 1.0,
-              plateau: float = 0.0) -> Waveform:
-    """Cosine hyperbolic pulse with the following im
-
-    pulse edge shape:
-            cosh(eps / 2) - cosh(eps * t / T)
-    f(t) = -----------------------------------
-                  cosh(eps / 2) - 1
-    where T is the pulse width and eps is the pulse edge steepness.
-    The pulse is defined for t in [-T/2, T/2].
-
-    In case of plateau > 0, the pulse is defined as:
-           | f(t + plateau/2)   if t in [-T/2 - plateau/2, - plateau/2]
-    g(t) = | 1                  if t in [-plateau/2, plateau/2]
-           | f(t - plateau/2)   if t in [plateau/2, T/2 + plateau/2]
-
-    Parameters
-    ----------
-    width : float
-        Pulse width.
-    eps : float
-        Pulse edge steepness.
-    plateau : float
-        Pulse plateau.
-    """
+def coshPulse(width, eps=1.0, plateau=0.0):
     if width <= 0 and plateau <= 0:
         return zero()
     w = eps / width
-    A = np.cosh(eps / 2)
+    amplitude = np.cosh(eps / 2)
+    scale = -1 / (amplitude - 1)
 
-    if plateau == 0.0 or round(-0.5 * plateau, NDIGITS) == round(
-            0.5 * plateau, NDIGITS):
-        pulse = ((((), ()), (((COSH, w, 0), ), (1, ))), (A / (A - 1),
-                                                         -1 / (A - 1)))
-        return Waveform(bounds=(round(-0.5 * width,
-                                      NDIGITS), round(0.5 * width,
-                                                      NDIGITS), +inf),
-                        seq=(_zero, pulse, _zero))
-    else:
-        raising = ((((), ()), (((COSH, w, -0.5 * plateau), ), (1, ))),
-                   (A / (A - 1), -1 / (A - 1)))
-        falling = ((((), ()), (((COSH, w, 0.5 * plateau), ), (1, ))),
-                   (A / (A - 1), -1 / (A - 1)))
-        return Waveform(bounds=(round(-0.5 * width - 0.5 * plateau,
-                                      NDIGITS), round(-0.5 * plateau, NDIGITS),
-                                round(0.5 * plateau, NDIGITS),
-                                round(0.5 * width + 0.5 * plateau,
-                                      NDIGITS), +inf),
-                        seq=(_zero, raising, _one, falling, _zero))
+    def edge(shift):
+        return constant(amplitude / (amplitude - 1)).add(
+            _scalar(COSH, w, shift=shift).scaled(scale)
+        )
+
+    if plateau == 0 or quantize_time(-plateau / 2) == quantize_time(plateau / 2):
+        return _piecewise((-width / 2, width / 2, inf), 0, edge(0), 0)
+    return _piecewise(
+        (-width / 2 - plateau / 2, -plateau / 2, plateau / 2,
+         width / 2 + plateau / 2, inf),
+        0, edge(-plateau / 2), 1, edge(plateau / 2), 0,
+    )
 
 
-def general_cosine(duration: float, *arg: float) -> Waveform:
+def general_cosine(duration, *arg):
+    coefficients = np.asarray(arg, dtype=float)
+    if not len(coefficients):
+        return zero()
+    coefficients = coefficients / coefficients[::2].sum()
     wav = zero()
-    arg_ = np.asarray(arg)
-    arg_ /= arg_[::2].sum()
-    for i, a in enumerate(arg_, start=1):
-        wav += a / 2 * (1 - (-1)**i * cos(i * 2 * pi / duration))
+    for index, coefficient in enumerate(coefficients, start=1):
+        wav += coefficient / 2 * (
+            1 - (-1) ** index * cos(index * 2 * pi / duration)
+        )
     return wav * square(duration)
 
 
-def slepian(duration: float, *arg: float) -> Waveform:
-    wav = zero()
-    arg_ = np.asarray(arg)
-    arg_ /= arg_[::2].sum()
-    for i, a in enumerate(arg_, start=1):
-        wav += a / 2 * (1 - (-1)**i * cos(i * 2 * pi / duration))
-    return wav * square(duration)
+def slepian(duration, *arg):
+    return general_cosine(duration, *arg)
 
 
-def mollifier(width: float, plateau: float = 0.0, d: int = 0) -> Waveform:
-    """
-    Mollifier function is a smooth function that is 1 at the origin and 0 outside a certain radius.
-    It is defined as:
-
-    f(x) = exp(1 / ((x / r) ^ 2 - 1) + 1)  in case |x| < r
-         = 0                           in case |x| >= r
-    where r = width / 2 is the radius of the mollifier.
-
-    The parameter plateau is the width of the plateau.
-    The parameter d is the order of the derivative.
-    """
-    assert d >= 0 and isinstance(d, int), "d must be a non-negative integer"
-    assert width > 0, "width must be positive"
-
+def mollifier(width, plateau=0.0, d=0):
+    if d < 0 or not isinstance(d, int):
+        raise ValueError("d must be a non-negative integer")
+    if width <= 0:
+        raise ValueError("width must be positive")
     if plateau <= 0:
-        return Waveform(bounds=(-0.5 * width, 0.5 * width, inf),
-                        seq=(_zero, basic_wave(MOLLIFIER, width / 2,
-                                               d), _zero))
-    else:
-        return Waveform(bounds=(-0.5 * width - 0.5 * plateau, -0.5 * plateau,
-                                0.5 * plateau, 0.5 * width + 0.5 * plateau,
-                                inf),
-                        seq=(_zero,
-                             basic_wave(MOLLIFIER,
-                                        width / 2,
-                                        d,
-                                        shift=-0.5 * plateau), _one,
-                             basic_wave(MOLLIFIER,
-                                        width / 2,
-                                        d,
-                                        shift=0.5 * plateau), _zero))
-
-
-def _poly(*a):
-    """
-    a[0] + a[1] * t + a[2] * t**2 + ...
-    """
-    t = []
-    amp = []
-    if a[0] != 0:
-        t.append(((), ()))
-        amp.append(a[0])
-    for n, a_ in enumerate(a[1:], start=1):
-        if a_ != 0:
-            t.append((((LINEAR, 0), ), (n, )))
-            amp.append(a_)
-    return tuple(t), tuple(a)
+        return _piecewise((-width / 2, width / 2, inf), 0,
+                          _scalar(MOLLIFIER, width / 2, d), 0)
+    return _piecewise(
+        (-width / 2 - plateau / 2, -plateau / 2, plateau / 2,
+         width / 2 + plateau / 2, inf),
+        0, _scalar(MOLLIFIER, width / 2, d, shift=-plateau / 2), 1,
+        _scalar(MOLLIFIER, width / 2, d, shift=plateau / 2), 0,
+    )
 
 
 def poly(a):
-    """
-    a[0] + a[1] * t + a[2] * t**2 + ...
-    """
-    return Waveform(seq=(_poly(*a), ))
+    wav = zero()
+    variable = t()
+    for degree, coefficient in enumerate(a):
+        if coefficient:
+            wav += coefficient if degree == 0 else coefficient * variable ** degree
+    return wav
 
 
 def t():
-    return Waveform(seq=((((LINEAR, 0), ), (1, )), (1, )))
+    return Waveform._from_core(_scalar(LINEAR))
 
 
-def drag(freq: float,
-         width: float,
-         plateau: float = 0,
-         delta: float = 0,
-         block_freq: float | None = None,
-         phase: float = 0,
-         t0: float = 0) -> Waveform:
+def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
     phase += pi * delta * (width + plateau)
     if plateau <= 0:
-        return Waveform(seq=(_zero,
-                             basic_wave(DRAG, t0, freq, width, delta,
-                                        block_freq, phase), _zero),
-                        bounds=(round(t0, NDIGITS), round(t0 + width,
-                                                          NDIGITS), +inf))
-    elif width <= 0:
+        return _piecewise(
+            (t0, t0 + width, inf), 0,
+            _scalar(DRAG, t0, freq, width, delta, block_freq, phase), 0,
+        )
+    if width <= 0:
         w = 2 * pi * (freq + delta)
-        return Waveform(
-            seq=(_zero,
-                 basic_wave(COS, w,
-                            shift=(phase + 2 * pi * delta * t0) / w), _zero),
-            bounds=(round(t0, NDIGITS), round(t0 + plateau, NDIGITS), +inf))
-    else:
-        w = 2 * pi * (freq + delta)
-        return Waveform(
-            seq=(_zero,
-                 basic_wave(DRAG, t0, freq, width, delta, block_freq, phase),
-                 basic_wave(COS, w, shift=(phase + 2 * pi * delta * t0) / w),
-                 basic_wave(DRAG, t0 + plateau, freq, width, delta, block_freq,
-                            phase - 2 * pi * delta * plateau), _zero),
-            bounds=(round(t0, NDIGITS), round(t0 + width / 2, NDIGITS),
-                    round(t0 + width / 2 + plateau,
-                          NDIGITS), round(t0 + width + plateau,
-                                          NDIGITS), +inf))
+        carrier = _scalar(COS, w, shift=(phase + 2 * pi * delta * t0) / w)
+        return _piecewise((t0, t0 + plateau, inf), 0, carrier, 0)
+    w = 2 * pi * (freq + delta)
+    carrier = _scalar(COS, w, shift=(phase + 2 * pi * delta * t0) / w)
+    return _piecewise(
+        (t0, t0 + width / 2, t0 + width / 2 + plateau,
+         t0 + width + plateau, inf),
+        0, _scalar(DRAG, t0, freq, width, delta, block_freq, phase),
+        carrier,
+        _scalar(DRAG, t0 + plateau, freq, width, delta, block_freq,
+                phase - 2 * pi * delta * plateau), 0,
+    )
 
 
-def chirp(f0: float,
-          f1: float,
-          T: float,
-          phi0: float = 0,
-          type: str = 'linear') -> Waveform:
-    """
-    A chirp is a signal in which the frequency increases (up-chirp)
-    or decreases (down-chirp) with time. In some sources, the term
-    chirp is used interchangeably with sweep signal.
-
-    type: "linear", "exponential", "hyperbolic"
-    """
+def chirp(f0, f1, T, phi0=0, type="linear"):
     if f0 == f1:
         return sin(f0, phi0)
     if T <= 0:
-        raise ValueError('T must be positive')
-
-    if type == 'linear':
-        # f(t) = f1 * (t/T) + f0 * (1 - t/T)
-        return Waveform(bounds=(0, round(T, NDIGITS), +inf),
-                        seq=(_zero, basic_wave(LINEARCHIRP, f0, f1, T,
-                                               phi0), _zero))
-    elif type in ['exp', 'exponential', 'geometric']:
-        # f(t) = f0 * (f1/f0) ** (t/T)
+        raise ValueError("T must be positive")
+    if type == "linear":
+        core = _scalar(LINEARCHIRP, f0, f1, T, phi0)
+    elif type in ("exp", "exponential", "geometric"):
         if f0 == 0:
-            raise ValueError('f0 must be non-zero')
-        alpha = np.log(f1 / f0) / T
-        return Waveform(bounds=(0, round(T, NDIGITS), +inf),
-                        seq=(_zero,
-                             basic_wave(EXPONENTIALCHIRP, f0, alpha,
-                                        phi0), _zero))
-    elif type in ['hyperbolic', 'hyp']:
-        # f(t) = f0 * f1 / (f0 * (t/T) + f1 * (1-t/T))
+            raise ValueError("f0 must be non-zero")
+        core = _scalar(EXPONENTIALCHIRP, f0, np.log(f1 / f0) / T, phi0)
+    elif type in ("hyperbolic", "hyp"):
         if f0 * f1 == 0:
             return const(np.sin(phi0))
-        k = (f0 - f1) / (f1 * T)
-        return Waveform(bounds=(0, round(T, NDIGITS), +inf),
-                        seq=(_zero, basic_wave(HYPERBOLICCHIRP, f0, k,
-                                               phi0), _zero))
+        core = _scalar(HYPERBOLICCHIRP, f0, (f0 - f1) / (f1 * T), phi0)
     else:
-        raise ValueError(f'unknown type {type}')
+        raise ValueError(f"unknown type {type}")
+    return _piecewise((0, T, inf), 0, core, 0)
 
 
-def interp(x: NDArray[np.float64], y: NDArray[np.float64]) -> Waveform:
-    seq, bounds = [_zero], [x[0]]
+def interp(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y)
+    if x.ndim != 1 or y.ndim != 1 or len(x) != len(y) or len(x) == 0:
+        raise ValueError("x and y must be non-empty one-dimensional arrays of equal size")
+    bounds = [x[0]]
+    expressions = [0]
     for x1, x2, y1, y2 in zip(x[:-1], x[1:], y[:-1], y[1:]):
         if x2 == x1:
             continue
-        seq.append(
-            add(
-                mul(_const((y2 - y1) / (x2 - x1)), basic_wave(LINEAR,
-                                                              shift=x1)),
-                _const(y1)))
+        slope = (y2 - y1) / (x2 - x1)
+        expressions.append(
+            _scalar(LINEAR, shift=x1).scaled(slope).add(constant(y1))
+        )
         bounds.append(x2)
     bounds.append(inf)
-    seq.append(_zero)
-    return Waveform(seq=tuple(seq),
-                    bounds=tuple(round(b, NDIGITS)
-                                 for b in bounds)).simplify()
+    expressions.append(0)
+    return _piecewise(bounds, *expressions).simplify()
 
 
-def cut(wav: Waveform,
-        start: float | None = None,
-        stop: float | None = None,
-        head: float | None = None,
-        tail: float | None = None,
-        min: float | None = None,
-        max: float | None = None) -> Waveform:
+def cut(wav, start=None, stop=None, head=None, tail=None, min=None, max=None):
     offset = 0
     if start is not None and head is not None:
-        offset = head - cast(NDArray[np.float64], wav(np.array([1.0 * start
-                                                                ])))[0]
+        offset = head - wav(start)
     elif stop is not None and tail is not None:
-        offset = tail - cast(NDArray[np.float64], wav(np.array([1.0 * stop
-                                                                ])))[0]
-    wav = wav + offset
-
+        offset = tail - wav(stop)
+    result = wav + offset
     if start is not None:
-        wav = wav * (step(0) >> start)
+        result = result * (step(0) >> start)
     if stop is not None:
-        wav = wav * ((1 - step(0)) >> stop)
+        result = result * ((1 - step(0)) >> stop)
     if min is not None:
-        wav.min = min
+        result.min = min
     if max is not None:
-        wav.max = max
-    return wav
+        result.max = max
+    return result
 
 
 def function(fun, *args, start=None, stop=None):
-    TYPEID = registerBaseFunc(fun)
-    seq = (basic_wave(TYPEID, *args), )
-    wav = Waveform(seq=seq)
-    if start is not None:
-        wav = wav * (step(0) >> start)
-    if stop is not None:
-        wav = wav * ((1 - step(0)) >> stop)
-    return wav
+    raise NotImplementedError("custom waveform functions are not supported")
 
 
 def samplingPoints(start, stop, points):
-    return Waveform(bounds=(round(start, NDIGITS), round(stop, NDIGITS), inf),
-                    seq=(_zero, basic_wave(INTERP, start, stop,
-                                           tuple(points)), _zero))
+    core = _scalar(INTERP, start, stop, tuple(points))
+    return _piecewise((start, stop, inf), 0, core, 0)
 
 
-def mixing(I: Waveform,
-           Q: Waveform | None = None,
-           *,
-           phase: float = 0.0,
-           freq: float = 0.0,
-           ratioIQ: float = 1.0,
-           phaseDiff: float = 0.0,
-           block_freq: float | None = None,
-           DRAGScaling: float | None = None) -> tuple[Waveform, Waveform]:
-    """SSB or envelope mixing
-    """
+def mixing(I, Q=None, *, phase=0.0, freq=0.0, ratioIQ=1.0,
+           phaseDiff=0.0, block_freq=None, DRAGScaling=None):
     if Q is None:
-        I = I
         Q = zero()
-
     w = 2 * pi * freq
-    if freq != 0.0:
-        # SSB mixing
+    if freq != 0:
         Iout = I * cos(w, -phase) + Q * sin(w, -phase)
         Qout = -I * sin(w, -phase + phaseDiff) + Q * cos(w, -phase + phaseDiff)
     else:
-        # envelope mixing
-        Iout = cast(Waveform, I * np.cos(-phase) + Q * np.sin(-phase))
-        Qout = cast(Waveform, -I * np.sin(-phase) + Q * np.cos(-phase))
-
-    # apply DRAG
+        Iout = I * np.cos(-phase) + Q * np.sin(-phase)
+        Qout = -I * np.sin(-phase) + Q * np.cos(-phase)
     if block_freq is not None and block_freq != freq:
         a = block_freq / (block_freq - freq)
         b = 1 / (block_freq - freq)
-        I = a * Iout + b / (2 * pi) * D(Qout)
-        Q = a * Qout - b / (2 * pi) * D(Iout)
-        Iout, Qout = I, Q
+        Iout, Qout = (a * Iout + b / (2 * pi) * D(Qout),
+                      a * Qout - b / (2 * pi) * D(Iout))
     elif DRAGScaling is not None and DRAGScaling != 0:
-        # 2 * pi * scaling * (freq - block_freq) = 1
-        I = (1 - w * DRAGScaling) * Iout - DRAGScaling * D(Qout)
-        Q = (1 - w * DRAGScaling) * Qout + DRAGScaling * D(Iout)
-        Iout, Qout = I, Q
+        Iout, Qout = ((1 - w * DRAGScaling) * Iout - DRAGScaling * D(Qout),
+                      (1 - w * DRAGScaling) * Qout + DRAGScaling * D(Iout))
+    return Iout, ratioIQ * Qout
 
-    Qout = ratioIQ * Qout
 
-    return Iout, Qout
+def play(data, rate=48_000):
+    import io
+    import pyaudio
+
+    data = np.asarray(data)
+    maximum = np.max(np.abs(data))
+    if maximum > 1:
+        data = data / maximum
+    buffer = io.BytesIO(np.asarray(2**15 * 0.999 * data, dtype=np.int16).data)
+    audio = pyaudio.PyAudio()
+    try:
+        stream = audio.open(format=pyaudio.paInt16, channels=1,
+                            rate=rate, output=True)
+        try:
+            while block := buffer.read(1024):
+                stream.write(block)
+        finally:
+            stream.stop_stream()
+            stream.close()
+    finally:
+        audio.terminate()
+
+
+@lru_cache(maxsize=1024)
+def wave_eval(expr: str) -> Waveform:
+    """Parse an expression directly against the packed waveform backend."""
+    import sys
+
+    from .waveform_parser import WaveformParseError, parse_waveform_expression
+
+    try:
+        return parse_waveform_expression(expr, backend=sys.modules[__name__],
+                                         extra_modules=())
+    except WaveformParseError as exc:
+        raise SyntaxError(f"Failed to parse expression {expr!r}: {exc}") from exc
 
 
 __all__ = [
-    'D', 'Waveform', 'chirp', 'const', 'cos', 'cosh', 'coshPulse', 'cosPulse',
-    'cut', 'drag', 'exp', 'function', 'gaussian', 'general_cosine', 'hanning',
-    'interp', 'mixing', 'mollifier', 'one', 'poly', 'registerBaseFunc',
-    'registerDerivative', 'samplingPoints', 'sign', 'sin', 'sinc', 'sinh',
-    'square', 'step', 't', 'zero'
+    "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
+    "coshPulse", "cosPulse", "cut", "drag", "exp", "function",
+    "gaussian", "general_cosine", "get_time_resolution", "hanning",
+    "interp", "mixing", "mollifier", "one", "play", "poly",
+    "registerBaseFunc", "registerDerivative", "samplingPoints",
+    "set_time_resolution", "sign", "sin", "sinc", "sinh", "slepian",
+    "square", "step", "t", "wave_eval", "zero", "e", "inf", "pi",
 ]

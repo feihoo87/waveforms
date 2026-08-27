@@ -1,232 +1,254 @@
+import pickle
+import subprocess
+import sys
+from pathlib import Path
+
 import numpy as np
+import pytest
 import scipy.special as special
 from scipy.signal import butter, lfilter, lfiltic, tf2sos
 
-from waveforms import *
+import waveforms as wf
 
 
-def test_waveform():
-    t = np.linspace(-10, 10, 1001)
-
-    wav = cos(1)
-    assert np.allclose(wav(t), np.cos(t), atol=1e-04)
-
-    wav.start = -10
-    wav.stop = 10.02
-    wav.sample_rate = 50
-    assert np.allclose(wav.sample(), np.cos(t), atol=1e-04)
-
-    wav = sin(1)
-    assert np.allclose(wav(t), np.sin(t), atol=1e-04)
-
-    width = 2
-    wav = gaussian(width)
-    std_sq2 = width / (4 * np.sqrt(np.log(2)))
-    assert np.allclose(wav(t), np.exp(-(t / std_sq2)**2), atol=5e-03)
-
-    wav = poly([1, -1 / 2, 1 / 6, -1 / 12])
-    assert np.allclose(wav(t), np.poly1d([-1 / 12, 1 / 6, -1 / 2, 1])(t))
-
-    sample_rate = 4e9
-    width = 20e-9
-    time_line = np.linspace(0, width * 100, int(width * 100 * sample_rate))
-    wave = square(width) >> (width * 2)
-    points = wave(time_line)
-    assert isinstance(points, np.ndarray)
+PUBLIC_NAMES = {
+    "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
+    "coshPulse", "cosPulse", "cut", "drag", "exp", "function",
+    "gaussian", "general_cosine", "get_time_resolution", "hanning", "interp", "mixing",
+    "mollifier", "one", "poly", "registerBaseFunc", "registerDerivative",
+    "samplingPoints", "set_time_resolution", "sign", "sin", "sinc", "sinh", "square", "step",
+    "t", "wave_eval", "zero",
+}
 
 
-def test_tolist():
-    pulse = gaussian(10) >> 5
-    pulse += gaussian(10) >> 50
-    pulse = pulse * cos(200)
-
-    l = pulse.tolist()
-    assert l == [
-        np.inf, -np.inf, None, None, None, None, 5, -2.5, 0, 12.5, 1, 1.0, 2,
-        1, 3, 2, 3.0028060219661246, 5, 1, 3, 4, 200, 0.0, 42.5, 0, 57.5, 1,
-        1.0, 2, 1, 3, 2, 3.0028060219661246, 50, 1, 3, 4, 200, 0.0, np.inf, 0
-    ]
-
-    assert Waveform.fromlist(l) == pulse
+def test_public_api_and_basic_sampling():
+    assert PUBLIC_NAMES <= set(dir(wf))
+    x = np.linspace(-2.0, 2.0, 1001)
+    assert np.allclose(wf.cos(1.3)(x), np.cos(1.3 * x))
+    assert np.allclose(wf.sin(0.7)(x), np.sin(0.7 * x))
+    assert np.allclose(wf.poly([1, -0.5, 0.25])(x),
+                       1 - 0.5 * x + 0.25 * x**2)
 
 
-def test_totree():
-    pulse = gaussian(10) >> 5
-    pulse += gaussian(10) >> 50
-    pulse = pulse * cos(200)
-
-    t = pulse.totree()
-    assert t == ((np.inf, -np.inf, None, None, None, None),
-                 ((-2.5, ()), (12.5, ((1.0, ((1, (2, 3.0028060219661246, 5)),
-                                             (1, (4, 200, 0.0)))), )),
-                  (42.5, ()), (57.5, ((1.0, ((1, (2, 3.0028060219661246, 50)),
-                                             (1, (4, 200, 0.0)))), )), (np.inf,
-                                                                        ())))
-    assert Waveform.fromtree(t) == pulse
+def test_binary_roundtrip_is_zero_copy_for_bytes_input():
+    wav = (wf.gaussian(0.8) >> 1.2) * wf.cos(2.3) + 0.25
+    data = wav.to_bytes()
+    restored = wf.Waveform.from_bytes(data)
+    assert restored._core.to_bytes() is data
+    assert restored == wav
+    assert pickle.loads(pickle.dumps(wav)) == wav
+    assert wf.one() >> 5 == wf.one()
+    assert (wf.const(2.5) << 7).to_bytes() == wf.const(2.5).to_bytes()
 
 
-def test_op():
-    t = np.linspace(-10, 10, 1001)
-
-    wav = cos(1) + sin(2)
-    assert np.allclose(wav(t), np.cos(t) + np.sin(2 * t))
-    wav = cos(1) - sin(2)
-    assert np.allclose(wav(t), np.cos(t) - np.sin(2 * t))
-    wav = cos(1) * sin(2)
-    assert np.allclose(wav(t), np.cos(t) * np.sin(2 * t))
-    wav = cos(1) / 2
-    assert np.allclose(wav(t), np.cos(t) / 2)
-
-
-def test_simplify():
-    t = np.linspace(-10, 10, 1001)
-    wav = cos(1) * sin(2) * cos(3, 4)
-    wav2 = wav.simplify()
-
-    assert np.allclose(wav(t), np.cos(t) * np.sin(2 * t) * np.cos(3 * t + 4))
-    assert np.allclose(wav2(t), np.cos(t) * np.sin(2 * t) * np.cos(3 * t + 4))
-
-
-def test_simplify2():
-    t = np.linspace(-2, 2, 1001)
-    wav = 1j * (cos(9) >> 1) + 1 * (cos(9) >> 2) - 1j * (cos(9) >> 3)
-
-    assert np.allclose(wav(t), wav.simplify()(t))
-
-
-def test_simplify3():
-    t = np.linspace(-2, 2, 1001)
-
-    wav = 2 * (exp(1.01 + 22j)**2 << 1) * exp(1.01 + 22j)
-    wav2 = wav.simplify()
-    points = 2 * np.exp((1.01 + 22j) * (t + 1))**2 * np.exp((1.01 + 22j) * t)
-
-    assert np.allclose(wav(t), points)
-    assert np.allclose(wav2(t), points)
-
-
-def test_shift():
-    t = np.linspace(-10, 10, 1001)
-    width = 2
-    wav = gaussian(width) >> 3
-    std_sq2 = width / (4 * np.sqrt(np.log(2)))
-    assert np.allclose(wav(t), np.exp(-((t - 3) / std_sq2)**2), atol=5e-03)
-
-
-def test_chirp():
-    t = np.linspace(0, 10, 1000, endpoint=False)
-
-    def _chirp(t, f0, f1, T, phi0=0, type='linear'):
-        if type == 'linear':
-            return np.sin(phi0 + 2 * np.pi * ((f1 - f0) /
-                                              (2 * T) * t**2 + f0 * t))
-        elif type == 'exponential':
-            return np.sin(phi0 + 2 * np.pi * f0 * T *
-                          ((f1 / f0)**(t / T) - 1) / np.log((f1 / f0)))
-        elif type == 'hyperbolic':
-            return np.sin(phi0 - 2 * np.pi * f0 * f1 * T /
-                          (f1 - f0) * np.log(1 - (f1 - f0) * t / (f1 * T)))
-        else:
-            raise ValueError(f'Unknow type {type}')
-
-    wav1 = chirp(1, 2, 10, 4, 'linear')
-    wav2 = chirp(1, 2, 10, 4, 'exponential')
-    wav3 = chirp(1, 2, 10, 4, 'hyperbolic')
-
-    assert np.allclose(wav1(t), _chirp(t, 1, 2, 10, 4, 'linear'))
-    assert np.allclose(wav2(t), _chirp(t, 1, 2, 10, 4, 'exponential'))
-    assert np.allclose(wav3(t), _chirp(t, 1, 2, 10, 4, 'hyperbolic'))
-
-
-def test_gaussian_derivative_and_mollifier():
-    x = np.linspace(-1.999, 1.999, 4097)
+def test_operations_simplify_derivative_and_clipping():
+    x = np.linspace(-1.9, 1.9, 4097)
+    wav = wf.cos(1) * wf.sin(2) * wf.cos(3, 4)
+    expected = np.cos(x) * np.sin(2 * x) * np.cos(3 * x + 4)
+    assert np.allclose(wav(x), expected)
+    assert np.allclose(wav.simplify()(x), expected)
 
     width = 4.0
     std_sq2 = width / 3.3302184446307908
-    n = 8
-    expected = ((-1)**n / std_sq2**n
-                * special.eval_hermite(n, x / std_sq2)
-                * np.exp(-(x / std_sq2)**2))
-    assert np.allclose(gaussian(width, d=n)(x), expected)
+    order = 6
+    expected_d = ((-1)**order / std_sq2**order
+                  * special.eval_hermite(order, x / std_sq2)
+                  * np.exp(-(x / std_sq2)**2))
+    assert np.allclose(wf.gaussian(width, d=order)(x), expected_d)
 
-    d = 6
-    r = width / 2
-    scaled = x / r
-    xx_1 = scaled * scaled - 1
-    p = np.poly1d([-2, 0])
-    for order in range(1, d):
-        p = (np.poly1d([1, 0, -2, 0, 1]) * p.deriv()
-             + np.poly1d([-4 * order, 0, 4 * order - 2, 0]) * p)
-    expected = (np.exp(1 / xx_1 + 1) / (-xx_1)**(2 * d)
-                * p(scaled) / r**d)
-    assert np.allclose(mollifier(width, d=d)(x), expected)
+    clipped = 2 * wf.cos(2.1) + 0.3 * wf.sin(0.7)
+    clipped.min = -0.4
+    clipped.max = 0.6
+    assert np.allclose(clipped(x), np.clip(2 * np.cos(2.1 * x)
+                                          + 0.3 * np.sin(0.7 * x),
+                                          -0.4, 0.6))
 
-
-def test_sampling_points_and_clipping():
-    x = np.linspace(-2.0, 2.0, 4096, endpoint=False)
-    points = tuple(np.sin(np.linspace(0.0, 3.0, 65)))
-    wav = samplingPoints(-2.0, 2.0, points)
-    assert np.allclose(wav(x), np.interp(x, np.linspace(-2.0, 2.0, 65),
-                                        points))
-
-    wav = 2.0 * cos(2.1) + 0.3 * sin(0.7)
-    wav.min = -0.4
-    wav.max = 0.6
-    assert np.allclose(wav(x), np.clip(2.0 * np.cos(2.1 * x)
-                                      + 0.3 * np.sin(0.7 * x), -0.4, 0.6))
-
-
-def test_parser():
-    assert wave_eval("one()") == one()
-    assert wave_eval("zero()") == zero()
-    assert wave_eval("pi") == pi
-    assert wave_eval("e") == e
-
-    w1 = (gaussian(10) <<
-          100) + square(20, edge=5, type='linear') * cos(2 * pi * 23.1)
-    w2 = wave_eval(
-        "(gaussian(10) << 100) + square(20, edge=5, type='linear') * cos(2*pi*23.1)"
-    )
-    w3 = wave_eval(
-        "((gaussian(10) << 50) + ((square(20, 5, type='linear') * cos(2*pi*23.1)) >> 50)) << 50"
-    )
-    w4 = wave_eval(
-        "(gaussian(10) << 100) + square(20, 5, 'linear') * cos(2*pi*23.1)")
-    assert w1 == w2
-    assert w1 == w3
-    assert w1 == w4
-
-    w1 = poly([1, -1 / 2, 1 / 6, -1 / 12])
-    w2 = wave_eval("poly([1, -1/2, 1/6, -1/12])")
-    w3 = wave_eval("poly((1, -1/2, 1/6, -1/12))")
-
-    assert w1 == w2
-    assert w1 == w3
+    width = 1.3
+    shift = 0.7
+    frequency = 2.1
+    phase = 0.4
+    std_sq2 = width / 3.3302184446307908
+    base = (wf.gaussian(width) >> shift) * wf.cos(frequency, phase)
+    inside = (x >= -0.75 * width + shift) & (x < 0.75 * width + shift)
+    for order in range(4):
+        expected = np.zeros_like(x)
+        z = (x[inside] - shift) / std_sq2
+        for gaussian_order in range(order + 1):
+            carrier_order = order - gaussian_order
+            gaussian_part = (
+                (-1) ** gaussian_order / std_sq2 ** gaussian_order
+                * special.eval_hermite(gaussian_order, z) * np.exp(-(z**2))
+            )
+            carrier_part = frequency ** carrier_order * np.cos(
+                frequency * x[inside] + phase + carrier_order * np.pi / 2
+            )
+            expected[inside] += (
+                special.comb(order, gaussian_order, exact=True)
+                * gaussian_part * carrier_part
+            )
+        assert np.allclose(wf.D(base, order)(x), expected,
+                           atol=2e-10, rtol=2e-10)
 
 
-def test_filters():
+def test_metadata_pickle_and_removed_experimental_serializers():
+    wav = (wf.gaussian(10) >> 5) + (wf.gaussian(10) >> 50)
+    wav *= wf.cos(200)
+    wav.start = -10
+    wav.stop = 70
+    wav.sample_rate = 20
+    wav.label = "pulse"
+
+    restored = pickle.loads(pickle.dumps(wav))
+    assert restored == wav
+    assert restored.start == wav.start
+    assert restored.stop == wav.stop
+    assert restored.sample_rate == wav.sample_rate
+    assert restored.label == wav.label
+    for name in ("tolist", "fromlist", "totree", "fromtree", "_as_v1"):
+        assert not hasattr(wav, name)
+    assert wav.begin == -2.5
+    assert wav.end == 57.5
+
+
+def test_sampling_points_chirps_and_mixing():
+    x = np.linspace(0, 2, 2048, endpoint=False)
+    points = np.sin(np.linspace(0, 3, 65))
+    sampled = wf.samplingPoints(0, 2, points)
+    assert np.allclose(sampled(x), np.interp(x, np.linspace(0, 2, 65), points))
+
+    for kind in ("linear", "exponential", "hyperbolic"):
+        wav = wf.chirp(1, 2, 2, 0.3, kind)
+        if kind == "linear":
+            phase = 0.3 + 2 * np.pi * ((2 - 1) / 4 * x**2 + x)
+        elif kind == "exponential":
+            alpha = np.log(2) / 2
+            phase = 0.3 + 2 * np.pi * (np.exp(alpha * x) - 1) / alpha
+        else:
+            k = (1 - 2) / (2 * 2)
+            phase = 0.3 + 2 * np.pi / k * np.log(1 + k * x)
+        assert np.allclose(wav(x), np.sin(phase))
+
+    i, q = wf.mixing(wf.gaussian(0.5), phase=0.2, freq=1.3,
+                     DRAGScaling=0.01)
+    assert np.all(np.isfinite(i(x)))
+    assert np.all(np.isfinite(q(x)))
+
+
+def test_filters_and_chunked_sampling():
     sample_rate = 1000
+    b, a = butter(3, 4.0, "lowpass", fs=sample_rate)
+    zi = lfiltic(b, a, [0])
+    x = np.linspace(-1, 1, 2000, endpoint=False)
 
-    b, a = butter(3, 4.0, 'lowpass', fs=sample_rate)
-    init_y = 0
-    zi = lfiltic(b, a, [init_y])
-
-    t = np.linspace(-1, 1, 2000, endpoint=False)
-
-    wav = step(0)
-    wav.sample_rate = sample_rate
+    wav = wf.step(0)
     wav.start = -1
     wav.stop = 1
-    wav.filters = (tf2sos(b, a), init_y)
+    wav.sample_rate = sample_rate
+    wav.filters = (tf2sos(b, a), 0)
+    expected = lfilter(b, a, np.heaviside(x, 1), zi=zi)[0]
+    assert np.allclose(wav.sample(), expected)
+    assert np.allclose(np.concatenate(list(wav.sample(chunk_size=137))), expected)
 
-    points = lfilter(b, a, np.heaviside(t, 1), zi=zi)[0]
 
-    assert np.allclose(wav.sample(), points)
+def test_wavevstack_template_sharing_operations_and_roundtrip():
+    template = wf.gaussian(20e-9) * wf.cos(2 * np.pi * 5e9)
+    waves = [template >> (i * 80e-9) for i in range(1000)]
+    stack = wf.WaveVStack(waves)
 
-    l = wav.tolist()
-    wav2 = Waveform.fromlist(l)
-    assert np.allclose(wav2.sample(), points)
+    # One template plus three packed event arrays; substantially smaller than
+    # serializing 1000 complete shifted expression trees.
+    assert len(stack.to_bytes()) < 32_000
+    x = np.linspace(0, 80e-6, 16_000, endpoint=False)
+    assert np.allclose(stack(x), stack.simplify()(x))
 
-    d = wav.totree()
-    wav3 = Waveform.fromtree(d)
-    assert np.allclose(wav3.sample(), points)
+    shifted = (stack + 2.0) >> 1e-6
+    shifted = shifted * 0.25 + wf.sin(2 * np.pi * 1e6)
+    assert np.allclose(shifted(x), shifted.simplify()(x))
+
+    materialized = wf.WaveVStack.from_bytes(shifted.to_bytes())
+    assert np.allclose(materialized(x), shifted(x))
+
+    restored = wf.WaveVStack.from_bytes(stack.to_bytes())
+    assert restored == stack
+    assert pickle.loads(pickle.dumps(stack)) == stack
+
+
+def test_notebook_constructors_and_wave_eval():
+    x = np.linspace(-20, 60, 4001)
+    linear_step = np.where(x < -1, 0, np.where(x < 1, 0.5 + x / 2, 1))
+    cosine_step = np.where(
+        x < -1, 0, np.where(x < 1, 0.5 + 0.5 * np.sin(np.pi * x / 2), 1)
+    )
+    erf_step = np.where(
+        x < -2, 0, np.where(x < 2, 0.5 + 0.5 * special.erf(x / 0.4), 1)
+    )
+    assert np.allclose(wf.step(2, "linear")(x), linear_step)
+    assert np.allclose(wf.step(2, "cos")(x), cosine_step)
+    assert np.allclose(wf.step(2, "erf")(x), erf_step)
+
+    assert np.allclose(wf.exp(0.03 + 0.2j)(x), np.exp((0.03 + 0.2j) * x))
+    inside = np.array([-2.0, -1.0, 0.0, 1.5, 2.999])
+    assert np.allclose(wf.interp([-2, 0, 3], [1, -1, 2])(inside),
+                       np.interp(inside, [-2, 0, 3], [1, -1, 2]))
+
+    for wav in (wf.square(8, 2), wf.gaussian(8, 3), wf.cosPulse(8, 2),
+                wf.coshPulse(8, 2, 3), wf.mollifier(8, 2), wf.sinc(3)):
+        with np.errstate(divide="ignore", invalid="ignore"):
+            values = wav(x)
+        assert np.all(np.isfinite(values))
+
+    expression = ("(gaussian(12) >> 3) * cos(16.2, 1.63) + "
+                  "0.5*(gaussian(12) >> 35) * cos(16.2, 2)")
+    actual = wf.wave_eval(expression)
+    expected = wf.gaussian(12) >> 3
+    expected = expected * wf.cos(16.2, 1.63)
+    expected += 0.5 * (wf.gaussian(12) >> 35) * wf.cos(16.2, 2)
+    assert isinstance(actual, wf.Waveform)
+    assert np.allclose(actual(x), expected(x))
+
+
+def test_time_is_global_configuration_and_blocks_store_integer_ticks():
+    assert wf.get_time_resolution() == 1e-12
+    wav = wf.square(4e-9) >> 11e-9
+    ticks = wav._core.get_bound_ticks()
+    assert ticks.dtype == np.dtype("<i8")
+    assert np.array_equal(ticks[:-1], [-2_000, 2_000])
+    assert wav._delay == 11e-9
+    with pytest.raises(RuntimeError):
+        wf.set_time_resolution(1e-15)
+
+    code = (
+        "import waveforms as w; "
+        "w.set_time_resolution(1e-15); "
+        "x=w.square(4e-12); "
+        "print(w.get_time_resolution(), x._core.get_bound_ticks()[0])"
+    )
+    result = subprocess.run([sys.executable, "-c", code], check=True,
+                            capture_output=True, text=True)
+    assert result.stdout.strip() == "1e-15 -2000"
+
+
+def test_single_packed_backend_has_no_waveform2_modules():
+    package = Path(wf.__file__).parent
+    python_source = (package / "waveform.py").read_text()
+    cython_source = (package / "_waveform.pyx").read_text()
+    assert "waveform2" not in python_source
+    assert "_waveform2" not in cython_source
+    assert not (package / "waveform2.py").exists()
+    assert not (package / "_waveform2.pyx").exists()
+
+    code = (
+        "import sys; from waveforms import gaussian; gaussian(1); "
+        "print('waveforms.waveform2' in sys.modules, "
+        "'waveforms._waveform2' in sys.modules)"
+    )
+    result = subprocess.run([sys.executable, "-c", code], check=True,
+                            capture_output=True, text=True)
+    assert result.stdout.strip() == "False False"
+
+
+def test_custom_functions_are_explicitly_unsupported():
+    with pytest.raises(NotImplementedError):
+        wf.function(lambda x: x)
+    with pytest.raises(NotImplementedError):
+        wf.registerBaseFunc(lambda x: x)

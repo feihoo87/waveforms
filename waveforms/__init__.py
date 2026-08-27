@@ -1,11 +1,50 @@
 from numpy import e, pi
 
-from .multy_drag import drag_sin, drag_sinx
 from .version import __version__
-from .waveform import (D, Waveform, WaveVStack, chirp, const, cos, cosh,
-                       coshPulse, cosPulse, cut, drag, exp, function, gaussian,
-                       general_cosine, hanning, interp, mixing, mollifier, one,
-                       poly, registerBaseFunc, registerDerivative,
-                       samplingPoints, sign, sin, sinc, sinh, square, step, t,
-                       zero)
-from .waveform_parser import wave_eval
+from .waveform import (
+    D,
+    Waveform,
+    WaveVStack,
+    chirp,
+    const,
+    cos,
+    cosh,
+    coshPulse,
+    cosPulse,
+    cut,
+    drag,
+    exp,
+    function,
+    gaussian,
+    general_cosine,
+    get_time_resolution,
+    hanning,
+    interp,
+    mixing,
+    mollifier,
+    one,
+    poly,
+    registerBaseFunc,
+    registerDerivative,
+    samplingPoints,
+    set_time_resolution,
+    sign,
+    sin,
+    sinc,
+    sinh,
+    square,
+    step,
+    t,
+    wave_eval,
+    zero,
+)
+
+__all__ = [
+    "D", "Waveform", "WaveVStack", "chirp", "const", "cos", "cosh",
+    "coshPulse", "cosPulse", "cut", "drag", "e", "exp", "function",
+    "gaussian", "general_cosine", "get_time_resolution", "hanning",
+    "interp", "mixing", "mollifier", "one", "pi", "poly",
+    "registerBaseFunc", "registerDerivative", "samplingPoints",
+    "set_time_resolution", "sign", "sin", "sinc", "sinh", "square",
+    "step", "t", "wave_eval", "zero", "__version__",
+]

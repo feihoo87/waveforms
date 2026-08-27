@@ -1,4 +1,5 @@
 include src/*.h
 include waveforms/_waveform.pyx
+include waveforms/_waveform.pyi
 include waveforms/Waveform.g4
 include MANIFEST.in
