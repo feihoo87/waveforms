@@ -49,6 +49,8 @@ jobs:
       run: |
         coverage run --source=waveforms -m pytest --verbose tests/
     - name: Coveralls
+      if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
+      continue-on-error: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
