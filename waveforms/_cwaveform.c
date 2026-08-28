@@ -956,6 +956,19 @@ static uint32_t wf_clone_affine(const cwaveform_wave *source, wf_node *target,
                                 uint32_t offset, uint32_t parameter_offset,
                                 int64_t delay, double scale, uint32_t *next);
 
+typedef struct wf_spectral_term {
+    cwaveform_wave *envelope;
+    double frequency;
+    double real;
+    double imag;
+} wf_spectral_term;
+
+typedef struct wf_spectrum {
+    wf_spectral_term *terms;
+    size_t count;
+    size_t capacity;
+} wf_spectrum;
+
 static void wf_make_zero_node(wf_node *node) {
     memset(node, 0, sizeof(*node));
     node->op = WF_OP_CONSTANT;
@@ -963,105 +976,298 @@ static void wf_make_zero_node(wf_node *node) {
     node->upper = INT64_MIN;
 }
 
-static int wf_carrier_count(const wf_node *nodes, uint32_t index,
-                            int *counts, double *frequencies) {
-    const wf_node *node;
-    int count;
-    if (counts[index] >= 0) return counts[index];
-    node = nodes + index;
-    switch (node->op) {
-        case WF_OP_COS:
-        case WF_OP_SIN:
-            counts[index] = 1;
-            frequencies[index] = fabs(node->p0);
-            return 1;
-        case WF_OP_ADD:
-        case WF_OP_MUL: {
-            int left = wf_carrier_count(nodes, node->left,
-                                        counts, frequencies);
-            int right = wf_carrier_count(nodes, node->right,
-                                         counts, frequencies);
-            count = left + right;
-            if (count > 2) count = 2;
-            counts[index] = count;
-            if (count == 1)
-                frequencies[index] = left == 1
-                    ? frequencies[node->left] : frequencies[node->right];
-            return count;
-        }
-        case WF_OP_SCALE:
-        case WF_OP_POWER:
-        case WF_OP_WINDOW:
-            count = wf_carrier_count(nodes, node->left,
-                                     counts, frequencies);
-            counts[index] = count;
-            frequencies[index] = frequencies[node->left];
-            return count;
-        default:
-            counts[index] = 0;
-            frequencies[index] = 0.0;
-            return 0;
-    }
+static void wf_spectrum_clear(wf_spectrum *spectrum) {
+    size_t index;
+    if (spectrum == NULL) return;
+    for (index = 0; index < spectrum->count; ++index)
+        cwaveform_wave_release(spectrum->terms[index].envelope);
+    free(spectrum->terms);
+    memset(spectrum, 0, sizeof(*spectrum));
 }
 
-static void wf_filter_context(wf_node *nodes, uint32_t index,
-                              int *counts, double *frequencies,
-                              double low, double high) {
-    wf_node *node = nodes + index;
-    if (node->op == WF_OP_ADD) {
-        wf_filter_context(nodes, node->left, counts, frequencies, low, high);
-        wf_filter_context(nodes, node->right, counts, frequencies, low, high);
-        return;
+/* Append one signed complex-exponential component.  Equal envelope/frequency
+ * pairs are combined as they are produced so powers of one carrier grow
+ * linearly rather than exponentially.  The envelope reference is consumed. */
+static int wf_spectrum_append(wf_spectrum *spectrum,
+                              cwaveform_wave *envelope,
+                              double frequency, double real, double imag) {
+    size_t index;
+    wf_spectral_term *terms;
+    size_t capacity;
+    if (spectrum == NULL || envelope == NULL || !isfinite(frequency)
+            || !isfinite(real) || !isfinite(imag)) {
+        cwaveform_wave_release(envelope);
+        return -1;
     }
-    if (node->op == WF_OP_SCALE || node->op == WF_OP_WINDOW) {
-        wf_filter_context(nodes, node->left, counts, frequencies, low, high);
-        return;
+    if (frequency == 0.0) frequency = 0.0;
+    if (real == 0.0 && imag == 0.0) {
+        cwaveform_wave_release(envelope);
+        return 0;
     }
-    {
-        int count = wf_carrier_count(nodes, index, counts, frequencies);
-        if ((count == 0 && low > 0.0)
-                || (count == 1 && !(low <= frequencies[index]
-                                    && frequencies[index] < high)))
-            wf_make_zero_node(node);
+    for (index = 0; index < spectrum->count; ++index) {
+        wf_spectral_term *term = spectrum->terms + index;
+        if (term->frequency == frequency
+                && cwaveform_wave_equal(term->envelope, envelope)) {
+            term->real += real;
+            term->imag += imag;
+            cwaveform_wave_release(envelope);
+            if (!isfinite(term->real) || !isfinite(term->imag)) return -1;
+            if (term->real == 0.0 && term->imag == 0.0) {
+                cwaveform_wave_release(term->envelope);
+                spectrum->terms[index] = spectrum->terms[spectrum->count - 1];
+                --spectrum->count;
+            }
+            return 0;
+        }
     }
+    if (spectrum->count == spectrum->capacity) {
+        capacity = spectrum->capacity == 0 ? 8 : spectrum->capacity * 2;
+        if (capacity < spectrum->capacity
+                || capacity > SIZE_MAX / sizeof(*terms)) {
+            cwaveform_wave_release(envelope);
+            return -1;
+        }
+        terms = (wf_spectral_term *)realloc(
+            spectrum->terms, capacity * sizeof(*terms));
+        if (terms == NULL) {
+            cwaveform_wave_release(envelope);
+            return -1;
+        }
+        spectrum->terms = terms;
+        spectrum->capacity = capacity;
+    }
+    spectrum->terms[spectrum->count].envelope = envelope;
+    spectrum->terms[spectrum->count].frequency = frequency;
+    spectrum->terms[spectrum->count].real = real;
+    spectrum->terms[spectrum->count].imag = imag;
+    ++spectrum->count;
+    return 0;
+}
+
+static int wf_spectrum_move(wf_spectrum *target, wf_spectrum *source) {
+    size_t index;
+    for (index = 0; index < source->count; ++index) {
+        wf_spectral_term *term = source->terms + index;
+        cwaveform_wave *envelope = term->envelope;
+        term->envelope = NULL;
+        if (wf_spectrum_append(target, envelope, term->frequency,
+                               term->real, term->imag) != 0) return -1;
+    }
+    return 0;
+}
+
+static int wf_spectrum_product(const wf_spectrum *left,
+                               const wf_spectrum *right,
+                               wf_spectrum *result) {
+    size_t i;
+    size_t j;
+    for (i = 0; i < left->count; ++i) {
+        for (j = 0; j < right->count; ++j) {
+            const wf_spectral_term *a = left->terms + i;
+            const wf_spectral_term *b = right->terms + j;
+            cwaveform_wave *left_envelope = a->envelope;
+            cwaveform_wave *right_envelope = b->envelope;
+            cwaveform_wave *envelope;
+            double real = a->real * b->real - a->imag * b->imag;
+            double imag = a->real * b->imag + a->imag * b->real;
+            cwaveform_wave_retain(left_envelope);
+            cwaveform_wave_retain(right_envelope);
+            envelope = wf_mul_owned(left_envelope, right_envelope);
+            if (wf_spectrum_append(result, envelope,
+                                   a->frequency + b->frequency,
+                                   real, imag) != 0) return -1;
+        }
+    }
+    return 0;
+}
+
+static int wf_spectrum_node(const cwaveform_wave *wave, uint32_t index,
+                            wf_spectrum *result);
+
+static int wf_spectrum_power(const cwaveform_wave *wave, uint32_t index,
+                             unsigned exponent, wf_spectrum *result) {
+    wf_spectrum base = {0};
+    wf_spectrum power = {0};
+    cwaveform_wave *one = cwaveform_wave_constant(1.0);
+    int status = -1;
+    if (one == NULL || wf_spectrum_append(&power, one, 0.0, 1.0, 0.0) != 0)
+        goto done;
+    if (wf_spectrum_node(wave, index, &base) != 0) goto done;
+    while (exponent != 0) {
+        if (exponent & 1u) {
+            wf_spectrum next = {0};
+            if (wf_spectrum_product(&power, &base, &next) != 0) {
+                wf_spectrum_clear(&next);
+                goto done;
+            }
+            wf_spectrum_clear(&power);
+            power = next;
+        }
+        exponent >>= 1;
+        if (exponent != 0) {
+            wf_spectrum next = {0};
+            if (wf_spectrum_product(&base, &base, &next) != 0) {
+                wf_spectrum_clear(&next);
+                goto done;
+            }
+            wf_spectrum_clear(&base);
+            base = next;
+        }
+    }
+    if (wf_spectrum_move(result, &power) != 0) goto done;
+    status = 0;
+done:
+    wf_spectrum_clear(&base);
+    wf_spectrum_clear(&power);
+    return status;
+}
+
+/* Convert the real expression tree into signed complex-exponential terms.
+ * Non-trigonometric nodes are retained as envelopes, matching the historic
+ * symbolic filter which treats their spectrum as baseband. */
+static int wf_spectrum_node(const cwaveform_wave *wave, uint32_t index,
+                            wf_spectrum *result) {
+    const wf_node *node = wave->nodes + index;
+    wf_spectrum left = {0};
+    wf_spectrum right = {0};
+    wf_spectrum product = {0};
+    cwaveform_wave *envelope;
+    size_t term_index;
+    int status = -1;
+    switch (node->op) {
+        case WF_OP_CONSTANT:
+            envelope = cwaveform_wave_constant(1.0);
+            return wf_spectrum_append(result, envelope, 0.0, node->p0, 0.0);
+        case WF_OP_COS:
+        case WF_OP_SIN: {
+            const double half = 0.5;
+            const double two_pi = 6.28318530717958647692;
+            double phase = remainder(
+                -node->p0 * (double)node->shift
+                    / (double)wf_ticks_per_second,
+                two_pi);
+            double cosine = cos(phase);
+            double sine = sin(phase);
+            envelope = cwaveform_wave_constant(1.0);
+            if (node->op == WF_OP_COS) {
+                if (wf_spectrum_append(result, envelope, node->p0,
+                                       half * cosine, half * sine) != 0)
+                    return -1;
+                envelope = cwaveform_wave_constant(1.0);
+                return wf_spectrum_append(result, envelope, -node->p0,
+                                          half * cosine, -half * sine);
+            }
+            if (wf_spectrum_append(result, envelope, node->p0,
+                                   half * sine, -half * cosine) != 0)
+                return -1;
+            envelope = cwaveform_wave_constant(1.0);
+            return wf_spectrum_append(result, envelope, -node->p0,
+                                      half * sine, half * cosine);
+        }
+        case WF_OP_ADD:
+            if (wf_spectrum_node(wave, node->left, &left) != 0
+                    || wf_spectrum_node(wave, node->right, &right) != 0
+                    || wf_spectrum_move(result, &left) != 0
+                    || wf_spectrum_move(result, &right) != 0) goto done;
+            status = 0;
+            break;
+        case WF_OP_MUL:
+            if (wf_spectrum_node(wave, node->left, &left) != 0
+                    || wf_spectrum_node(wave, node->right, &right) != 0
+                    || wf_spectrum_product(&left, &right, &product) != 0
+                    || wf_spectrum_move(result, &product) != 0) goto done;
+            status = 0;
+            break;
+        case WF_OP_SCALE:
+            if (wf_spectrum_node(wave, node->left, &left) != 0) goto done;
+            for (term_index = 0; term_index < left.count; ++term_index) {
+                left.terms[term_index].real *= node->p0;
+                left.terms[term_index].imag *= node->p0;
+            }
+            if (wf_spectrum_move(result, &left) != 0) goto done;
+            status = 0;
+            break;
+        case WF_OP_POWER:
+            if (node->p0 >= 0.0 && node->p0 <= (double)UINT_MAX)
+                return wf_spectrum_power(
+                    wave, node->left, (unsigned)node->p0, result);
+            envelope = wf_subwave(wave, index);
+            return wf_spectrum_append(result, envelope, 0.0, 1.0, 0.0);
+        case WF_OP_WINDOW: {
+            int64_t upper;
+            if (wf_spectrum_node(wave, node->left, &left) != 0) goto done;
+            memcpy(&upper, &node->p0, sizeof(upper));
+            for (term_index = 0; term_index < left.count; ++term_index) {
+                cwaveform_wave *windowed = cwaveform_wave_window(
+                    left.terms[term_index].envelope, node->shift, upper);
+                if (windowed == NULL) goto done;
+                cwaveform_wave_release(left.terms[term_index].envelope);
+                left.terms[term_index].envelope = windowed;
+            }
+            if (wf_spectrum_move(result, &left) != 0) goto done;
+            status = 0;
+            break;
+        }
+        default:
+            envelope = wf_subwave(wave, index);
+            return wf_spectrum_append(result, envelope, 0.0, 1.0, 0.0);
+    }
+done:
+    wf_spectrum_clear(&left);
+    wf_spectrum_clear(&right);
+    wf_spectrum_clear(&product);
+    return status;
+}
+
+static cwaveform_wave *wf_spectral_term_wave(const wf_spectral_term *term) {
+    cwaveform_wave *envelope = term->envelope;
+    cwaveform_wave *carrier;
+    double amplitude;
+    if (term->frequency == 0.0) {
+        if (term->real == 0.0)
+            return cwaveform_wave_constant(0.0);
+        cwaveform_wave_retain(envelope);
+        return wf_scaled(envelope, term->real);
+    }
+    /* Only the positive half of a real signal's conjugate spectrum is
+     * reconstructed; double it here to recover the real carrier amplitude. */
+    amplitude = 2.0 * hypot(term->real, term->imag);
+    if (amplitude == 0.0) return cwaveform_wave_constant(0.0);
+    carrier = cwaveform_wave_cos(
+        term->frequency, atan2(term->imag, term->real));
+    carrier = wf_scaled(carrier, amplitude);
+    cwaveform_wave_retain(envelope);
+    return wf_mul_owned(envelope, carrier);
 }
 
 cwaveform_wave *cwaveform_wave_filter(const cwaveform_wave *wave,
                                       double low, double high,
                                       double epsilon) {
-    wf_node *nodes;
-    int *counts;
-    double *frequencies;
-    cwaveform_wave *result;
-    uint32_t index;
-    (void)epsilon;
+    wf_spectrum spectrum = {0};
+    cwaveform_wave *result = NULL;
+    size_t index;
     if (wave == NULL || !isfinite(low) || isnan(high) || low < 0.0
-            || high < low) return NULL;
-    nodes = (wf_node *)malloc((size_t)wave->node_count * sizeof(*nodes));
-    counts = (int *)malloc((size_t)wave->node_count * sizeof(*counts));
-    frequencies = (double *)calloc(wave->node_count, sizeof(*frequencies));
-    if (nodes == NULL || counts == NULL || frequencies == NULL) {
-        free(nodes); free(counts); free(frequencies);
-        return NULL;
-    }
-    memcpy(nodes, wave->nodes, (size_t)wave->node_count * sizeof(*nodes));
-    for (index = 0; index < wave->node_count; ++index) counts[index] = -1;
-    wf_filter_context(nodes, wave->root, counts, frequencies, low, high);
-    for (index = 0; index < wave->node_count; ++index) {
-        if (wf_prepare_decoded_node(nodes + index, nodes, index,
-                                    wave->parameter_count) != 0) {
-            free(nodes); free(counts); free(frequencies);
-            return NULL;
+            || high < low || !isfinite(epsilon) || epsilon < 0.0) return NULL;
+    if (wf_spectrum_node(wave, wave->root, &spectrum) != 0) goto done;
+    result = cwaveform_wave_constant(0.0);
+    if (result == NULL) goto done;
+    for (index = 0; index < spectrum.count; ++index) {
+        const wf_spectral_term *term = spectrum.terms + index;
+        double frequency = fabs(term->frequency);
+        if (term->frequency < 0.0) continue;
+        if (low <= frequency && frequency < high) {
+            cwaveform_wave *component = wf_spectral_term_wave(term);
+            result = wf_add_owned(result, component);
+            if (result == NULL) goto done;
         }
     }
-    result = wf_wave_from_parts(nodes, wave->node_count, wave->root,
-                                wave->parameters, wave->parameter_count);
-    free(nodes); free(counts); free(frequencies);
     if (result != NULL) {
         cwaveform_wave *compact = cwaveform_wave_simplify(result, epsilon);
         cwaveform_wave_release(result);
         result = compact;
     }
+done:
+    wf_spectrum_clear(&spectrum);
     return result;
 }
 
