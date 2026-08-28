@@ -63,8 +63,9 @@ serialization.
 ```python
 import waveforms as wf
 
-# Optional; call this once, before constructing or loading waveform objects.
-wf.set_time_resolution(1e-12)
+# The default tick is already the period of 120 GHz (1 / 120e9 seconds).
+# To use another global tick, override it before constructing/loading waveforms:
+# wf.set_time_resolution(1e-12)
 
 pulse = (wf.gaussian(12e-9) >> 20e-9) * wf.cos(2 * wf.pi * 5e9)
 data = pulse.to_bytes()
@@ -75,6 +76,16 @@ Time resolution is process-wide and is not stored in each binary block. A
 process loading a block must therefore use the same resolution as the process
 that created it. The setting is locked when the first waveform object is
 created or loaded.
+
+`sample()` has integer-grid fast paths for 500 MHz, 1 GHz, 1.2 GHz, 2 GHz,
+2.4 GHz, 2.5 GHz, 4 GHz, 6 GHz, 8 GHz, and 10 GHz. Real waveforms can be
+quantized directly to signed DAC buffers:
+
+```python
+pulse.start = 0
+pulse.stop = 100e-9
+dac16 = pulse.sample(2_400_000_000, dtype=np.int16, full_scale=1.0)
+```
 
 The packed core stores and evaluates real-valued signals only. Complex signals
 are represented in Python as independent real and imaginary channels:

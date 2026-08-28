@@ -9,10 +9,16 @@ templates followed by struct-of-arrays event ids, delay ticks, and real scales.
 """
 
 import struct
+cimport cython
 from bisect import bisect_left
+from fractions import Fraction
 from functools import lru_cache
 from itertools import chain, product
 from math import comb, factorial
+
+from libc.math cimport isfinite as c_isfinite, round as c_round
+from libc.stdint cimport int16_t, int32_t, int64_t
+from libc.string cimport memcpy
 
 import numpy as np
 import scipy.special as special
@@ -48,20 +54,35 @@ _VERSION = 3
 _HEADER = struct.Struct("<4sHHII")
 _STACK_HEADER = struct.Struct("<4sHHIII")
 
-_TIME_RESOLUTION = 1e-12
+# The process-wide time quantum is exact even though the public API exposes
+# seconds as floats. A 120 GHz clock covers common instrument rates with
+# integer sample steps while ``sample_clock`` retains a rational fallback.
+_TIME_NUMERATOR = 1
+_TIME_DENOMINATOR = 120_000_000_000
+_TIME_RESOLUTION = _TIME_NUMERATOR / _TIME_DENOMINATOR
 _TIME_LOCKED = False
 _INF_TICK = np.iinfo(np.int64).max
 
 
 def set_time_resolution(value):
     """Set the process-wide tick duration before creating any packed object."""
-    global _TIME_RESOLUTION, _TIME_LOCKED
-    value = float(value)
-    if not np.isfinite(value) or value <= 0:
+    global _TIME_NUMERATOR, _TIME_DENOMINATOR, _TIME_RESOLUTION, _TIME_LOCKED
+    numeric = float(value)
+    if not np.isfinite(numeric) or numeric <= 0:
         raise ValueError("time resolution must be a finite positive number")
-    if _TIME_LOCKED and value != _TIME_RESOLUTION:
+    # Preserve the exact built-in fraction when callers repeat the public
+    # float value (notably ``set_time_resolution(get_time_resolution())``).
+    if numeric == _TIME_RESOLUTION:
+        return
+    fraction = value if isinstance(value, Fraction) else Fraction(str(value))
+    if (_TIME_LOCKED
+            and (fraction.numerator != _TIME_NUMERATOR
+                 or fraction.denominator != _TIME_DENOMINATOR)
+            and numeric != _TIME_RESOLUTION):
         raise RuntimeError("time resolution is locked by existing waveform objects")
-    _TIME_RESOLUTION = value
+    _TIME_NUMERATOR = fraction.numerator
+    _TIME_DENOMINATOR = fraction.denominator
+    _TIME_RESOLUTION = numeric
 
 
 def get_time_resolution():
@@ -76,6 +97,367 @@ def quantize_time(value):
     return _tick_to_time(_time_to_tick(value))
 
 
+def time_to_tick(value):
+    """Return the nearest process-wide integer tick for *value* seconds."""
+    return _time_to_tick(value)
+
+
+def tick_to_time(tick):
+    """Convert an integer process-wide tick to seconds."""
+    return _tick_to_time(tick)
+
+
+def sample_clock(sample_rate):
+    """Return the reduced rational number of ticks per sample."""
+    rate = (sample_rate if isinstance(sample_rate, Fraction)
+            else Fraction(str(sample_rate)))
+    if rate <= 0:
+        raise ValueError("sample_rate must be positive")
+    step = Fraction(_TIME_DENOMINATOR, _TIME_NUMERATOR) / rate
+    return step.numerator, step.denominator
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def sample_grid(long long start_tick, Py_ssize_t count,
+                long long step_numerator, long long step_denominator=1,
+                long long index_offset=0):
+    """Generate an exact-clock sample grid, converting to float only at output."""
+    cdef object result
+    cdef double[::1] view
+    cdef Py_ssize_t index
+    cdef double clock_denominator
+    cdef double time_numerator = _TIME_NUMERATOR
+    if count < 0:
+        raise ValueError("count must be non-negative")
+    if step_numerator <= 0 or step_denominator <= 0:
+        raise ValueError("sample step must be positive")
+    result = np.empty(count, dtype=np.float64)
+    view = result
+    clock_denominator = (<double>step_denominator
+                         * <double>_TIME_DENOMINATOR)
+    with nogil:
+        for index in range(count):
+            view[index] = (
+                ((<double>start_tick * <double>step_denominator
+                  + (<double>index + <double>index_offset)
+                  * <double>step_numerator)
+                 * time_numerator)
+                / clock_denominator
+            )
+    return result
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def quantize_samples(values, bits, full_scale=1.0, out=None):
+    """Saturating real-signal quantizer for signed 16- and 32-bit DAC data."""
+    cdef object source
+    cdef object target
+    cdef double[::1] source_view
+    cdef int16_t[::1] target16
+    cdef int32_t[::1] target32
+    cdef Py_ssize_t index, size
+    cdef double value, scaled
+    cdef double scale
+    cdef double maximum
+    cdef double minimum
+    cdef double full_scale_value
+
+    full_scale_value = float(full_scale)
+    if not np.isfinite(full_scale_value) or full_scale_value <= 0:
+        raise ValueError("full_scale must be a finite positive number")
+    if bits not in (16, 32):
+        raise ValueError("bits must be 16 or 32")
+    if np.iscomplexobj(values):
+        raise TypeError("integer quantization requires a real signal")
+    source = np.ascontiguousarray(values, dtype=np.float64)
+    if not np.all(np.isfinite(source)):
+        raise ValueError("cannot quantize non-finite samples")
+    dtype = np.dtype(np.int16 if bits == 16 else np.int32)
+    if out is None:
+        target = np.empty(source.shape, dtype=dtype)
+    else:
+        target = np.asarray(out)
+        if target.shape != source.shape:
+            raise ValueError("out has the wrong shape")
+        if target.dtype != dtype:
+            raise TypeError(f"out must have dtype {dtype}")
+        if not target.flags.c_contiguous or not target.flags.writeable:
+            raise ValueError("out must be a writable C-contiguous array")
+
+    source_view = source.reshape(-1)
+    size = source_view.shape[0]
+    if bits == 16:
+        target16 = target.reshape(-1)
+        scale = 32768.0 / full_scale_value
+        minimum = -32768.0
+        maximum = 32767.0
+        with nogil:
+            for index in range(size):
+                value = source_view[index]
+                if value <= -full_scale_value:
+                    target16[index] = <int16_t>-32768
+                elif value >= full_scale_value:
+                    target16[index] = <int16_t>32767
+                else:
+                    scaled = c_round(value * scale)
+                    if scaled < minimum:
+                        scaled = minimum
+                    elif scaled > maximum:
+                        scaled = maximum
+                    target16[index] = <int16_t>scaled
+    else:
+        target32 = target.reshape(-1)
+        scale = 2147483648.0 / full_scale_value
+        minimum = -2147483648.0
+        maximum = 2147483647.0
+        with nogil:
+            for index in range(size):
+                value = source_view[index]
+                if value <= -full_scale_value:
+                    target32[index] = <int32_t>-2147483648
+                elif value >= full_scale_value:
+                    target32[index] = <int32_t>2147483647
+                else:
+                    scaled = c_round(value * scale)
+                    if scaled < minimum:
+                        scaled = minimum
+                    elif scaled > maximum:
+                        scaled = maximum
+                    target32[index] = <int32_t>scaled
+    return target
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def place_template_quantized(out, template, destinations, scales,
+                             offset=0.0, full_scale=1.0):
+    """Write non-overlapping scaled template slices into an integer buffer."""
+    cdef object output = np.asarray(out)
+    cdef object values = np.ascontiguousarray(template, dtype=np.float64)
+    cdef object starts = np.ascontiguousarray(destinations, dtype=np.int64)
+    cdef object factors = np.ascontiguousarray(scales, dtype=np.float64)
+    cdef double[::1] values_view
+    cdef int64_t[::1] starts_view
+    cdef double[::1] factors_view
+    cdef int16_t[::1] target16
+    cdef int32_t[::1] target32
+    cdef Py_ssize_t event_index, value_index, source, destination, count
+    cdef Py_ssize_t output_size, template_size, event_count
+    cdef double factor, value, scaled
+    cdef double full_scale_value = float(full_scale)
+    cdef double offset_value = float(offset)
+    cdef double scale
+    cdef double maximum
+    cdef double minimum
+    cdef bint invalid = False
+
+    if not c_isfinite(full_scale_value) or full_scale_value <= 0:
+        raise ValueError("full_scale must be a finite positive number")
+    if not c_isfinite(offset_value):
+        raise ValueError("cannot quantize non-finite samples")
+    if output.ndim != 1:
+        raise TypeError("out must be a one-dimensional int16 or int32 array")
+    if output.dtype not in (np.dtype(np.int16), np.dtype(np.int32)):
+        raise TypeError("out must have dtype int16 or int32")
+    if not output.flags.c_contiguous or not output.flags.writeable:
+        raise ValueError("out must be a writable C-contiguous array")
+    if starts.ndim != 1 or factors.ndim != 1 or len(starts) != len(factors):
+        raise ValueError("destinations and scales must be equal-length vectors")
+
+    values_view = values.reshape(-1)
+    starts_view = starts
+    factors_view = factors
+    output_size = output.shape[0]
+    template_size = values_view.shape[0]
+    event_count = starts_view.shape[0]
+    if output.dtype == np.dtype(np.int16):
+        target16 = output
+        scale = 32768.0 / full_scale_value
+        minimum = -32768.0
+        maximum = 32767.0
+        with nogil:
+            for event_index in range(event_count):
+                destination = starts_view[event_index]
+                source = 0
+                if destination < 0:
+                    source = -destination
+                    destination = 0
+                count = template_size - source
+                if count > output_size - destination:
+                    count = output_size - destination
+                factor = factors_view[event_index]
+                if not c_isfinite(factor):
+                    invalid = True
+                    continue
+                for value_index in range(count if count > 0 else 0):
+                    value = (offset_value
+                             + factor * values_view[source + value_index])
+                    if not c_isfinite(value):
+                        invalid = True
+                        target16[destination + value_index] = 0
+                    elif value <= -full_scale_value:
+                        target16[destination + value_index] = <int16_t>-32768
+                    elif value >= full_scale_value:
+                        target16[destination + value_index] = <int16_t>32767
+                    else:
+                        scaled = c_round(value * scale)
+                        if scaled < minimum:
+                            scaled = minimum
+                        elif scaled > maximum:
+                            scaled = maximum
+                        target16[destination + value_index] = <int16_t>scaled
+    else:
+        target32 = output
+        scale = 2147483648.0 / full_scale_value
+        minimum = -2147483648.0
+        maximum = 2147483647.0
+        with nogil:
+            for event_index in range(event_count):
+                destination = starts_view[event_index]
+                source = 0
+                if destination < 0:
+                    source = -destination
+                    destination = 0
+                count = template_size - source
+                if count > output_size - destination:
+                    count = output_size - destination
+                factor = factors_view[event_index]
+                if not c_isfinite(factor):
+                    invalid = True
+                    continue
+                for value_index in range(count if count > 0 else 0):
+                    value = (offset_value
+                             + factor * values_view[source + value_index])
+                    if not c_isfinite(value):
+                        invalid = True
+                        target32[destination + value_index] = 0
+                    elif value <= -full_scale_value:
+                        target32[destination + value_index] = <int32_t>-2147483648
+                    elif value >= full_scale_value:
+                        target32[destination + value_index] = <int32_t>2147483647
+                    else:
+                        scaled = c_round(value * scale)
+                        if scaled < minimum:
+                            scaled = minimum
+                        elif scaled > maximum:
+                            scaled = maximum
+                        target32[destination + value_index] = <int32_t>scaled
+    if invalid:
+        raise ValueError("cannot quantize non-finite samples")
+    return output
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def place_quantized_template(out, template, destinations):
+    """Copy one quantized template to multiple non-overlapping positions."""
+    cdef object output = np.asarray(out)
+    cdef object values
+    cdef object starts = np.ascontiguousarray(destinations, dtype=np.int64)
+    cdef int64_t[::1] starts_view
+    cdef int16_t[::1] target16
+    cdef int16_t[::1] values16
+    cdef int32_t[::1] target32
+    cdef int32_t[::1] values32
+    cdef Py_ssize_t event_index, source, destination, count
+    cdef Py_ssize_t output_size, template_size, event_count
+
+    if output.ndim != 1 or output.dtype not in (
+            np.dtype(np.int16), np.dtype(np.int32)):
+        raise TypeError("out must be a one-dimensional int16 or int32 array")
+    if not output.flags.c_contiguous or not output.flags.writeable:
+        raise ValueError("out must be a writable C-contiguous array")
+    values = np.ascontiguousarray(template, dtype=output.dtype).reshape(-1)
+    if starts.ndim != 1:
+        raise ValueError("destinations must be one-dimensional")
+    starts_view = starts
+    output_size = output.shape[0]
+    template_size = values.shape[0]
+    event_count = starts.shape[0]
+    if output.dtype == np.dtype(np.int16):
+        target16 = output
+        values16 = values
+        with nogil:
+            for event_index in range(event_count):
+                destination = starts_view[event_index]
+                source = 0
+                if destination < 0:
+                    source = -destination
+                    destination = 0
+                count = template_size - source
+                if count > output_size - destination:
+                    count = output_size - destination
+                if count > 0:
+                    memcpy(&target16[destination], &values16[source],
+                           count * sizeof(int16_t))
+    else:
+        target32 = output
+        values32 = values
+        with nogil:
+            for event_index in range(event_count):
+                destination = starts_view[event_index]
+                source = 0
+                if destination < 0:
+                    source = -destination
+                    destination = 0
+                count = template_size - source
+                if count > output_size - destination:
+                    count = output_size - destination
+                if count > 0:
+                    memcpy(&target32[destination], &values32[source],
+                           count * sizeof(int32_t))
+    return output
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def accumulate_template(out, template, destinations, scales):
+    """Accumulate repeated, scaled template slices into a float64 buffer."""
+    cdef object output = np.asarray(out)
+    cdef object values = np.ascontiguousarray(template, dtype=np.float64)
+    cdef object starts = np.ascontiguousarray(destinations, dtype=np.int64)
+    cdef object factors = np.ascontiguousarray(scales, dtype=np.float64)
+    cdef double[::1] output_view
+    cdef double[::1] values_view
+    cdef int64_t[::1] starts_view
+    cdef double[::1] factors_view
+    cdef Py_ssize_t event_index, value_index, source, destination, count
+    cdef Py_ssize_t output_size, template_size, event_count
+    cdef double factor
+    if output.dtype != np.dtype(np.float64) or output.ndim != 1:
+        raise TypeError("out must be a one-dimensional float64 array")
+    if not output.flags.c_contiguous or not output.flags.writeable:
+        raise ValueError("out must be a writable C-contiguous array")
+    if starts.ndim != 1 or factors.ndim != 1 or len(starts) != len(factors):
+        raise ValueError("destinations and scales must be equal-length vectors")
+    output_view = output
+    values_view = values.reshape(-1)
+    starts_view = starts
+    factors_view = factors
+    output_size = output_view.shape[0]
+    template_size = values_view.shape[0]
+    event_count = starts_view.shape[0]
+    with nogil:
+        for event_index in range(event_count):
+            destination = starts_view[event_index]
+            source = 0
+            if destination < 0:
+                source = -destination
+                destination = 0
+            count = template_size - source
+            if count > output_size - destination:
+                count = output_size - destination
+            if count > 0:
+                factor = factors_view[event_index]
+                for value_index in range(count):
+                    output_view[destination + value_index] += (
+                        factor * values_view[source + value_index]
+                    )
+    return output
+
+
 def _lock_time_resolution():
     global _TIME_LOCKED
     _TIME_LOCKED = True
@@ -86,7 +468,7 @@ def _time_to_tick(value):
         return int(_INF_TICK)
     if value == -inf:
         return -int(_INF_TICK)
-    tick = int(round(float(value) / _TIME_RESOLUTION))
+    tick = int(round(float(value) * _TIME_DENOMINATOR / _TIME_NUMERATOR))
     if tick <= -int(_INF_TICK) or tick >= int(_INF_TICK):
         raise OverflowError("time is outside the waveform tick range")
     return tick
@@ -97,7 +479,7 @@ def _tick_to_time(tick):
         return inf
     if tick == -int(_INF_TICK):
         return -inf
-    return int(tick) * _TIME_RESOLUTION
+    return int(tick) * _TIME_NUMERATOR / _TIME_DENOMINATOR
 
 
 def _LINEAR(t):
@@ -429,8 +811,7 @@ def _normal_number(value):
 
 def _real_number(value):
     value = _normal_number(value)
-    if np.iscomplexobj(value):
-        value = complex(value)
+    if isinstance(value, complex):
         if value.imag != 0:
             raise TypeError("packed waveform coefficients must be real")
         value = value.real
@@ -580,6 +961,74 @@ def _decode_expr(bytes data):
     return tuple(terms), tuple(coefficients)
 
 
+def _canonical_builtin_args(int opcode, args):
+    """Mirror the on-wire quantization without an encode/decode roundtrip."""
+    values = list(_normal_number(value) for value in args)
+    if opcode == LINEAR:
+        values[0] = quantize_time(values[0])
+    elif opcode in (GAUSSIAN, ERF):
+        values[0] = quantize_time(values[0])
+        values[1] = quantize_time(values[1])
+    elif opcode in (COS, SINC, EXP, COSH, SINH):
+        values[0] = float(values[0])
+        values[1] = quantize_time(values[1])
+    elif opcode == INTERP:
+        values[0] = quantize_time(values[0])
+        values[1] = quantize_time(values[1])
+        values[2] = tuple(float(value) for value in values[2])
+        values[3] = quantize_time(values[3])
+    elif opcode == LINEARCHIRP:
+        values[0] = float(values[0])
+        values[1] = float(values[1])
+        values[2] = quantize_time(values[2])
+        values[3] = float(values[3])
+        values[4] = quantize_time(values[4])
+    elif opcode in (EXPONENTIALCHIRP, HYPERBOLICCHIRP):
+        values[:3] = (float(value) for value in values[:3])
+        values[3] = quantize_time(values[3])
+    elif opcode == DRAG:
+        values[0] = quantize_time(values[0])
+        values[1] = float(values[1])
+        values[2] = quantize_time(values[2])
+        values[3] = float(values[3])
+        values[4] = None if values[4] is None else float(values[4])
+        values[5] = float(values[5])
+        values[6] = quantize_time(values[6])
+    elif opcode in (DRAG_SIN, DRAG_SINX):
+        values[0] = quantize_time(values[0])
+        values[1] = float(values[1])
+        values[2] = quantize_time(values[2])
+        values[3] = float(values[3])
+        values[4] = tuple(float(value) for value in values[4])
+        values[5] = float(values[5])
+        values[6] = quantize_time(values[6])
+        if opcode == DRAG_SINX:
+            values[7] = float(values[7])
+        values[-1] = quantize_time(values[-1])
+    elif opcode in (MOLLIFIER, D_GAUSSIAN):
+        values[0] = quantize_time(values[0])
+        values[1] = int(values[1])
+        values[2] = quantize_time(values[2])
+    else:
+        raise ValueError(f"unsupported waveform opcode {opcode}")
+    return tuple(values)
+
+
+def _canonicalize_expression(expr):
+    terms = []
+    coefficients = tuple(_real_number(value) for value in expr[1])
+    for functions, powers in expr[0]:
+        canonical_functions = []
+        for function in functions:
+            opcode = int(function[0])
+            canonical_functions.append(
+                (opcode, *_canonical_builtin_args(opcode, function[1:]))
+            )
+        terms.append((tuple(canonical_functions),
+                      tuple(int(power) for power in powers)))
+    return tuple(terms), coefficients
+
+
 def _normalize_expression(expr, outer_shift=0.0):
     inner_shift = 0.0
     has_function = False
@@ -595,15 +1044,17 @@ def _normalize_expression(expr, outer_shift=0.0):
     return expr, quantize_time(outer_shift + inner_shift)
 
 
-def _pack_normalized(bounds, seq, expr_shifts):
+def _pack_normalized_with_cache(bounds, seq, expr_shifts, canonical=False,
+                                retain_cache=False):
     _lock_time_resolution()
     bound_ticks = tuple(_time_to_tick(bound) for bound in bounds)
-    seq = tuple(seq)
-    expr_shifts = tuple(expr_shifts)
+    seq = (tuple(seq) if canonical else
+           tuple(_canonicalize_expression(expr) for expr in seq))
+    shift_ticks = tuple(_time_to_tick(shift) for shift in expr_shifts)
     if (len(bound_ticks) != len(seq) or not bound_ticks
             or bound_ticks[-1] != int(_INF_TICK)):
         raise ValueError("bounds and seq must have equal non-zero lengths ending at +inf")
-    if len(expr_shifts) != len(seq):
+    if len(shift_ticks) != len(seq):
         raise ValueError("expression shifts and seq must have equal lengths")
     if any(bound_ticks[i] >= bound_ticks[i + 1]
            for i in range(len(bound_ticks) - 1)):
@@ -612,8 +1063,8 @@ def _pack_normalized(bounds, seq, expr_shifts):
     expr_map = {}
     expr_blobs = []
     expr_ids = []
-    shift_ticks = []
-    for expr, expression_shift in zip(seq, expr_shifts):
+    canonical_shift_ticks = []
+    for expr, expression_shift_tick in zip(seq, shift_ticks):
         expr_id = expr_map.get(expr)
         if expr_id is None and expr not in expr_map:
             expr_id = len(expr_blobs)
@@ -621,31 +1072,77 @@ def _pack_normalized(bounds, seq, expr_shifts):
             expr_blobs.append(_encode_expr(expr))
         expr_ids.append(expr_id)
         if expr == _zero or expr[0] == (((), ()),):
-            expression_shift = 0.0
-        shift_ticks.append(_time_to_tick(expression_shift))
+            expression_shift_tick = 0
+        canonical_shift_ticks.append(expression_shift_tick)
 
     out = bytearray(_HEADER.pack(_MAGIC, _VERSION, 0, len(bound_ticks),
                                  len(expr_blobs)))
-    out.extend(np.asarray(bound_ticks, dtype="<i8").tobytes())
-    out.extend(np.asarray(expr_ids, dtype="<u4").tobytes())
-    out.extend(np.asarray(shift_ticks, dtype="<i8").tobytes())
+    # Avoid four temporary NumPy arrays for the common small-waveform case.
+    if len(bound_ticks) <= 32:
+        out.extend(struct.pack(f"<{len(bound_ticks)}q", *bound_ticks))
+        out.extend(struct.pack(f"<{len(expr_ids)}I", *expr_ids))
+        out.extend(struct.pack(f"<{len(canonical_shift_ticks)}q",
+                               *canonical_shift_ticks))
+    else:
+        out.extend(np.asarray(bound_ticks, dtype="<i8").tobytes())
+        out.extend(np.asarray(expr_ids, dtype="<u4").tobytes())
+        out.extend(np.asarray(canonical_shift_ticks, dtype="<i8").tobytes())
     offsets = [0]
     for blob in expr_blobs:
         offsets.append(offsets[-1] + len(blob))
-    out.extend(np.asarray(offsets, dtype="<u4").tobytes())
+    if len(offsets) <= 32:
+        out.extend(struct.pack(f"<{len(offsets)}I", *offsets))
+    else:
+        out.extend(np.asarray(offsets, dtype="<u4").tobytes())
     for blob in expr_blobs:
         out.extend(blob)
-    return bytes(out)
+    # Retaining decoded tuples is valuable for the small blocks used during
+    # algebra, but wastes time and memory for large simplified waveforms.
+    normalized = None
+    if retain_cache or len(bound_ticks) <= 64:
+        normalized = (
+            tuple(_tick_to_time(tick) for tick in bound_ticks),
+            seq,
+            tuple(_tick_to_time(tick) for tick in canonical_shift_ticks),
+        )
+    return bytes(out), normalized
 
 
-def _pack_block(bounds, seq):
+def _pack_normalized(bounds, seq, expr_shifts):
+    return _pack_normalized_with_cache(bounds, seq, expr_shifts)[0]
+
+
+def _pack_single_with_cache(expr, shift=0.0):
+    """Emit the one-segment canonical block used by scalar builtins."""
+    _lock_time_resolution()
+    if _expr_is_constant(expr):
+        shift_tick = 0
+    else:
+        shift_tick = _time_to_tick(shift)
+    blob = _encode_expr(expr)
+    data = (
+        _HEADER.pack(_MAGIC, _VERSION, 0, 1, 1)
+        + struct.pack("<qIqII", int(_INF_TICK), 0, shift_tick, 0, len(blob))
+        + blob
+    )
+    normalized = ((inf,), (expr,), (_tick_to_time(shift_tick),))
+    return data, normalized
+
+
+def _pack_block_with_cache(bounds, seq, canonical=False):
     normalized = []
     shifts = []
     for expr in seq:
         expr, shift = _normalize_expression(expr)
         normalized.append(expr)
         shifts.append(shift)
-    return _pack_normalized(bounds, normalized, shifts)
+    return _pack_normalized_with_cache(
+        bounds, normalized, shifts, canonical=canonical
+    )
+
+
+def _pack_block(bounds, seq):
+    return _pack_block_with_cache(bounds, seq)[0]
 
 
 def _block_layout(bytes data):
@@ -675,22 +1172,71 @@ def _block_layout(bytes data):
             shifts_offset, offsets_offset, expr_data_offset)
 
 
+def _block_layout_unchecked(bytes data):
+    """Return offsets for an internally generated, already trusted block."""
+    _, _, _, segment_count, expr_count = _HEADER.unpack_from(data)
+    bounds_offset = _HEADER.size
+    ids_offset = bounds_offset + 8 * segment_count
+    shifts_offset = ids_offset + 4 * segment_count
+    offsets_offset = shifts_offset + 8 * segment_count
+    expr_data_offset = offsets_offset + 4 * (expr_count + 1)
+    return (segment_count, expr_count, bounds_offset, ids_offset,
+            shifts_offset, offsets_offset, expr_data_offset)
+
+
 cdef class PackedWaveform:
     cdef bytes _data
     cdef object _decoded
     cdef object _normalized
+    cdef object _layout
 
     def __cinit__(self, data=None):
         self._decoded = None
         self._normalized = None
+        self._layout = None
         if data is not None:
             _lock_time_resolution()
             self._data = data if isinstance(data, bytes) else bytes(data)
-            _block_layout(self._data)
+            self._layout = _block_layout(self._data)
+
+    @classmethod
+    def _from_trusted(cls, data, normalized=None):
+        """Construct from bytes emitted by this module without revalidating."""
+        cdef PackedWaveform obj = cls.__new__(cls)
+        obj._data = data if isinstance(data, bytes) else bytes(data)
+        obj._decoded = None
+        obj._normalized = normalized
+        obj._layout = _block_layout_unchecked(obj._data)
+        return obj
+
+    @classmethod
+    def _from_normalized(cls, bounds, seq, shifts):
+        data, normalized = _pack_normalized_with_cache(bounds, seq, shifts)
+        return cls._from_trusted(data, normalized)
+
+    @classmethod
+    def _from_canonical(cls, bounds, seq, shifts):
+        data, normalized = _pack_normalized_with_cache(
+            bounds, seq, shifts, canonical=True
+        )
+        return cls._from_trusted(data, normalized)
+
+    @classmethod
+    def _from_canonical_cached(cls, bounds, seq, shifts):
+        data, normalized = _pack_normalized_with_cache(
+            bounds, seq, shifts, canonical=True, retain_cache=True
+        )
+        return cls._from_trusted(data, normalized)
+
+    @classmethod
+    def _from_single(cls, expr, shift=0.0):
+        data, normalized = _pack_single_with_cache(expr, shift)
+        return cls._from_trusted(data, normalized)
 
     @classmethod
     def from_legacy(cls, bounds, seq):
-        return cls(_pack_block(bounds, seq))
+        data, normalized = _pack_block_with_cache(bounds, seq)
+        return cls._from_trusted(data, normalized)
 
     @classmethod
     def from_bytes(cls, data):
@@ -715,26 +1261,46 @@ cdef class PackedWaveform:
         return (type(self).from_bytes, (self._data,))
 
     def get_bounds(self):
-        segment_count, _, bounds_offset, _, _, _, _ = _block_layout(self._data)
+        segment_count, _, bounds_offset, _, _, _, _ = self._layout
         ticks = np.frombuffer(self._data, dtype="<i8", count=segment_count,
                               offset=bounds_offset)
-        view = ticks.astype(np.float64) * _TIME_RESOLUTION
+        view = (ticks.astype(np.float64) * _TIME_NUMERATOR
+                / _TIME_DENOMINATOR)
         if len(view) and ticks[-1] == _INF_TICK:
             view[-1] = inf
         view.flags.writeable = False
         return view
 
     def get_bound_ticks(self):
-        segment_count, _, bounds_offset, _, _, _, _ = _block_layout(self._data)
+        segment_count, _, bounds_offset, _, _, _, _ = self._layout
         view = np.frombuffer(self._data, dtype="<i8", count=segment_count,
                              offset=bounds_offset)
         view.flags.writeable = False
         return view
 
+    def support_ticks(self):
+        """Return the half-open non-zero support interval in integer ticks."""
+        segment_count, _, bounds_offset, _, _, _, _ = self._layout
+        ticks = np.frombuffer(self._data, dtype="<i8", count=segment_count,
+                              offset=bounds_offset)
+        _, seq, _ = self._decode_normalized()
+        first = None
+        last = None
+        for index, expression in enumerate(seq):
+            if expression != _zero:
+                if first is None:
+                    first = index
+                last = index
+        if first is None:
+            return int(_INF_TICK), -int(_INF_TICK)
+        lower = -int(_INF_TICK) if first == 0 else int(ticks[first - 1])
+        upper = int(ticks[last])
+        return lower, upper
+
     cdef object _decode_normalized(self):
         if self._normalized is not None:
             return self._normalized
-        segment_count, expr_count, bounds_offset, ids_offset, shifts_offset, offsets_offset, expr_data_offset = _block_layout(self._data)
+        segment_count, expr_count, bounds_offset, ids_offset, shifts_offset, offsets_offset, expr_data_offset = self._layout
         ticks = np.frombuffer(self._data, dtype="<i8", count=segment_count,
                               offset=bounds_offset)
         bounds = tuple(_tick_to_time(tick) for tick in ticks)
@@ -765,24 +1331,37 @@ cdef class PackedWaveform:
 
     def shifted(self, time):
         bounds, seq, shifts = self._decode_normalized()
-        return PackedWaveform(_pack_normalized(
+        return PackedWaveform._from_canonical(
             tuple(round(bound + time, NDIGITS) for bound in bounds), seq,
-            tuple(quantize_time(shift + time) for shift in shifts)))
+            tuple(quantize_time(shift + time) for shift in shifts))
 
     def scaled(self, value):
         bounds, seq, shifts = self._decode_normalized()
-        constant = _const_expr(_real_number(value))
-        scaled_seq = tuple(_expr_mul(expr, constant) for expr in seq)
+        value = _real_number(value)
+        scaled_seq = tuple(_expr_scale(expr, value) for expr in seq)
         scaled_shifts = tuple(0 if expr == _zero else shift
                               for expr, shift in zip(scaled_seq, shifts))
-        return PackedWaveform(_pack_normalized(bounds, scaled_seq,
-                                               scaled_shifts))
+        return PackedWaveform._from_canonical(bounds, scaled_seq,
+                                              scaled_shifts)
 
     def add(self, PackedWaveform other):
-        return _merge_blocks(self, other, False)
+        return _merge_blocks_affine(self, other, False)
+
+    def add_affine(self, PackedWaveform other, left_delay=0.0,
+                   left_scale=1.0, right_delay=0.0, right_scale=1.0):
+        return _merge_blocks_affine(
+            self, other, False, left_delay, left_scale,
+            right_delay, right_scale,
+        )
 
     def mul(self, PackedWaveform other):
-        return _merge_blocks(self, other, True)
+        return _merge_blocks_affine(self, other, True)
+
+    def mul_affine(self, PackedWaveform other, left_delay=0.0,
+                   right_delay=0.0):
+        return _merge_blocks_affine(
+            self, other, True, left_delay, 1.0, right_delay, 1.0,
+        )
 
     def power(self, n):
         bounds, seq, shifts = self._decode_normalized()
@@ -797,8 +1376,8 @@ cdef class PackedWaveform:
             result, shift = _normalize_expression(result, shift)
             powered.append(result)
             powered_shifts.append(shift)
-        return PackedWaveform(_pack_normalized(bounds, powered,
-                                               powered_shifts))
+        return PackedWaveform._from_canonical(bounds, powered,
+                                              powered_shifts)
 
     def simplify(self, eps=1e-15):
         bounds, seq, shifts = self._decode_normalized()
@@ -819,8 +1398,8 @@ cdef class PackedWaveform:
                 new_bounds.append(bound)
                 new_seq.append(simplified)
                 new_shifts.append(shift)
-        return PackedWaveform(_pack_normalized(tuple(new_bounds), new_seq,
-                                               new_shifts))
+        return PackedWaveform._from_canonical(tuple(new_bounds), new_seq,
+                                              new_shifts)
 
     def filtered(self, low=0, high=inf, eps=1e-15):
         bounds, seq, shifts = self._decode_normalized()
@@ -835,8 +1414,8 @@ cdef class PackedWaveform:
             result, shift = _normalize_expression(result, shift)
             filtered_seq.append(result)
             filtered_shifts.append(shift)
-        return PackedWaveform(_pack_normalized(bounds, filtered_seq,
-                                               filtered_shifts))
+        return PackedWaveform._from_canonical(bounds, filtered_seq,
+                                              filtered_shifts)
 
     def derivative(self, order=1):
         if order < 0 or not isinstance(order, int):
@@ -855,8 +1434,8 @@ cdef class PackedWaveform:
             result, shift = _normalize_expression(result, shift)
             derived_seq.append(result)
             derived_shifts.append(shift)
-        return PackedWaveform(_pack_normalized(bounds, derived_seq,
-                                               derived_shifts))
+        return PackedWaveform._from_normalized(bounds, derived_seq,
+                                               derived_shifts)
 
     def evaluate(self, x, lower=-inf, upper=inf):
         parts, _ = self.parts_shifted(x, 0.0, lower, upper)
@@ -926,14 +1505,42 @@ def _insert_pair(t_list, v_list, term, value, lo, hi):
 
 
 def _expr_add(x, y):
-    t_list, v_list = list(x[0]), list(x[1])
+    if x == _zero:
+        return y
+    if y == _zero:
+        return x
+    x_terms, x_values = x
+    y_terms, y_values = y
+    if x_terms[-1] < y_terms[0]:
+        return x_terms + y_terms, x_values + y_values
+    if y_terms[-1] < x_terms[0]:
+        return y_terms + x_terms, y_values + x_values
+    t_list, v_list = list(x_terms), list(x_values)
     lo, hi = 0, len(t_list)
-    for term, value in zip(*y):
+    for term, value in zip(y_terms, y_values):
         lo, hi = _insert_pair(t_list, v_list, term, value, lo, hi)
     return tuple(t_list), tuple(v_list)
 
 
+def _expr_scale(expr, value):
+    if value == 0 or expr == _zero:
+        return _zero
+    if value == 1:
+        return expr
+    return expr[0], tuple(coefficient * value for coefficient in expr[1])
+
+
 def _expr_mul(x, y):
+    if x == _zero or y == _zero:
+        return _zero
+    if x[0] == (((), ()),):
+        return _expr_scale(y, x[1][0])
+    if y[0] == (((), ()),):
+        return _expr_scale(x, y[1][0])
+    if len(x[0]) == 1 and len(y[0]) == 1:
+        term = _expr_add(x[0][0], y[0][0])
+        value = x[1][0] * y[1][0]
+        return ((term,), (value,)) if value != 0 else _zero
     t_list, v_list = [], []
     lo = hi = 0
     for (t1, t2), (v1, v2) in zip(product(x[0], y[0]),
@@ -1223,34 +1830,118 @@ def _filter_expr(expr, low, high, eps):
     return result
 
 
-def _merge_blocks(PackedWaveform left, PackedWaveform right, bint multiply):
-    b1, s1 = left.to_legacy()
-    b2, s2 = right.to_legacy()
+def _expr_is_constant(expr):
+    return expr == _zero or expr[0] == (((), ()),)
+
+
+def _combine_affine_expressions(expr1, shift1, scale1,
+                                expr2, shift2, scale2, multiply):
+    if scale1 == 0 or expr1 == _zero:
+        if multiply:
+            return _zero, 0.0
+        expr1 = _zero
+        shift1 = 0.0
+    elif scale1 != 1:
+        expr1 = _expr_scale(expr1, scale1)
+    if scale2 == 0 or expr2 == _zero:
+        if multiply:
+            return _zero, 0.0
+        expr2 = _zero
+        shift2 = 0.0
+    elif scale2 != 1:
+        expr2 = _expr_scale(expr2, scale2)
+
+    if not _expr_is_constant(expr1):
+        origin = shift1
+    elif not _expr_is_constant(expr2):
+        origin = shift2
+    else:
+        origin = 0.0
+    if not _expr_is_constant(expr1) and shift1 != origin:
+        expr1 = _expr_shift(expr1, shift1 - origin)
+    if not _expr_is_constant(expr2) and shift2 != origin:
+        expr2 = _expr_shift(expr2, shift2 - origin)
+    result = (_expr_mul(expr1, expr2) if multiply
+              else _expr_add(expr1, expr2))
+    return _normalize_expression(result, origin)
+
+
+def _merge_blocks_affine(PackedWaveform left, PackedWaveform right,
+                         bint multiply, left_delay=0.0, left_scale=1.0,
+                         right_delay=0.0, right_scale=1.0):
+    b1, s1, h1 = left._decode_normalized()
+    b2, s2, h2 = right._decode_normalized()
+    left_delay = quantize_time(left_delay)
+    right_delay = quantize_time(right_delay)
+    left_scale = _real_number(left_scale)
+    right_scale = _real_number(right_scale)
+    if left_delay:
+        b1 = tuple(quantize_time(bound + left_delay) for bound in b1)
+        h1 = tuple(quantize_time(shift + left_delay) for shift in h1)
+    if right_delay:
+        b2 = tuple(quantize_time(bound + right_delay) for bound in b2)
+        h2 = tuple(quantize_time(shift + right_delay) for shift in h2)
     bounds = []
     seq = []
+    shifts = []
+    cache = {}
     i = j = 0
     while i < len(b1) and j < len(b2):
         bound = min(b1[i], b2[j])
-        expr = _expr_mul(s1[i], s2[j]) if multiply else _expr_add(s1[i], s2[j])
-        if seq and expr == seq[-1]:
+        key = (s1[i], h1[i], s2[j], h2[j])
+        combined = cache.get(key)
+        if combined is None:
+            combined = _combine_affine_expressions(
+                s1[i], h1[i], left_scale,
+                s2[j], h2[j], right_scale,
+                multiply,
+            )
+            cache[key] = combined
+        expr, shift = combined
+        if seq and expr == seq[-1] and shift == shifts[-1]:
             bounds[-1] = bound
         else:
             bounds.append(bound)
             seq.append(expr)
+            shifts.append(shift)
         if bound == b1[i]:
             i += 1
         if bound == b2[j]:
             j += 1
-    return PackedWaveform.from_legacy(tuple(bounds), tuple(seq))
+    return PackedWaveform._from_canonical(tuple(bounds), tuple(seq),
+                                          tuple(shifts))
 
 
 def constant(value):
-    return PackedWaveform.from_legacy((inf,), (_const_expr(value),))
+    return PackedWaveform._from_single(_const_expr(value))
 
 
 def basic(opcode, args=(), shift=0.0):
-    expr = (((((int(opcode), *tuple(args), float(shift)),), (1,)),), (1.0,))
-    return PackedWaveform.from_legacy((inf,), (expr,))
+    # The function shift is stored once in the segment shift array, so a
+    # scalar builtin can be emitted directly in canonical form.
+    expr = _canonicalize_expression(
+        (((((int(opcode), *tuple(args), 0.0),), (1,)),), (1.0,))
+    )
+    return PackedWaveform._from_single(expr, shift)
+
+
+def basic_expression(opcode, args=(), shift=0.0):
+    """Return a legacy expression without constructing a temporary block."""
+    return _canonicalize_expression(
+        (((((int(opcode), *tuple(args), float(shift)),), (1,)),), (1.0,))
+    )
+
+
+def affine_expression(opcode, args=(), shift=0.0, scale=1.0, offset=0.0):
+    """Return ``offset + scale * builtin`` as one unpacked expression."""
+    expr = basic_expression(opcode, args, shift)
+    scale = _real_number(scale)
+    offset = _real_number(offset)
+    if scale != 1:
+        expr = _expr_mul(expr, _const_expr(scale))
+    if offset:
+        expr = _expr_add(_const_expr(offset), expr)
+    return expr
 
 
 def piecewise(bounds, expressions):
@@ -1266,6 +1957,25 @@ def piecewise(bounds, expressions):
         else:
             seq.append(expression)
     return PackedWaveform.from_legacy(bounds, tuple(seq))
+
+
+def piecewise_canonical(bounds, expressions):
+    """Pack internal, already-canonical expressions without a second pass."""
+    seq = []
+    for expression in expressions:
+        if isinstance(expression, PackedWaveform):
+            eb, es = expression.to_legacy()
+            if len(eb) != 1:
+                raise ValueError("piecewise expressions must be scalar cores")
+            seq.append(es[0])
+        elif isinstance(expression, (int, float, complex, np.number)):
+            seq.append(_const_expr(expression))
+        else:
+            seq.append(expression)
+    data, normalized = _pack_block_with_cache(
+        bounds, tuple(seq), canonical=True
+    )
+    return PackedWaveform._from_trusted(data, normalized)
 
 
 def sum_cores(cores):
@@ -1376,8 +2086,9 @@ def _sum_events(events, global_shift=0, offset=0):
             output_seq.append(expr)
             output_shifts.append(shift)
     output_bounds.append(inf)
-    return PackedWaveform(_pack_normalized(tuple(output_bounds), output_seq,
-                                           output_shifts))
+    return PackedWaveform._from_canonical_cached(
+        tuple(output_bounds), output_seq, output_shifts
+    )
 
 
 def _pack_stack(events):

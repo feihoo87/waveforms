@@ -20,9 +20,13 @@ from ._waveform import (
     COS, COSH, D_GAUSSIAN, DRAG, DRAG_SIN, DRAG_SINX, ERF, EXP,
     EXPONENTIALCHIRP, GAUSSIAN,
     HYPERBOLICCHIRP, INTERP, LINEAR, LINEARCHIRP, MOLLIFIER, SINC, SINH,
-    PackedStack, PackedWaveform, basic, constant, get_time_resolution,
-    piecewise, quantize_time, registerBaseFunc, registerDerivative,
-    set_time_resolution,
+    PackedStack, PackedWaveform, accumulate_template, affine_expression,
+    basic, basic_expression, constant, get_time_resolution,
+    piecewise, piecewise_canonical, place_quantized_template,
+    place_template_quantized,
+    quantize_samples, quantize_time, registerBaseFunc,
+    registerDerivative, sample_clock, sample_grid, set_time_resolution,
+    tick_to_time, time_to_tick,
 )
 
 _ZERO_EXPR = ((), ())
@@ -30,6 +34,19 @@ _ONE_EXPR = ((((), ()),), (1.0,))
 _COMPLEX_WAVE_MAGIC = b"CWF1"
 _COMPLEX_STACK_MAGIC = b"CWS1"
 _COMPLEX_HEADER = struct.Struct("<4sII")
+_SUPPORTED_SAMPLE_RATES = frozenset({
+    500_000_000,
+    1_000_000_000,
+    1_200_000_000,
+    2_000_000_000,
+    2_400_000_000,
+    2_500_000_000,
+    4_000_000_000,
+    6_000_000_000,
+    8_000_000_000,
+    10_000_000_000,
+})
+_INF_TICK = np.iinfo(np.int64).max
 
 
 def _number_parts(value):
@@ -72,8 +89,145 @@ def _scalar(opcode, *args, shift=0.0):
     return basic(opcode, args, shift)
 
 
+def _expression(opcode, *args, shift=0.0):
+    return basic_expression(opcode, args, shift)
+
+
+def _affine_expression(opcode, *args, shift=0.0, scale=1.0, offset=0.0):
+    return affine_expression(opcode, args, shift, scale, offset)
+
+
 def _piecewise(bounds, *expressions):
-    return Waveform._from_core(piecewise(tuple(bounds), expressions))
+    return Waveform._from_core(
+        piecewise_canonical(tuple(bounds), expressions)
+    )
+
+
+def _is_tick_aligned(value, tick):
+    reconstructed = tick_to_time(tick)
+    tolerance = max(get_time_resolution() * 1e-6,
+                    abs(np.spacing(float(value))) * 2)
+    return abs(float(value) - reconstructed) <= tolerance
+
+
+def _sampling_plan(start, stop, sample_rate):
+    """Return an integer/rational tick plan for a supported device rate."""
+    rate = float(sample_rate)
+    if not np.isfinite(rate) or rate <= 0:
+        raise ValueError("sample_rate must be a finite positive number")
+    integer_rate = int(rate)
+    if rate != integer_rate or integer_rate not in _SUPPORTED_SAMPLE_RATES:
+        return None
+    start_tick = time_to_tick(start)
+    stop_tick = time_to_tick(stop)
+    if (not _is_tick_aligned(start, start_tick)
+            or not _is_tick_aligned(stop, stop_tick)):
+        return None
+    step_numerator, step_denominator = sample_clock(integer_rate)
+    span_numerator = (stop_tick - start_tick) * step_denominator
+    count = (max(0, span_numerator) + step_numerator - 1) // step_numerator
+    return (start_tick, int(count), step_numerator, step_denominator)
+
+
+def _quantization_bits(dtype, out):
+    if dtype is None and out is not None:
+        candidate = np.asarray(out).dtype
+        if candidate in (np.dtype(np.int16), np.dtype(np.int32)):
+            dtype = candidate
+    if dtype is None:
+        return None, None
+    dtype = np.dtype(dtype)
+    if dtype == np.dtype(np.int16):
+        return dtype, 16
+    if dtype == np.dtype(np.int32):
+        return dtype, 32
+    if np.issubdtype(dtype, np.integer):
+        raise TypeError("only int16 and int32 amplitude quantization is supported")
+    return dtype, None
+
+
+def _integer_output(count, bits, out=None, fill=0):
+    dtype = np.dtype(np.int16 if bits == 16 else np.int32)
+    if out is None:
+        output = np.empty(count, dtype=dtype)
+    else:
+        output = np.asarray(out)
+        if output.shape != (count,):
+            raise ValueError("out has the wrong shape")
+        if output.dtype != dtype:
+            raise TypeError(f"out must have dtype {dtype}")
+        if not output.flags.c_contiguous or not output.flags.writeable:
+            raise ValueError("out must be a writable C-contiguous array")
+    output.fill(fill)
+    return output
+
+
+def _finish_samples(sig, dtype, full_scale, out):
+    dtype, bits = _quantization_bits(dtype, out)
+    if bits is not None:
+        return quantize_samples(sig, bits, full_scale, out)
+    result = np.asarray(sig) if dtype is None else np.asarray(sig, dtype=dtype)
+    if out is None:
+        return result
+    output = np.asarray(out)
+    if output.shape != result.shape:
+        raise ValueError("out has the wrong shape")
+    if not output.flags.writeable:
+        raise ValueError("out must be writable")
+    output[...] = result
+    return output
+
+
+def _filter_samples(sig, filters, zi=None):
+    if filters is None:
+        return sig, zi
+    sos, initial = filters
+    sos = np.asarray(sos)
+    if not sos.flags.writeable:
+        sos = sos.copy()
+    values = sig - initial if initial else sig
+    if zi is None:
+        filtered = sosfilt(sos, values)
+    else:
+        filtered, zi = sosfilt(sos, values, zi=zi)
+    if initial:
+        filtered = filtered + initial
+    return filtered, zi
+
+
+def _sample_iq(owner, sample_rate=None, out=None, chunk_size=None,
+               function_lib=None, filters=None, dtype=np.int16,
+               full_scale=1.0):
+    """Sample a complex wrapper as separate real I/Q buffers."""
+    if out is None:
+        out_i = out_q = None
+    else:
+        if not isinstance(out, (tuple, list)) or len(out) != 2:
+            raise TypeError("out must be an (I, Q) pair")
+        out_i, out_q = out
+    values = owner.sample(
+        sample_rate=sample_rate, chunk_size=chunk_size,
+        function_lib=function_lib, filters=filters,
+    )
+    if chunk_size is None:
+        return (
+            _finish_samples(values.real, dtype, full_scale, out_i),
+            _finish_samples(values.imag, dtype, full_scale, out_q),
+        )
+
+    def chunks():
+        offset = 0
+        for values_chunk in values:
+            size = len(values_chunk)
+            target_i = None if out_i is None else out_i[offset:offset + size]
+            target_q = None if out_q is None else out_q[offset:offset + size]
+            yield (
+                _finish_samples(values_chunk.real, dtype, full_scale, target_i),
+                _finish_samples(values_chunk.imag, dtype, full_scale, target_q),
+            )
+            offset += size
+
+    return chunks()
 
 
 class _SamplingMixin:
@@ -84,7 +238,8 @@ class _SamplingMixin:
 
     def sample(self, sample_rate=None, out: np.ndarray | None = None,
                chunk_size=None, function_lib=None,
-               filters: tuple[np.ndarray, float] | None = None):
+               filters: tuple[np.ndarray, float] | None = None,
+               dtype=None, full_scale=1.0):
         if function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         if sample_rate is None:
@@ -97,52 +252,78 @@ class _SamplingMixin:
         if filters is None:
             filters = self.filters
         if chunk_size is not None:
-            return self._sample_iter(sample_rate, int(chunk_size), out, filters)
+            return self._sample_iter(
+                sample_rate, int(chunk_size), out, filters, dtype, full_scale
+            )
 
-        x = np.arange(self.start, self.stop, 1 / sample_rate)
-        sig = cast(np.ndarray, self(x, out=out))
-        if filters is not None:
-            sos, initial = filters
-            sos = np.asarray(sos)
-            if not sos.flags.writeable:
-                sos = sos.copy()
-            sig = sosfilt(sos, sig - initial) + initial if initial else sosfilt(sos, sig)
-        return cast(np.ndarray, sig)
+        plan = _sampling_plan(self.start, self.stop, sample_rate)
+        if plan is None:
+            x = np.arange(self.start, self.stop, 1 / float(sample_rate))
+            sig = cast(np.ndarray, self(x))
+        else:
+            _, bits = _quantization_bits(dtype, out)
+            if bits is not None and filters is None:
+                specialized = getattr(
+                    self, "_sample_supported_quantized", None
+                )
+                if specialized is not None:
+                    result = specialized(
+                        *plan, bits, full_scale, out=out
+                    )
+                    if result is not NotImplemented:
+                        return cast(np.ndarray, result)
+            sig = self._sample_supported(*plan)
+        sig, _ = _filter_samples(sig, filters)
+        return cast(np.ndarray, _finish_samples(sig, dtype, full_scale, out))
 
-    def _sample_iter(self, sample_rate, chunk_size, out, filters):
+    def _sample_supported(self, start_tick, count, step_numerator,
+                          step_denominator, index_offset=0):
+        x = sample_grid(start_tick, count, step_numerator, step_denominator,
+                        index_offset)
+        return cast(np.ndarray, self(x))
+
+    def _sample_iter(self, sample_rate, chunk_size, out, filters, dtype,
+                     full_scale):
         start = cast(float, self.start)
-        stop_limit = cast(float, self.stop)
+        stop = cast(float, self.stop)
         output_index = 0
         zi = None
-        initial = 0
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
+        plan = _sampling_plan(start, stop, sample_rate)
+        if plan is None:
+            rate = float(sample_rate)
+            if not np.isfinite(rate) or rate <= 0:
+                raise ValueError("sample_rate must be a finite positive number")
+            total = max(0, int(np.ceil((stop - start) * rate)))
+        else:
+            start_tick, total, step_numerator, step_denominator = plan
         if filters is not None:
-            sos, initial = filters
+            sos, _ = filters
             sos = np.asarray(sos)
-            if not sos.flags.writeable:
-                sos = sos.copy()
             zi = np.zeros((sos.shape[0], 2))
+        if out is not None:
+            output = np.asarray(out)
+            if output.ndim != 1 or len(output) != total:
+                raise ValueError("out has the wrong shape")
+        else:
+            output = None
 
-        while start < stop_limit:
-            size = min(chunk_size, round((stop_limit - start) * sample_rate))
-            if size <= 0:
-                break
-            stop = start + size / sample_rate
-            x = np.linspace(start, stop, size, endpoint=False)
-            sig = cast(np.ndarray, self(x))
-            if filters is not None:
-                if initial:
-                    sig = sig - initial
-                sig, zi = sosfilt(sos, sig, zi=zi)
-                if initial:
-                    sig = sig + initial
-            if out is not None:
-                out[output_index:output_index + size] = sig
-                yield out[output_index:output_index + size]
+        while output_index < total:
+            size = min(chunk_size, total - output_index)
+            if plan is None:
+                indices = output_index + np.arange(size, dtype=np.float64)
+                x = start + indices / rate
+                sig = cast(np.ndarray, self(x))
             else:
-                yield sig
-            start = stop
+                sig = self._sample_supported(
+                    start_tick, size, step_numerator, step_denominator,
+                    output_index,
+                )
+            sig, zi = _filter_samples(sig, filters, zi)
+            target = (None if output is None
+                      else output[output_index:output_index + size])
+            yield _finish_samples(sig, dtype, full_scale, target)
             output_index += size
 
     def _play(self, time_unit, volume):
@@ -205,7 +386,20 @@ class Waveform(_SamplingMixin):
 
     @classmethod
     def _from_core(cls, core, delay=0.0, scale=1.0):
-        return cls(_core=core, _delay=delay, _scale=scale)
+        # Internal cores and affine values are already real and tick-aligned.
+        # Bypass the public constructor's legacy conversion and type checks.
+        obj = cls.__new__(cls)
+        obj._core = core
+        obj._delay = quantize_time(delay)
+        obj._scale = scale
+        obj.max = inf
+        obj.min = -inf
+        obj.start = None
+        obj.stop = None
+        obj.sample_rate = None
+        obj.filters = None
+        obj.label = None
+        return obj
 
     def _materialized_core(self):
         core = self._core
@@ -214,6 +408,39 @@ class Waveform(_SamplingMixin):
         if self._delay != 0:
             core = core.shifted(self._delay)
         return core
+
+    def _sample_supported_quantized(
+            self, start_tick, count, step_numerator, step_denominator,
+            bits, full_scale, out=None):
+        """Quantize non-zero pieces directly into the integer output."""
+        x = sample_grid(
+            start_tick, count, step_numerator, step_denominator
+        )
+        output = _integer_output(count, bits, out)
+        parts, _ = self._core.parts_shifted(x, self._delay)
+        should_scale = self._scale != 1
+        should_clip = self.min != -inf or self.max != inf
+        # Several tiny pieces cost more as separate quantizer calls than one
+        # contiguous pass.  Materialize short composite waveforms once, while
+        # retaining sparse direct writes for large windows.
+        if len(parts) > 1 and count < 2048:
+            signal = np.zeros(count, dtype=np.float64)
+            for start, stop, part in parts:
+                if should_scale:
+                    part = part * self._scale
+                if should_clip:
+                    part = np.clip(part, self.min, self.max)
+                signal[start:stop] += part
+            return quantize_samples(signal, bits, full_scale, out)
+        for start, stop, part in parts:
+            if should_scale:
+                part = part * self._scale
+            if should_clip:
+                part = np.clip(part, self.min, self.max)
+            quantize_samples(
+                part, bits, full_scale, output[start:stop]
+            )
+        return output
 
     @property
     def bounds(self):
@@ -279,9 +506,21 @@ class Waveform(_SamplingMixin):
             if imag != 0:
                 return ComplexWaveform(self + real, _real_const(imag))
             other = _real_const(real)
-        return Waveform._from_core(
-            self._materialized_core().add(other._materialized_core())
-        )
+        if self._delay == other._delay:
+            if self._scale == other._scale:
+                return Waveform._from_core(
+                    self._core.add(other._core), self._delay, self._scale
+                )
+            return Waveform._from_core(
+                self._core.add_affine(
+                    other._core, 0.0, self._scale, 0.0, other._scale
+                ),
+                self._delay,
+            )
+        return Waveform._from_core(self._core.add_affine(
+            other._core, self._delay, self._scale,
+            other._delay, other._scale,
+        ))
 
     def __radd__(self, value):
         return self + value
@@ -303,8 +542,16 @@ class Waveform(_SamplingMixin):
         if isinstance(other, WaveVStack):
             return other * self
         if isinstance(other, Waveform):
+            scale = self._scale * other._scale
+            if self._delay == other._delay:
+                return Waveform._from_core(
+                    self._core.mul(other._core), self._delay, scale
+                )
             return Waveform._from_core(
-                self._materialized_core().mul(other._materialized_core())
+                self._core.mul_affine(
+                    other._core, self._delay, other._delay
+                ),
+                scale=scale,
             )
         real, imag = _number_parts(other)
         if imag != 0:
@@ -521,6 +768,14 @@ class ComplexWaveform(_SamplingMixin):
             _COMPLEX_WAVE_MAGIC, self._real.to_bytes(), self._imag.to_bytes()
         )
 
+    def sample_iq(self, sample_rate=None, out=None, chunk_size=None,
+                  function_lib=None, filters=None, dtype=np.int16,
+                  full_scale=1.0):
+        return _sample_iq(
+            self, sample_rate, out, chunk_size, function_lib, filters,
+            dtype, full_scale,
+        )
+
     @classmethod
     def from_bytes(cls, data):
         real_data, imag_data = _unpack_complex(data, _COMPLEX_WAVE_MAGIC)
@@ -713,7 +968,7 @@ class ComplexWaveform(_SamplingMixin):
 class WaveVStack(_SamplingMixin):
     __slots__ = (
         "_stack", "start", "stop", "sample_rate", "offset", "shift",
-        "filters", "label", "function_lib",
+        "filters", "label", "function_lib", "_sample_plan_cache",
     )
 
     def __init__(self, wlist=()):
@@ -738,6 +993,7 @@ class WaveVStack(_SamplingMixin):
         self.filters = None
         self.label = None
         self.function_lib = None
+        self._sample_plan_cache = None
 
     @classmethod
     def _from_stack(cls, stack):
@@ -787,6 +1043,145 @@ class WaveVStack(_SamplingMixin):
                 out[...] = values
             values = out
         return values[0] if scalar else values
+
+    def _template_sample_plan(self, start_tick, count, step_numerator,
+                              index_offset=0):
+        window_start = start_tick + index_offset * step_numerator
+        cache_key = (
+            window_start, count, step_numerator, self.shift,
+        )
+        if (self._sample_plan_cache is not None
+                and self._sample_plan_cache[0] == cache_key):
+            return self._sample_plan_cache[1]
+
+        groups = {}
+        support_cache = {}
+        non_overlapping = True
+        previous_start = -1
+        previous_stop = -1
+        for core, delay, scale in self._stack.events():
+            if scale == 0:
+                continue
+            delay_tick = time_to_tick(delay + self.shift)
+            support = support_cache.get(core)
+            if support is None:
+                support = core.support_ticks()
+                support_cache[core] = support
+            lower_tick, upper_tick = support
+            if lower_tick >= upper_tick:
+                continue
+            if lower_tick == -_INF_TICK or upper_tick == _INF_TICK:
+                self._sample_plan_cache = cache_key, None
+                return None
+
+            phase = (window_start - delay_tick) % step_numerator
+            key = (core, phase)
+            group = groups.get(key)
+            if group is None:
+                first_tick = lower_tick + (
+                    (phase - lower_tick) % step_numerator
+                )
+                template_count = max(
+                    0,
+                    (upper_tick - first_tick + step_numerator - 1)
+                    // step_numerator,
+                )
+                template_grid = sample_grid(
+                    first_tick, template_count, step_numerator, 1
+                )
+                group = [first_tick, core.evaluate(template_grid), [], []]
+                groups[key] = group
+            first_tick, template, destinations, scales = group
+            destination = (
+                delay_tick + first_tick - window_start
+            ) // step_numerator
+            start = max(0, destination)
+            stop = min(count, destination + len(template))
+            if start < stop:
+                if start < previous_start or start < previous_stop:
+                    non_overlapping = False
+                previous_start = start
+                previous_stop = max(previous_stop, stop)
+                destinations.append(destination)
+                scales.append(scale)
+
+        compiled = []
+        for _, template, destinations, scales in groups.values():
+            destinations = np.asarray(destinations, dtype=np.int64)
+            scales = np.asarray(scales, dtype=np.float64)
+            scale_groups = None
+            if len(scales):
+                unique_scales = np.unique(scales)
+                if len(unique_scales) <= 64:
+                    scale_groups = tuple(
+                        (float(scale), destinations[scales == scale])
+                        for scale in unique_scales
+                    )
+            compiled.append(
+                (template, destinations, scales, scale_groups)
+            )
+        plan = tuple(compiled), non_overlapping
+        self._sample_plan_cache = cache_key, plan
+        return plan
+
+    def _sample_supported(self, start_tick, count, step_numerator,
+                          step_denominator, index_offset=0):
+        # The common 120 GHz/device-rate case evaluates each distinct pulse
+        # only once per grid phase.  The compiled placement plan is retained
+        # for repeated float or integer sampling.
+        if step_denominator != 1:
+            return super()._sample_supported(
+                start_tick, count, step_numerator, step_denominator,
+                index_offset,
+            )
+        plan = self._template_sample_plan(
+            start_tick, count, step_numerator, index_offset
+        )
+        if plan is None:
+            return super()._sample_supported(
+                start_tick, count, step_numerator, 1, index_offset
+            )
+        groups, _ = plan
+        result = np.full(count, self.offset, dtype=np.float64)
+        for template, destinations, scales, _ in groups:
+            accumulate_template(result, template, destinations, scales)
+        return result
+
+    def _sample_supported_quantized(
+            self, start_tick, count, step_numerator, step_denominator,
+            bits, full_scale, out=None):
+        """Write separated repeated templates directly to integer output."""
+        if step_denominator != 1:
+            return NotImplemented
+        plan = self._template_sample_plan(
+            start_tick, count, step_numerator
+        )
+        if plan is None:
+            return NotImplemented
+        groups, non_overlapping = plan
+        if not non_overlapping:
+            return NotImplemented
+
+        base = quantize_samples(
+            np.asarray([self.offset]), bits, full_scale
+        )[0]
+        output = _integer_output(count, bits, out, fill=base)
+        for template, destinations, scales, scale_groups in groups:
+            if scale_groups is not None:
+                for scale, scale_destinations in scale_groups:
+                    quantized = quantize_samples(
+                        self.offset + scale * template,
+                        bits, full_scale,
+                    )
+                    place_quantized_template(
+                        output, quantized, scale_destinations
+                    )
+            elif len(destinations):
+                place_template_quantized(
+                    output, template, destinations, scales,
+                    self.offset, full_scale,
+                )
+        return output
 
     def to_bytes(self):
         if self.shift == 0 and self.offset == 0:
@@ -945,6 +1340,7 @@ class WaveVStack(_SamplingMixin):
          self.shift, self.filters, self.label) = state
         self._stack = PackedStack.from_bytes(data)
         self.function_lib = None
+        self._sample_plan_cache = None
 
 
 class ComplexWaveVStack(_SamplingMixin):
@@ -1074,6 +1470,14 @@ class ComplexWaveVStack(_SamplingMixin):
     def to_bytes(self):
         return _pack_complex(
             _COMPLEX_STACK_MAGIC, self.real.to_bytes(), self.imag.to_bytes()
+        )
+
+    def sample_iq(self, sample_rate=None, out=None, chunk_size=None,
+                  function_lib=None, filters=None, dtype=np.int16,
+                  full_scale=1.0):
+        return _sample_iq(
+            self, sample_rate, out, chunk_size, function_lib, filters,
+            dtype, full_scale,
         )
 
     @classmethod
@@ -1250,14 +1654,14 @@ def step(edge, type="erf"):
     if edge == 0:
         return _piecewise((0, inf), 0, 1)
     if type == "cos":
-        rise = constant(0.5).add(
-            _scalar(COS, pi / edge, shift=0.5 * edge).scaled(0.5)
+        rise = _affine_expression(
+            COS, pi / edge, shift=0.5 * edge, scale=0.5, offset=0.5
         )
         return _piecewise((-edge / 2, edge / 2, inf), 0, rise, 1)
     if type == "linear":
-        rise = constant(0.5).add(_scalar(LINEAR).scaled(1 / edge))
+        rise = _affine_expression(LINEAR, scale=1 / edge, offset=0.5)
         return _piecewise((-edge / 2, edge / 2, inf), 0, rise, 1)
-    rise = constant(0.5).add(_scalar(ERF, edge / 5).scaled(0.5))
+    rise = _affine_expression(ERF, edge / 5, scale=0.5, offset=0.5)
     return _piecewise((-edge, edge, inf), 0, rise, 1)
 
 
@@ -1277,7 +1681,7 @@ def gaussian(width, plateau=0.0, d=None):
 
     def base(shift):
         args = (std_sq2,) if d is None else (std_sq2, d)
-        return _scalar(opcode, *args, shift=shift)
+        return _expression(opcode, *args, shift=shift)
 
     if quantize_time(plateau / 2) <= 0:
         return _piecewise((-0.75 * width, 0.75 * width, inf), 0, base(0), 0)
@@ -1318,7 +1722,9 @@ def sinc(bw):
     if bw <= 0:
         return zero()
     width = 100 / bw
-    return _piecewise((-width / 2, width / 2, inf), 0, _scalar(SINC, bw), 0)
+    return _piecewise(
+        (-width / 2, width / 2, inf), 0, _expression(SINC, bw), 0
+    )
 
 
 def cosPulse(width, plateau=0.0):
@@ -1326,8 +1732,8 @@ def cosPulse(width, plateau=0.0):
         return square(plateau + width / 2, edge=width / 2, type="cos")
     if width <= 0:
         return zero()
-    pulse = constant(0.5).add(
-        _scalar(COS, 2 * pi / width).scaled(0.5)
+    pulse = _affine_expression(
+        COS, 2 * pi / width, scale=0.5, offset=0.5
     )
     return _piecewise((-width / 2, width / 2, inf), 0, pulse, 0)
 
@@ -1352,8 +1758,9 @@ def coshPulse(width, eps=1.0, plateau=0.0):
     scale = -1 / (amplitude - 1)
 
     def edge(shift):
-        return constant(amplitude / (amplitude - 1)).add(
-            _scalar(COSH, w, shift=shift).scaled(scale)
+        return _affine_expression(
+            COSH, w, shift=shift, scale=scale,
+            offset=amplitude / (amplitude - 1),
         )
 
     if plateau == 0 or quantize_time(-plateau / 2) == quantize_time(plateau / 2):
@@ -1389,12 +1796,12 @@ def mollifier(width, plateau=0.0, d=0):
         raise ValueError("width must be positive")
     if plateau <= 0:
         return _piecewise((-width / 2, width / 2, inf), 0,
-                          _scalar(MOLLIFIER, width / 2, d), 0)
+                          _expression(MOLLIFIER, width / 2, d), 0)
     return _piecewise(
         (-width / 2 - plateau / 2, -plateau / 2, plateau / 2,
          width / 2 + plateau / 2, inf),
-        0, _scalar(MOLLIFIER, width / 2, d, shift=-plateau / 2), 1,
-        _scalar(MOLLIFIER, width / 2, d, shift=plateau / 2), 0,
+        0, _expression(MOLLIFIER, width / 2, d, shift=-plateau / 2), 1,
+        _expression(MOLLIFIER, width / 2, d, shift=plateau / 2), 0,
     )
 
 
@@ -1416,21 +1823,23 @@ def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
     if plateau <= 0:
         return _piecewise(
             (t0, t0 + width, inf), 0,
-            _scalar(DRAG, t0, freq, width, delta, block_freq, phase), 0,
+            _expression(DRAG, t0, freq, width, delta, block_freq, phase), 0,
         )
     if width <= 0:
         w = 2 * pi * (freq + delta)
-        carrier = _scalar(COS, w, shift=(phase + 2 * pi * delta * t0) / w)
+        carrier = _expression(
+            COS, w, shift=(phase + 2 * pi * delta * t0) / w
+        )
         return _piecewise((t0, t0 + plateau, inf), 0, carrier, 0)
     w = 2 * pi * (freq + delta)
-    carrier = _scalar(COS, w, shift=(phase + 2 * pi * delta * t0) / w)
+    carrier = _expression(COS, w, shift=(phase + 2 * pi * delta * t0) / w)
     return _piecewise(
         (t0, t0 + width / 2, t0 + width / 2 + plateau,
          t0 + width + plateau, inf),
-        0, _scalar(DRAG, t0, freq, width, delta, block_freq, phase),
+        0, _expression(DRAG, t0, freq, width, delta, block_freq, phase),
         carrier,
-        _scalar(DRAG, t0 + plateau, freq, width, delta, block_freq,
-                phase - 2 * pi * delta * plateau), 0,
+        _expression(DRAG, t0 + plateau, freq, width, delta, block_freq,
+                    phase - 2 * pi * delta * plateau), 0,
     )
 
 
@@ -1448,7 +1857,7 @@ def drag_sin(freq, width, plateau=0, delta=0, block_freq=None, phase=0,
     if width <= 0:
         raise ValueError("width must be positive")
     phase += pi * delta * (width + plateau)
-    core = _scalar(
+    core = _expression(
         DRAG_SIN, t0, freq, width, delta, _block_frequencies(block_freq),
         phase, plateau,
     )
@@ -1463,7 +1872,7 @@ def drag_sinx(freq, width, plateau=0, delta=0, block_freq=None, phase=0,
     if not 0 < tab <= 1:
         raise ValueError("tab must be in the interval (0, 1]")
     phase += pi * delta * (width + plateau)
-    core = _scalar(
+    core = _expression(
         DRAG_SINX, t0, freq, width, delta, _block_frequencies(block_freq),
         phase, plateau, tab,
     )
@@ -1476,15 +1885,17 @@ def chirp(f0, f1, T, phi0=0, type="linear"):
     if T <= 0:
         raise ValueError("T must be positive")
     if type == "linear":
-        core = _scalar(LINEARCHIRP, f0, f1, T, phi0)
+        core = _expression(LINEARCHIRP, f0, f1, T, phi0)
     elif type in ("exp", "exponential", "geometric"):
         if f0 == 0:
             raise ValueError("f0 must be non-zero")
-        core = _scalar(EXPONENTIALCHIRP, f0, np.log(f1 / f0) / T, phi0)
+        core = _expression(EXPONENTIALCHIRP, f0, np.log(f1 / f0) / T, phi0)
     elif type in ("hyperbolic", "hyp"):
         if f0 * f1 == 0:
             return const(np.sin(phi0))
-        core = _scalar(HYPERBOLICCHIRP, f0, (f0 - f1) / (f1 * T), phi0)
+        core = _expression(
+            HYPERBOLICCHIRP, f0, (f0 - f1) / (f1 * T), phi0
+        )
     else:
         raise ValueError(f"unknown type {type}")
     return _piecewise((0, T, inf), 0, core, 0)
@@ -1503,9 +1914,9 @@ def interp(x, y):
         if x2 == x1:
             continue
         slope = (y2 - y1) / (x2 - x1)
-        expressions.append(
-            _scalar(LINEAR, shift=x1).scaled(slope).add(constant(y1))
-        )
+        expressions.append(_affine_expression(
+            LINEAR, shift=x1, scale=slope, offset=y1
+        ))
         bounds.append(x2)
     bounds.append(inf)
     expressions.append(0)
@@ -1541,7 +1952,7 @@ def samplingPoints(start, stop, points):
             samplingPoints(start, stop, points.real),
             samplingPoints(start, stop, points.imag),
         )
-    core = _scalar(INTERP, start, stop, tuple(points))
+    core = _expression(INTERP, start, stop, tuple(points))
     return _piecewise((start, stop, inf), 0, core, 0)
 
 

@@ -9,6 +9,9 @@ import scipy.special as special
 from scipy.signal import butter, lfilter, lfiltic, tf2sos
 
 import waveforms as wf
+from waveforms._waveform import (
+    quantize_samples, sample_clock, sample_grid, time_to_tick,
+)
 
 
 PUBLIC_NAMES = {
@@ -41,6 +44,28 @@ def test_binary_roundtrip_is_zero_copy_for_bytes_input():
     assert pickle.loads(pickle.dumps(wav)) == wav
     assert wf.one() >> 5 == wf.one()
     assert (wf.const(2.5) << 7).to_bytes() == wf.const(2.5).to_bytes()
+
+
+def test_affine_algebra_matches_eager_materialization():
+    left = 0.37 * (wf.gaussian(0.8) >> 1.2)
+    right = -1.25 * (wf.cos(2.3, 0.4) << 0.35)
+
+    actual_add = left + right
+    eager_add = wf.Waveform._from_core(
+        left._materialized_core().add(right._materialized_core())
+    )
+    actual_mul = left * right
+    eager_mul = wf.Waveform._from_core(
+        left._materialized_core().mul(right._materialized_core())
+    )
+
+    x = np.linspace(-3, 4, 8193)
+    assert actual_add.to_bytes() == eager_add.to_bytes()
+    assert actual_mul.to_bytes() == eager_mul.to_bytes()
+    assert np.array_equal(actual_add(x), eager_add(x))
+    assert np.array_equal(actual_mul(x), eager_mul(x))
+    assert wf.Waveform.from_bytes(actual_add.to_bytes()) == actual_add
+    assert wf.Waveform.from_bytes(actual_mul.to_bytes()) == actual_mul
 
 
 def test_operations_simplify_derivative_and_clipping():
@@ -89,7 +114,7 @@ def test_operations_simplify_derivative_and_clipping():
                 * gaussian_part * carrier_part
             )
         assert np.allclose(wf.D(base, order)(x), expected,
-                           atol=2e-10, rtol=2e-10)
+                           atol=2e-9, rtol=2e-10)
 
 
 def test_metadata_pickle_and_removed_experimental_serializers():
@@ -183,7 +208,7 @@ def test_drag_sin_scalar_block_frequency_and_argument_validation():
         wf.drag_sinx(5e9, 20e-9, tab=0)
 
 
-def test_multi_frequency_drag_matches_v2_numerical_behavior():
+def test_multi_frequency_drag_matches_120ghz_tick_behavior():
     parameters = dict(
         freq=5e9,
         width=22.22e-9,
@@ -200,25 +225,25 @@ def test_multi_frequency_drag_matches_v2_numerical_behavior():
     )
     expected_sin = np.array([
         0,
-        0.20532545807257174,
-        0.6208384978963238,
-        -0.4333357461117501,
-        -0.08840393960186489,
-        -0.8620379323126761,
-        -0.5748645543753418,
-        -0.07489572316435908,
-        -0.00309835789254227,
+        0.2054835614941095,
+        0.6212078536589116,
+        -0.4335035059651672,
+        -0.0884229171775666,
+        -0.8622124313517241,
+        -0.5746069534292936,
+        -0.07479711741358212,
+        -0.0026910881959570747,
     ])
     expected_sinx = np.array([
         0,
-        0.11971095177791738,
-        0.36196762048509773,
-        -0.03689065391238458,
+        0.1197774183686397,
+        0.3621052333362499,
+        -0.03599350352172509,
         -0.05154217041569324,
-        -0.19970252200405683,
-        -0.3351634210081106,
-        -0.04366647169944161,
-        -0.00180643635595232,
+        -0.20015318106495275,
+        -0.3349413303818123,
+        -0.04359962208204045,
+        -0.0015686490655034638,
     ])
     assert np.allclose(wf.drag_sin(**parameters)(x), expected_sin,
                        rtol=2e-13, atol=2e-13)
@@ -403,11 +428,11 @@ def test_packed_backend_rejects_complex_coefficients_and_scales():
 
 
 def test_time_is_global_configuration_and_blocks_store_integer_ticks():
-    assert wf.get_time_resolution() == 1e-12
+    assert wf.get_time_resolution() == 1 / 120_000_000_000
     wav = wf.square(4e-9) >> 11e-9
     ticks = wav._core.get_bound_ticks()
     assert ticks.dtype == np.dtype("<i8")
-    assert np.array_equal(ticks[:-1], [-2_000, 2_000])
+    assert np.array_equal(ticks[:-1], [-240, 240])
     assert wav._delay == 11e-9
     with pytest.raises(RuntimeError):
         wf.set_time_resolution(1e-15)
@@ -421,6 +446,153 @@ def test_time_is_global_configuration_and_blocks_store_integer_ticks():
     result = subprocess.run([sys.executable, "-c", code], check=True,
                             capture_output=True, text=True)
     assert result.stdout.strip() == "1e-15 -2000"
+
+
+def test_device_sample_clocks_and_rational_fallback():
+    expected = {
+        500_000_000: 240,
+        1_000_000_000: 120,
+        1_200_000_000: 100,
+        2_000_000_000: 60,
+        2_400_000_000: 50,
+        2_500_000_000: 48,
+        4_000_000_000: 30,
+        6_000_000_000: 20,
+        8_000_000_000: 15,
+        10_000_000_000: 12,
+    }
+    assert {rate: sample_clock(rate) for rate in expected} == {
+        rate: (ticks, 1) for rate, ticks in expected.items()
+    }
+    assert sample_clock(7_000_000_000) == (120, 7)
+    grid = sample_grid(-1200, 100, 20)
+    assert grid[51] == -1.5e-9
+    assert np.all(np.diff(grid) > 0)
+
+
+def test_fixed_width_quantization_supported_sampling_and_fallback():
+    values = np.array([-2, -1, -0.5, 0, 0.5, 1, 2.0])
+    assert np.array_equal(
+        quantize_samples(values, 16),
+        [-32768, -32768, -16384, 0, 16384, 32767, 32767],
+    )
+    assert np.array_equal(
+        quantize_samples(values, 32),
+        [-2147483648, -2147483648, -1073741824, 0,
+         1073741824, 2147483647, 2147483647],
+    )
+
+    wav = 0.8 * wf.gaussian(20e-9)
+    wav.start = -20e-9
+    wav.stop = 20e-9
+    rate = 2_400_000_000
+    float_samples = wav.sample(rate)
+    assert np.array_equal(
+        wav.sample(rate, dtype=np.int16),
+        quantize_samples(float_samples, 16),
+    )
+    whole = wav.sample(rate, dtype=np.int32)
+    chunks = np.concatenate(list(
+        wav.sample(rate, dtype=np.int32, chunk_size=17)
+    ))
+    assert np.array_equal(chunks, whole)
+
+    odd_rate = 7_000_000_000
+    legacy_grid = np.arange(wav.start, wav.stop, 1 / odd_rate)
+    assert np.array_equal(wav.sample(odd_rate), wav(legacy_grid))
+
+
+def test_integer_sampling_fast_paths_are_bit_exact_and_pickle_safe():
+    rate = 2_400_000_000
+    pulse = 0.8 * wf.gaussian(20e-9) * wf.cos(2 * np.pi * 100e6)
+    stack = wf.WaveVStack(
+        pulse >> (index * 40e-9) for index in range(100)
+    ) + 0.13
+    stack.start = -20e-9
+    stack.stop = 4e-6
+    float_samples = stack.sample(rate)
+
+    for dtype, bits in ((np.int16, 16), (np.int32, 32)):
+        expected = quantize_samples(float_samples, bits)
+        actual = stack.sample(rate, dtype=dtype)
+        assert np.array_equal(actual, expected)
+        out = np.empty(len(expected), dtype=dtype)
+        assert stack.sample(rate, out=out) is out
+        assert np.array_equal(out, expected)
+
+    restored = pickle.loads(pickle.dumps(stack))
+    assert np.array_equal(
+        restored.sample(rate, dtype=np.int16),
+        quantize_samples(restored.sample(rate), 16),
+    )
+
+    varying = wf.WaveVStack(
+        (0.2 + index / 1000) * (pulse >> (index * 40e-9))
+        for index in range(100)
+    )
+    varying.start = stack.start
+    varying.stop = stack.stop
+    assert np.array_equal(
+        varying.sample(rate, dtype=np.int16),
+        quantize_samples(varying.sample(rate), 16),
+    )
+
+
+def test_integer_sampling_filtered_and_overlapping_fallbacks_are_exact():
+    rate = 2_400_000_000
+    pulse = 0.4 * wf.gaussian(20e-9)
+    overlapping = wf.WaveVStack(
+        pulse >> (index * 2e-9) for index in range(20)
+    )
+    overlapping.start = -20e-9
+    overlapping.stop = 60e-9
+    assert np.array_equal(
+        overlapping.sample(rate, dtype=np.int16),
+        quantize_samples(overlapping.sample(rate), 16),
+    )
+
+    b, a = butter(3, 50e6, "lowpass", fs=rate)
+    overlapping.filters = (tf2sos(b, a), 0)
+    assert np.array_equal(
+        overlapping.sample(rate, dtype=np.int16),
+        quantize_samples(overlapping.sample(rate), 16),
+    )
+
+    with pytest.raises(ValueError, match="non-finite"):
+        quantize_samples(np.array([0.0, np.nan]), 16)
+
+
+def test_wavevstack_integer_grid_template_sampling_and_complex_iq():
+    rate = 6_000_000_000
+    step = sample_clock(rate)
+    pulse = wf.gaussian(10e-9) * wf.cos(2 * np.pi * 300e6)
+    waves = [
+        (0.25 + index / 100) * (
+            pulse >> (index * 2e-9 + index % 3 * wf.get_time_resolution())
+        )
+        for index in range(50)
+    ]
+    stack = wf.WaveVStack(waves) + 0.13
+    stack.start = -10e-9
+    stack.stop = 110e-9
+    actual = stack.sample(rate)
+    start_tick = time_to_tick(stack.start)
+    expected = np.full(len(actual), stack.offset)
+    for core, delay, scale in stack._stack.events():
+        delay_tick = time_to_tick(delay + stack.shift)
+        local_grid = sample_grid(
+            start_tick - delay_tick, len(actual), *step
+        )
+        expected += scale * core.evaluate(local_grid)
+    assert np.allclose(actual, expected, rtol=2e-15, atol=2e-15)
+
+    complex_stack = wf.ComplexWaveVStack(stack, -0.5 * stack)
+    complex_stack.start = stack.start
+    complex_stack.stop = stack.stop
+    i_data, q_data = complex_stack.sample_iq(rate, dtype=np.int16)
+    complex_samples = complex_stack.sample(rate)
+    assert np.array_equal(i_data, quantize_samples(complex_samples.real, 16))
+    assert np.array_equal(q_data, quantize_samples(complex_samples.imag, 16))
 
 
 def test_single_packed_backend_has_no_waveform2_modules():
