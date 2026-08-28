@@ -57,26 +57,43 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--label", required=True)
+    parser.add_argument(
+        "--implementation", choices=("standard", "native"),
+        default="standard",
+    )
     args = parser.parse_args()
     sys.path.insert(0, str(args.source_root.resolve()))
 
     import waveforms as wf
 
+    if args.implementation == "native":
+        gaussian = wf.native_gaussian
+        cosine = wf.native_cos
+        sine = wf.native_sin
+        square_wave = wf.native_square
+        stack_type = wf.NativeWaveVStack
+    else:
+        gaussian = wf.gaussian
+        cosine = wf.cos
+        sine = wf.sin
+        square_wave = wf.square
+        stack_type = wf.WaveVStack
+
     rate = 2_400_000_000
 
     def make_pulse():
         return (
-            0.8 * wf.gaussian(20e-9) * wf.cos(2 * np.pi * 100e6)
-            + 0.15 * wf.gaussian(12e-9) * wf.sin(2 * np.pi * 180e6, 0.2)
-            + 0.05 * wf.square(6e-9)
+            0.8 * gaussian(20e-9) * cosine(2 * np.pi * 100e6)
+            + 0.15 * gaussian(12e-9) * sine(2 * np.pi * 180e6, 0.2)
+            + 0.05 * square_wave(6e-9)
         )
 
     def make_template():
-        return 0.8 * wf.gaussian(20e-9) * wf.cos(2 * np.pi * 100e6)
+        return 0.8 * gaussian(20e-9) * cosine(2 * np.pi * 100e6)
 
     def make_stack(event_count):
         template = make_template()
-        stack = wf.WaveVStack(
+        stack = stack_type(
             [template >> (index * 40e-9) for index in range(event_count)]
         )
         stack.start = -20e-9
@@ -98,14 +115,14 @@ def main():
     complex_wave.sample_rate = rate
 
     stacks = {count: make_stack(count) for count in (100, 1000, 10_000)}
-    simple = wf.cos(2 * np.pi * 100e6)
+    simple = cosine(2 * np.pi * 100e6)
     simple_x = np.linspace(-200e-6, 200e-6, 1_000_000, endpoint=False)
     pulse_x = np.linspace(-20e-9, 20e-9, 200_000, endpoint=False)
 
-    gaussian_for_ops = wf.gaussian(20e-9)
-    carrier_for_ops = wf.cos(2 * np.pi * 100e6)
+    gaussian_for_ops = gaussian(20e-9)
+    carrier_for_ops = cosine(2 * np.pi * 100e6)
     metrics = {
-        "construct.gaussian": measure(lambda: wf.gaussian(20e-9)),
+        "construct.gaussian": measure(lambda: gaussian(20e-9)),
         "construct.add": measure(lambda: gaussian_for_ops + carrier_for_ops),
         "construct.multiply": measure(
             lambda: gaussian_for_ops * carrier_for_ops
@@ -205,6 +222,7 @@ def main():
     result = {
         "label": args.label,
         "reported_version": wf.__version__,
+        "implementation": args.implementation,
         "python": sys.version.split()[0],
         "numpy": np.__version__,
         "integer_sampling": current_integer_sampling,

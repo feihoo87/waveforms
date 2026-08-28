@@ -28,6 +28,12 @@ from ._waveform import (
     registerDerivative, sample_clock, sample_grid, set_time_resolution,
     tick_to_time, time_to_tick,
 )
+from ._native import (
+    NativeCore as _NativeCore,
+    NativeStackCore as _NativeStackCore,
+    TICKS_PER_SECOND as _NATIVE_TICKS_PER_SECOND,
+    native_format_description,
+)
 
 _ZERO_EXPR = ((), ())
 _ONE_EXPR = ((((), ()),), (1.0,))
@@ -1614,6 +1620,528 @@ class ComplexWaveVStack(_SamplingMixin):
         self.function_lib = None
 
 
+def _native_time_to_tick(value):
+    if value == inf:
+        return np.iinfo(np.int64).max
+    if value == -inf:
+        return np.iinfo(np.int64).min
+    return int(round(float(value) * _NATIVE_TICKS_PER_SECOND))
+
+
+def _native_tick_to_time(value):
+    if value == np.iinfo(np.int64).max:
+        return inf
+    if value == np.iinfo(np.int64).min:
+        return -inf
+    return int(value) / _NATIVE_TICKS_PER_SECOND
+
+
+class NativeWaveform:
+    """Thin Python owner for the language-neutral WNF4 native core."""
+
+    __slots__ = (
+        "_core", "_delay_tick", "_scale", "max", "min", "start", "stop",
+        "sample_rate", "filters", "label",
+    )
+
+    def __init__(self, value=0.0, *, _core=None, _delay_tick=0, _scale=1.0):
+        if _core is None:
+            real, imag = _number_parts(value)
+            if imag != 0:
+                raise TypeError("NativeWaveform is real-only")
+            _core = _NativeCore.constant(real)
+        self._core = _core
+        self._delay_tick = int(_delay_tick)
+        self._scale = float(_scale)
+        self.max = inf
+        self.min = -inf
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+        self.filters = None
+        self.label = None
+
+    @classmethod
+    def _from_core(cls, core, delay_tick=0, scale=1.0):
+        return cls(_core=core, _delay_tick=delay_tick, _scale=scale)
+
+    def _materialized_core(self):
+        if self._delay_tick == 0 and self._scale == 1:
+            return self._core
+        return self._core.materialize(self._delay_tick, self._scale)
+
+    def _is_zero(self):
+        return (self._scale == 0.0
+                or self._core.lower_tick >= self._core.upper_tick)
+
+    @property
+    def begin(self):
+        tick = self._core.lower_tick
+        if tick != np.iinfo(np.int64).max:
+            tick += self._delay_tick
+        value = _native_tick_to_time(tick)
+        return value if self.start is None else max(self.start, value)
+
+    @property
+    def end(self):
+        tick = self._core.upper_tick
+        if tick != np.iinfo(np.int64).min:
+            tick += self._delay_tick
+        value = _native_tick_to_time(tick)
+        return value if self.stop is None else min(self.stop, value)
+
+    def __call__(self, x, frag=False, out=None, accumulate=False,
+                 function_lib=None):
+        if frag:
+            raise AssertionError("NativeWaveform does not expose fragment mode")
+        if function_lib is not None:
+            raise NotImplementedError("custom native functions are unsupported")
+        scalar = isinstance(x, (int, float, np.number))
+        positions = np.asarray([x] if scalar else x, dtype=np.float64)
+        values = self._core.evaluate(
+            positions, self._delay_tick, self._scale, self.min, self.max
+        )
+        if out is not None:
+            if accumulate:
+                out[...] += values
+            else:
+                out[...] = values
+            values = out
+        return values[0] if scalar else values
+
+    def sample(self, sample_rate=None, out=None, chunk_size=None,
+               function_lib=None, filters=None, dtype=None, full_scale=1.0):
+        if chunk_size is not None:
+            raise NotImplementedError("native chunked sampling is not implemented")
+        if function_lib is not None:
+            raise NotImplementedError("custom native functions are unsupported")
+        if sample_rate is None:
+            sample_rate = self.sample_rate
+        if self.start is None or self.stop is None or sample_rate is None:
+            raise ValueError("NativeWaveform sampling metadata is incomplete")
+        if filters is None:
+            filters = self.filters
+        plan = _sampling_plan(self.start, self.stop, sample_rate)
+        dtype, bits = _quantization_bits(dtype, out)
+        native_clock = get_time_resolution() == 1 / _NATIVE_TICKS_PER_SECOND
+        if plan is None or not native_clock:
+            positions = np.arange(self.start, self.stop, 1 / float(sample_rate))
+            values = self(positions)
+        else:
+            start_tick, count, step_numerator, step_denominator = plan
+            if bits is not None and filters is None:
+                return self._core.sample(
+                    start_tick, count, step_numerator, step_denominator,
+                    self._delay_tick, self._scale, self.min, self.max,
+                    bits, full_scale, out,
+                )
+            values = self._core.sample(
+                start_tick, count, step_numerator, step_denominator,
+                self._delay_tick, self._scale, self.min, self.max,
+            )
+        values, _ = _filter_samples(values, filters)
+        return _finish_samples(values, dtype, full_scale, out)
+
+    def to_bytes(self):
+        return self._materialized_core().to_bytes()
+
+    @classmethod
+    def from_bytes(cls, data):
+        return cls._from_core(_NativeCore.from_bytes(data))
+
+    def simplify(self, eps=1e-15):
+        return NativeWaveform._from_core(self._materialized_core())
+
+    def __add__(self, other):
+        if isinstance(other, NativeComplexWaveform):
+            return other + self
+        if isinstance(other, NativeWaveVStack):
+            return other + self
+        if not isinstance(other, NativeWaveform):
+            real, imag = _number_parts(other)
+            if imag:
+                return NativeComplexWaveform(self + real, native_const(imag))
+            other = native_const(real)
+        if self._is_zero():
+            return NativeWaveform._from_core(
+                other._core, other._delay_tick, other._scale)
+        if other._is_zero():
+            return NativeWaveform._from_core(
+                self._core, self._delay_tick, self._scale)
+        return NativeWaveform._from_core(self._core.add_affine(
+            other._core, self._delay_tick, self._scale,
+            other._delay_tick, other._scale,
+        ))
+
+    def __radd__(self, other):
+        return self + other
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __rsub__(self, other):
+        return native_const(other) + (-self)
+
+    def __mul__(self, other):
+        if isinstance(other, NativeComplexWaveform):
+            return other * self
+        if isinstance(other, NativeWaveVStack):
+            return other * self
+        if isinstance(other, NativeWaveform):
+            if self._is_zero() or other._is_zero():
+                return native_zero()
+            return NativeWaveform._from_core(
+                self._core.mul_affine(
+                    other._core, self._delay_tick, 1.0,
+                    other._delay_tick, 1.0,
+                ),
+                scale=self._scale * other._scale,
+            )
+        real, imag = _number_parts(other)
+        if imag:
+            return NativeComplexWaveform(self * real, self * imag)
+        if real == 0.0 or self._is_zero():
+            return native_zero()
+        return NativeWaveform._from_core(
+            self._core, self._delay_tick, self._scale * real
+        )
+
+    def __rmul__(self, other):
+        return self * other
+
+    def __truediv__(self, other):
+        return self * (1 / other)
+
+    def __neg__(self):
+        return NativeWaveform._from_core(
+            self._core, self._delay_tick, -self._scale
+        )
+
+    def __rshift__(self, seconds):
+        return NativeWaveform._from_core(
+            self._core,
+            self._delay_tick + _native_time_to_tick(seconds),
+            self._scale,
+        )
+
+    def __lshift__(self, seconds):
+        return self >> -seconds
+
+    def __eq__(self, other):
+        if isinstance(other, (int, float, np.number)):
+            other = native_const(other)
+        if not isinstance(other, NativeWaveform):
+            return False
+        if (self.max, self.min, self.start, self.stop) != (
+                other.max, other.min, other.start, other.stop):
+            return False
+        return self._materialized_core() == other._materialized_core()
+
+    def __hash__(self):
+        return hash((self.to_bytes(), self.max, self.min,
+                     self.start, self.stop))
+
+    def __getstate__(self):
+        return (self.to_bytes(), self.max, self.min, self.start, self.stop,
+                self.sample_rate, self.filters, self.label)
+
+    def __setstate__(self, state):
+        (data, self.max, self.min, self.start, self.stop, self.sample_rate,
+         self.filters, self.label) = state
+        self._core = _NativeCore.from_bytes(data)
+        self._delay_tick = 0
+        self._scale = 1.0
+
+
+class NativeComplexWaveform:
+    """Complex native waveform represented by two WNF4 real blocks."""
+
+    __slots__ = ("_real", "_imag", "start", "stop", "sample_rate",
+                 "filters", "label", "_bytes_cache")
+
+    def __init__(self, real=0.0, imag=0.0):
+        self._real = real if isinstance(real, NativeWaveform) else native_const(real)
+        self._imag = imag if isinstance(imag, NativeWaveform) else native_const(imag)
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+        self.filters = None
+        self.label = None
+        self._bytes_cache = None
+
+    @property
+    def real(self):
+        return self._real
+
+    @property
+    def imag(self):
+        return self._imag
+
+    @property
+    def begin(self):
+        value = min(self.real.begin, self.imag.begin)
+        return value if self.start is None else max(self.start, value)
+
+    @property
+    def end(self):
+        value = max(self.real.end, self.imag.end)
+        return value if self.stop is None else min(self.stop, value)
+
+    def __call__(self, x, out=None, accumulate=False, **kwargs):
+        scalar = isinstance(x, (int, float, np.number))
+        positions = np.asarray([x] if scalar else x, dtype=np.float64)
+        if out is None:
+            values = np.empty(positions.shape, dtype=np.complex128)
+        else:
+            values = np.asarray(out)
+            if values.shape != positions.shape or values.dtype != np.complex128:
+                raise ValueError("out must be a matching complex128 array")
+            if accumulate:
+                values[...] += self.real(positions) + 1j * self.imag(positions)
+                return values[0] if scalar else values
+        values.real = self.real(positions)
+        values.imag = self.imag(positions)
+        if out is not None:
+            out[...] = values
+        return values[0] if scalar else values
+
+    def __add__(self, other):
+        if isinstance(other, NativeComplexWaveform):
+            return NativeComplexWaveform(self.real + other.real,
+                                         self.imag + other.imag)
+        if isinstance(other, NativeWaveform):
+            return NativeComplexWaveform(self.real + other, self.imag)
+        real, imag = _number_parts(other)
+        return NativeComplexWaveform(self.real + real, self.imag + imag)
+
+    __radd__ = __add__
+
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __mul__(self, other):
+        if isinstance(other, NativeComplexWaveform):
+            return NativeComplexWaveform(
+                self.real * other.real - self.imag * other.imag,
+                self.real * other.imag + self.imag * other.real,
+            )
+        if isinstance(other, NativeWaveform):
+            return NativeComplexWaveform(self.real * other, self.imag * other)
+        real, imag = _number_parts(other)
+        return NativeComplexWaveform(
+            self.real * real - self.imag * imag,
+            self.real * imag + self.imag * real,
+        )
+
+    __rmul__ = __mul__
+
+    def __neg__(self):
+        return NativeComplexWaveform(-self.real, -self.imag)
+
+    def __rshift__(self, seconds):
+        return NativeComplexWaveform(self.real >> seconds, self.imag >> seconds)
+
+    def __lshift__(self, seconds):
+        return self >> -seconds
+
+    def simplify(self, eps=1e-15):
+        return NativeComplexWaveform(self.real.simplify(), self.imag.simplify())
+
+    def to_bytes(self):
+        if self._bytes_cache is None:
+            real = self.real.to_bytes()
+            imag = self.imag.to_bytes()
+            self._bytes_cache = (
+                struct.pack("<4sII", b"WNC4", len(real), len(imag))
+                + real + imag
+            )
+        return self._bytes_cache
+
+    @classmethod
+    def from_bytes(cls, data):
+        real, imag = _unpack_complex(data, b"WNC4")
+        return cls(NativeWaveform.from_bytes(real),
+                   NativeWaveform.from_bytes(imag))
+
+    def __eq__(self, other):
+        return (isinstance(other, NativeComplexWaveform)
+                and self.real == other.real and self.imag == other.imag
+                and (self.start, self.stop) == (other.start, other.stop))
+
+    def __getstate__(self):
+        return (self.to_bytes(), self.start, self.stop, self.sample_rate,
+                self.filters, self.label)
+
+    def __setstate__(self, state):
+        (data, self.start, self.stop, self.sample_rate,
+         self.filters, self.label) = state
+        real, imag = _unpack_complex(data, b"WNC4")
+        self._real = NativeWaveform.from_bytes(real)
+        self._imag = NativeWaveform.from_bytes(imag)
+        self._bytes_cache = data
+
+
+class NativeWaveVStack:
+    """Thin Python metadata wrapper around a WNS4 native template stack."""
+
+    __slots__ = ("_core", "start", "stop", "sample_rate", "offset",
+                 "_shift_tick", "filters", "label")
+
+    def __init__(self, waves=(), *, _core=None):
+        if _core is None:
+            templates = []
+            template_map = {}
+            ids = []
+            delays = []
+            scales = []
+            for wave in waves:
+                if not isinstance(wave, NativeWaveform):
+                    raise TypeError("NativeWaveVStack accepts NativeWaveform objects")
+                key = id(wave._core)
+                template_id = template_map.get(key)
+                if template_id is None:
+                    template_id = len(templates)
+                    template_map[key] = template_id
+                    templates.append(wave._core)
+                ids.append(template_id)
+                delays.append(wave._delay_tick)
+                scales.append(wave._scale)
+            _core = _NativeStackCore.from_events(templates, ids, delays, scales)
+        self._core = _core
+        self.start = None
+        self.stop = None
+        self.sample_rate = None
+        self.offset = 0.0
+        self._shift_tick = 0
+        self.filters = None
+        self.label = None
+
+    def __call__(self, x, out=None, accumulate=False, **kwargs):
+        scalar = isinstance(x, (int, float, np.number))
+        positions = np.asarray([x] if scalar else x, dtype=np.float64)
+        values = self._core.evaluate(positions, self._shift_tick, self.offset)
+        if out is not None:
+            if accumulate:
+                out[...] += values
+            else:
+                out[...] = values
+            values = out
+        return values[0] if scalar else values
+
+    def sample(self, sample_rate=None, out=None, chunk_size=None,
+               filters=None, dtype=None, full_scale=1.0, **kwargs):
+        if chunk_size is not None:
+            raise NotImplementedError("native chunked stack sampling is not implemented")
+        if sample_rate is None:
+            sample_rate = self.sample_rate
+        if self.start is None or self.stop is None or sample_rate is None:
+            raise ValueError("NativeWaveVStack sampling metadata is incomplete")
+        if filters is None:
+            filters = self.filters
+        plan = _sampling_plan(self.start, self.stop, sample_rate)
+        dtype, bits = _quantization_bits(dtype, out)
+        if plan is None or get_time_resolution() != 1 / _NATIVE_TICKS_PER_SECOND:
+            positions = np.arange(self.start, self.stop, 1 / float(sample_rate))
+            values = self(positions)
+        else:
+            start_tick, count, step_numerator, step_denominator = plan
+            if bits is not None and filters is None:
+                return self._core.sample(
+                    start_tick, count, step_numerator, step_denominator,
+                    self._shift_tick, self.offset, bits, full_scale, out,
+                )
+            values = self._core.sample(
+                start_tick, count, step_numerator, step_denominator,
+                self._shift_tick, self.offset,
+            )
+        values, _ = _filter_samples(values, filters)
+        return _finish_samples(values, dtype, full_scale, out)
+
+    def simplify(self, eps=1e-15):
+        return NativeWaveform._from_core(
+            self._core.simplify(self._shift_tick, self.offset)
+        )
+
+    def to_bytes(self):
+        if self._shift_tick == 0 and self.offset == 0:
+            return self._core.to_bytes()
+        return self._core.materialize(
+            self._shift_tick, self.offset).to_bytes()
+
+    @classmethod
+    def from_bytes(cls, data):
+        return cls(_core=_NativeStackCore.from_bytes(data))
+
+    def __rshift__(self, seconds):
+        result = NativeWaveVStack(_core=self._core)
+        result._shift_tick = self._shift_tick + _native_time_to_tick(seconds)
+        result.offset = self.offset
+        return result
+
+    def __lshift__(self, seconds):
+        return self >> -seconds
+
+    def __add__(self, other):
+        if isinstance(other, (int, float, np.number)):
+            result = NativeWaveVStack(_core=self._core)
+            result.offset = self.offset + float(other)
+            result._shift_tick = self._shift_tick
+            return result
+        if isinstance(other, NativeWaveform):
+            return self.simplify() + other
+        return NotImplemented
+
+    __radd__ = __add__
+
+    def __eq__(self, other):
+        return (isinstance(other, NativeWaveVStack)
+                and self._shift_tick == other._shift_tick
+                and self.offset == other.offset
+                and self._core.to_bytes() == other._core.to_bytes()
+                and (self.start, self.stop) == (other.start, other.stop))
+
+    def __getstate__(self):
+        return (self._core.to_bytes(), self.start, self.stop,
+                self.sample_rate, self.offset, self._shift_tick,
+                self.filters, self.label)
+
+    def __setstate__(self, state):
+        (data, self.start, self.stop, self.sample_rate, self.offset,
+         self._shift_tick, self.filters, self.label) = state
+        self._core = _NativeStackCore.from_bytes(data)
+
+
+def native_zero():
+    return NativeWaveform._from_core(_NativeCore.constant(0.0))
+
+
+def native_one():
+    return NativeWaveform._from_core(_NativeCore.constant(1.0))
+
+
+def native_const(value):
+    real, imag = _number_parts(value)
+    if imag:
+        return NativeComplexWaveform(native_const(real), native_const(imag))
+    return NativeWaveform._from_core(_NativeCore.constant(real))
+
+
+def native_gaussian(width):
+    return NativeWaveform._from_core(_NativeCore.gaussian(width))
+
+
+def native_cos(w, phi=0.0):
+    return NativeWaveform._from_core(_NativeCore.cos(w, phi))
+
+
+def native_sin(w, phi=0.0):
+    return NativeWaveform._from_core(_NativeCore.sin(w, phi))
+
+
+def native_square(width):
+    return NativeWaveform._from_core(_NativeCore.square(width))
+
+
 def _real_const(value):
     real, imag = _number_parts(value)
     if imag != 0:
@@ -2017,6 +2545,7 @@ def wave_eval(expr: str) -> Waveform | ComplexWaveform:
 
 __all__ = [
     "D", "ComplexWaveform", "ComplexWaveVStack", "Waveform", "WaveVStack",
+    "NativeWaveform", "NativeWaveVStack", "NativeComplexWaveform",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "exp", "function",
@@ -2025,4 +2554,6 @@ __all__ = [
     "registerBaseFunc", "registerDerivative", "samplingPoints",
     "set_time_resolution", "sign", "sin", "sinc", "sinh", "slepian",
     "square", "step", "t", "wave_eval", "zero", "e", "inf", "pi",
+    "native_zero", "native_one", "native_const", "native_gaussian",
+    "native_cos", "native_sin", "native_square", "native_format_description",
 ]

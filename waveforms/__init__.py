@@ -7,6 +7,9 @@ from .waveform import (
     D,
     Waveform,
     WaveVStack,
+    NativeWaveform,
+    NativeWaveVStack,
+    NativeComplexWaveform,
     chirp,
     const,
     cos,
@@ -41,10 +44,19 @@ from .waveform import (
     t,
     wave_eval,
     zero,
+    native_zero,
+    native_one,
+    native_const,
+    native_gaussian,
+    native_cos,
+    native_sin,
+    native_square,
+    native_format_description,
 )
 
 __all__ = [
     "ComplexWaveform", "ComplexWaveVStack", "D", "Waveform", "WaveVStack",
+    "NativeWaveform", "NativeWaveVStack", "NativeComplexWaveform",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "e", "exp", "function",
@@ -53,4 +65,6 @@ __all__ = [
     "registerBaseFunc", "registerDerivative", "samplingPoints",
     "set_time_resolution", "sign", "sin", "sinc", "sinh", "square",
     "step", "t", "wave_eval", "zero", "__version__",
+    "native_zero", "native_one", "native_const", "native_gaussian",
+    "native_cos", "native_sin", "native_square", "native_format_description",
 ]

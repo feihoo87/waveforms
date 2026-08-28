@@ -1,4 +1,5 @@
 import os
+import sys
 
 from Cython.Build import cythonize
 from setuptools import Extension, find_packages, setup
@@ -35,9 +36,19 @@ def get_extensions():
     for dirpath, dirnames, filenames in os.walk('waveforms'):
         for filename in filenames:
             if filename.endswith('.pyx'):
+                sources = [os.path.join(dirpath, filename)]
+                include_dirs = []
+                extra_link_args = []
+                if filename == '_native.pyx':
+                    sources.append(os.path.join(
+                        'waveforms', 'native', 'wf_native.c'))
+                    include_dirs.append(os.path.join('waveforms', 'native'))
+                    if sys.platform == 'darwin':
+                        extra_link_args.extend(['-framework', 'Accelerate'])
                 extensions.append(
-                    Extension(module_name(dirpath, filename),
-                              [os.path.join(dirpath, filename)]))
+                    Extension(module_name(dirpath, filename), sources,
+                              include_dirs=include_dirs,
+                              extra_link_args=extra_link_args))
 
     return extensions
 
