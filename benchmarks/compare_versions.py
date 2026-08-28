@@ -57,27 +57,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--label", required=True)
-    parser.add_argument(
-        "--implementation", choices=("standard", "native"),
-        default="standard",
-    )
     args = parser.parse_args()
     sys.path.insert(0, str(args.source_root.resolve()))
 
     import waveforms as wf
 
-    if args.implementation == "native":
-        gaussian = wf.native_gaussian
-        cosine = wf.native_cos
-        sine = wf.native_sin
-        square_wave = wf.native_square
-        stack_type = wf.NativeWaveVStack
-    else:
-        gaussian = wf.gaussian
-        cosine = wf.cos
-        sine = wf.sin
-        square_wave = wf.square
-        stack_type = wf.WaveVStack
+    gaussian = wf.gaussian
+    cosine = wf.cos
+    sine = wf.sin
+    square_wave = wf.square
+    stack_type = wf.WaveVStack
 
     rate = 2_400_000_000
 
@@ -239,45 +228,45 @@ def main():
             "pickle_load": measure(lambda data=pickle_data: pickle.loads(data)),
         }
         if hasattr(obj, "to_bytes"):
-            native_data = obj.to_bytes()
+            binary_data = obj.to_bytes()
             object_type = type(obj)
             entry.update({
-                "native_kind": "packed-block",
-                "native_bytes": len(native_data),
-                "native_dump": measure(obj.to_bytes),
-                "native_load": measure(
-                    lambda data=native_data, object_type=object_type:
+                "binary_kind": "packed-block",
+                "binary_bytes": len(binary_data),
+                "binary_dump": measure(obj.to_bytes),
+                "binary_load": measure(
+                    lambda data=binary_data, object_type=object_type:
                     object_type.from_bytes(data)
                 ),
             })
         else:
             object_type = type(obj)
 
-            def native_dump(obj=obj):
+            def binary_dump(obj=obj):
                 return msgpack.packb(
                     obj.tolist(), use_bin_type=True, default=msgpack_default
                 )
 
-            native_data = native_dump()
+            binary_data = binary_dump()
 
-            def native_load(data=native_data, object_type=object_type):
+            def binary_load(data=binary_data, object_type=object_type):
                 payload = msgpack.unpackb(
                     data, raw=False, ext_hook=msgpack_ext_hook
                 )
                 return object_type.fromlist(payload)
 
             entry.update({
-                "native_kind": "msgpack-list",
-                "native_bytes": len(native_data),
-                "native_dump": measure(native_dump),
-                "native_load": measure(native_load),
+                "binary_kind": "msgpack-list",
+                "binary_bytes": len(binary_data),
+                "binary_dump": measure(binary_dump),
+                "binary_load": measure(binary_load),
             })
         serialization[name] = entry
 
     result = {
         "label": args.label,
         "reported_version": wf.__version__,
-        "implementation": args.implementation,
+        "implementation": "unified",
         "python": sys.version.split()[0],
         "numpy": np.__version__,
         "integer_sampling": current_integer_sampling,

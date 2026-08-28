@@ -15,7 +15,8 @@ from waveforms._waveform import (
 
 
 PUBLIC_NAMES = {
-    "ComplexWaveform", "ComplexWaveVStack", "D", "Waveform", "WaveVStack",
+    "ComplexWaveform", "ComplexWaveVStack", "D", "RealWaveform",
+    "RealWaveVStack", "Waveform", "WaveVStack",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "exp", "function",
@@ -51,19 +52,13 @@ def test_affine_algebra_matches_eager_materialization():
     right = -1.25 * (wf.cos(2.3, 0.4) << 0.35)
 
     actual_add = left + right
-    eager_add = wf.Waveform._from_core(
-        left._materialized_core().add(right._materialized_core())
-    )
     actual_mul = left * right
-    eager_mul = wf.Waveform._from_core(
-        left._materialized_core().mul(right._materialized_core())
-    )
 
     x = np.linspace(-3, 4, 8193)
-    assert actual_add.to_bytes() == eager_add.to_bytes()
-    assert actual_mul.to_bytes() == eager_mul.to_bytes()
-    assert np.array_equal(actual_add(x), eager_add(x))
-    assert np.array_equal(actual_mul(x), eager_mul(x))
+    assert np.allclose(actual_add(x), left(x) + right(x),
+                       rtol=2e-15, atol=2e-15)
+    assert np.allclose(actual_mul(x), left(x) * right(x),
+                       rtol=2e-15, atol=2e-15)
     assert wf.Waveform.from_bytes(actual_add.to_bytes()) == actual_add
     assert wf.Waveform.from_bytes(actual_mul.to_bytes()) == actual_mul
 
@@ -272,7 +267,7 @@ def test_wavevstack_template_sharing_operations_and_roundtrip():
     waves = [template >> (i * 80e-9) for i in range(1000)]
     stack = wf.WaveVStack(waves)
 
-    # One template plus three packed event arrays; substantially smaller than
+    # One template plus three contiguous event arrays; substantially smaller than
     # serializing 1000 complete shifted expression trees.
     assert len(stack.to_bytes()) < 32_000
     x = np.linspace(0, 80e-6, 16_000, endpoint=False)
@@ -410,30 +405,26 @@ def test_complex_interpolation_and_stack_roundtrip():
         wf.WaveVStack(waves)
 
 
-def test_packed_backend_rejects_complex_coefficients_and_scales():
+def test_real_backend_promotes_complex_coefficients_and_scales():
     wav = wf.gaussian(1.0)
     stack = wf.WaveVStack([wav, 2 * (wav >> 3)])
-    assert wav.to_bytes()[:4] == b"WFM3"
-    assert stack.to_bytes()[:4] == b"WVS3"
-    assert all(isinstance(scale, float)
-               for _, _, scale in stack._stack.events())
+    assert wav.to_bytes()[:4] == b"WNF4"
+    assert stack.to_bytes()[:4] == b"WNS4"
     assert stack(np.linspace(-1, 4, 101)).dtype == np.float64
 
-    with pytest.raises(TypeError, match="must be real"):
-        wav._core.scaled(1j)
-    with pytest.raises(TypeError, match="must be real"):
-        stack._stack.scaled(1j)
-    with pytest.raises(TypeError, match="positions must be real"):
+    assert isinstance(wav * 1j, wf.ComplexWaveform)
+    assert isinstance(stack * 1j, wf.ComplexWaveVStack)
+    with pytest.raises((TypeError, ValueError)):
         wav(np.array([0.0 + 0.0j]))
 
 
 def test_time_is_global_configuration_and_blocks_store_integer_ticks():
     assert wf.get_time_resolution() == 1 / 120_000_000_000
     wav = wf.square(4e-9) >> 11e-9
-    ticks = wav._core.get_bound_ticks()
-    assert ticks.dtype == np.dtype("<i8")
-    assert np.array_equal(ticks[:-1], [-240, 240])
-    assert wav._delay == 11e-9
+    data = wav.to_bytes()
+    assert data[:4] == b"WNF4"
+    assert wav.begin == 9e-9
+    assert wav.end == 13e-9
     with pytest.raises(RuntimeError):
         wf.set_time_resolution(1e-15)
 
@@ -441,7 +432,7 @@ def test_time_is_global_configuration_and_blocks_store_integer_ticks():
         "import waveforms as w; "
         "w.set_time_resolution(1e-15); "
         "x=w.square(4e-12); "
-        "print(w.get_time_resolution(), x._core.get_bound_ticks()[0])"
+        "print(w.get_time_resolution(), round(x.begin / 1e-15))"
     )
     result = subprocess.run([sys.executable, "-c", code], check=True,
                             capture_output=True, text=True)
@@ -576,14 +567,8 @@ def test_wavevstack_integer_grid_template_sampling_and_complex_iq():
     stack.start = -10e-9
     stack.stop = 110e-9
     actual = stack.sample(rate)
-    start_tick = time_to_tick(stack.start)
-    expected = np.full(len(actual), stack.offset)
-    for core, delay, scale in stack._stack.events():
-        delay_tick = time_to_tick(delay + stack.shift)
-        local_grid = sample_grid(
-            start_tick - delay_tick, len(actual), *step
-        )
-        expected += scale * core.evaluate(local_grid)
+    x = sample_grid(time_to_tick(stack.start), len(actual), *step)
+    expected = stack(x)
     assert np.allclose(actual, expected, rtol=2e-15, atol=2e-15)
 
     complex_stack = wf.ComplexWaveVStack(stack, -0.5 * stack)
@@ -595,12 +580,16 @@ def test_wavevstack_integer_grid_template_sampling_and_complex_iq():
     assert np.array_equal(q_data, quantize_samples(complex_samples.imag, 16))
 
 
-def test_single_packed_backend_has_no_waveform2_modules():
+def test_single_c_backend_has_no_waveform2_or_packed_core():
     package = Path(wf.__file__).parent
     python_source = (package / "waveform.py").read_text()
     cython_source = (package / "_waveform.pyx").read_text()
     assert "waveform2" not in python_source
     assert "_waveform2" not in cython_source
+    assert "PackedWaveform" not in python_source + cython_source
+    assert "PackedStack" not in python_source + cython_source
+    assert "WFM3" not in python_source + cython_source
+    assert "WVS3" not in python_source + cython_source
     assert not (package / "waveform2.py").exists()
     assert not (package / "_waveform2.pyx").exists()
 

@@ -32,6 +32,29 @@ typedef struct cwaveform_wave cwaveform_wave;
 typedef struct cwaveform_stack cwaveform_stack;
 typedef struct cwaveform_sample_plan cwaveform_sample_plan;
 
+/* Stable language-neutral builtin identifiers.  These intentionally match
+ * the historic Python/Cython opcode values so other language bindings can
+ * construct the same blocks without translating an enum. */
+enum cwaveform_builtin {
+    CWAVEFORM_LINEAR = 1,
+    CWAVEFORM_GAUSSIAN = 2,
+    CWAVEFORM_ERF = 3,
+    CWAVEFORM_COS = 4,
+    CWAVEFORM_SINC = 5,
+    CWAVEFORM_EXP = 6,
+    CWAVEFORM_INTERP = 7,
+    CWAVEFORM_LINEAR_CHIRP = 8,
+    CWAVEFORM_EXPONENTIAL_CHIRP = 9,
+    CWAVEFORM_HYPERBOLIC_CHIRP = 10,
+    CWAVEFORM_COSH = 11,
+    CWAVEFORM_SINH = 12,
+    CWAVEFORM_DRAG = 13,
+    CWAVEFORM_MOLLIFIER = 14,
+    CWAVEFORM_D_GAUSSIAN = 15,
+    CWAVEFORM_DRAG_SIN = 16,
+    CWAVEFORM_DRAG_SINX = 17
+};
+
 enum cwaveform_dtype {
     CWAVEFORM_FLOAT64 = 0,
     CWAVEFORM_INT16 = 16,
@@ -39,6 +62,7 @@ enum cwaveform_dtype {
 };
 
 CWAVEFORM_API uint64_t cwaveform_ticks_per_second(void);
+CWAVEFORM_API int cwaveform_set_ticks_per_second(uint64_t ticks_per_second);
 
 CWAVEFORM_API cwaveform_wave *cwaveform_wave_constant(double value);
 CWAVEFORM_API cwaveform_wave *cwaveform_wave_gaussian(double width_seconds);
@@ -47,6 +71,21 @@ CWAVEFORM_API cwaveform_wave *cwaveform_wave_cos(double angular_frequency,
 CWAVEFORM_API cwaveform_wave *cwaveform_wave_sin(double angular_frequency,
                                            double phase);
 CWAVEFORM_API cwaveform_wave *cwaveform_wave_square(double width_seconds);
+/* Generic builtin parameters use seconds for time values.  The C core
+ * quantizes them to the process clock before serializing. */
+CWAVEFORM_API cwaveform_wave *cwaveform_wave_builtin(
+    int builtin, const double *parameters, size_t parameter_count,
+    int64_t shift_tick);
+CWAVEFORM_API cwaveform_wave *cwaveform_wave_window(
+    const cwaveform_wave *wave, int64_t lower_tick, int64_t upper_tick);
+CWAVEFORM_API cwaveform_wave *cwaveform_wave_power(
+    const cwaveform_wave *wave, int power);
+CWAVEFORM_API cwaveform_wave *cwaveform_wave_derivative(
+    const cwaveform_wave *wave, unsigned order);
+CWAVEFORM_API cwaveform_wave *cwaveform_wave_filter(
+    const cwaveform_wave *wave, double low, double high, double epsilon);
+CWAVEFORM_API cwaveform_wave *cwaveform_wave_simplify(
+    const cwaveform_wave *wave, double epsilon);
 
 CWAVEFORM_API cwaveform_wave *cwaveform_wave_from_bytes(const uint8_t *data,
                                                   size_t size);
@@ -88,6 +127,14 @@ CWAVEFORM_API cwaveform_stack *cwaveform_stack_from_bytes(const uint8_t *data,
                                                     size_t size);
 CWAVEFORM_API cwaveform_stack *cwaveform_stack_materialize(
     const cwaveform_stack *stack, int64_t global_shift, double offset);
+CWAVEFORM_API cwaveform_stack *cwaveform_stack_combine(
+    const cwaveform_stack *left, int64_t left_shift,
+    const cwaveform_stack *right, int64_t right_shift);
+CWAVEFORM_API cwaveform_stack *cwaveform_stack_append(
+    const cwaveform_stack *stack, int64_t global_shift,
+    const cwaveform_wave *wave, int64_t wave_delay, double wave_scale);
+CWAVEFORM_API cwaveform_stack *cwaveform_stack_scale(
+    const cwaveform_stack *stack, double scale);
 CWAVEFORM_API void cwaveform_stack_retain(cwaveform_stack *stack);
 CWAVEFORM_API void cwaveform_stack_release(cwaveform_stack *stack);
 CWAVEFORM_API const uint8_t *cwaveform_stack_bytes(const cwaveform_stack *stack,

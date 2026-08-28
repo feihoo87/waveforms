@@ -54,11 +54,13 @@ plt.plot(t, y_wav(t))
 plt.show()
 ```
 
-### Packed binary representation
+### Unified binary representation
 
-Starting with version 3, `Waveform` and `WaveVStack` use a packed-binary backend.
-It is intended for workloads with many small pulses and for low-overhead
-serialization.
+`Waveform` is the common base class for every signal object. `RealWaveform`
+and `ComplexWaveform` are concrete waveforms; `WaveVStack` is the common stack
+base, with `RealWaveVStack` and `ComplexWaveVStack` as its concrete forms.
+The original construction style remains unchanged and automatically selects
+the compact C core for common pulses and repeated-pulse stacks:
 
 ```python
 import waveforms as wf
@@ -70,12 +72,17 @@ import waveforms as wf
 pulse = (wf.gaussian(12e-9) >> 20e-9) * wf.cos(2 * wf.pi * 5e9)
 data = pulse.to_bytes()
 restored = wf.Waveform.from_bytes(data)
+
+assert isinstance(pulse, wf.Waveform)
+stack = wf.WaveVStack([pulse, pulse >> 40e-9])
+assert isinstance(stack, wf.RealWaveVStack)
+assert isinstance(stack, wf.WaveVStack)
 ```
 
-Time resolution is process-wide and is not stored in each binary block. A
-process loading a block must therefore use the same resolution as the process
-that created it. The setting is locked when the first waveform object is
-created or loaded.
+The C block format stores signed 64-bit ticks using a process-wide clock. The
+default is 120 GHz. A different process-wide time resolution may be selected
+before the first waveform is constructed; the same C representation and
+evaluator continue to be used. The setting is locked by the first object.
 
 `sample()` has integer-grid fast paths for 500 MHz, 1 GHz, 1.2 GHz, 2 GHz,
 2.4 GHz, 2.5 GHz, 4 GHz, 6 GHz, 8 GHz, and 10 GHz. Real waveforms can be
@@ -87,7 +94,7 @@ pulse.stop = 100e-9
 dac16 = pulse.sample(2_400_000_000, dtype=np.int16, full_scale=1.0)
 ```
 
-The packed core stores and evaluates real-valued signals only. Complex signals
+The low-level cores store and evaluate real-valued signals only. Complex signals
 are represented in Python as independent real and imaginary channels:
 
 ```python
@@ -98,7 +105,7 @@ stack = wf.ComplexWaveVStack([z, z >> 20e-9])
 samples = stack(t)  # complex NumPy array
 ```
 
-`Waveform` and `WaveVStack` therefore avoid complex storage and arithmetic for
+Real waveforms and stacks therefore avoid complex storage and arithmetic for
 the common real-valued case. `ComplexWaveform.real` and `.imag` expose the two
 real channel waveforms.
 

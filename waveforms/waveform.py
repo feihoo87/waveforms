@@ -1,9 +1,8 @@
-"""Independent packed-binary waveform implementation.
+"""Unified waveform API backed by immutable binary signal blocks.
 
-``Waveform`` and ``WaveVStack`` keep their signal representation in immutable
-binary blocks owned by :mod:`waveforms._waveform`. Times in those blocks are
-signed 64-bit ticks. The tick duration is process-wide configuration and is
-intentionally not repeated in every block.
+``Waveform`` is the common base for real, complex, and stacked signals.
+Common real expressions and repeated-pulse stacks use the compact C core;
+complex signals are represented as explicit pairs of real C blocks.
 """
 
 from __future__ import annotations
@@ -20,19 +19,19 @@ from ._waveform import (
     COS, COSH, D_GAUSSIAN, DRAG, DRAG_SIN, DRAG_SINX, ERF, EXP,
     EXPONENTIALCHIRP, GAUSSIAN,
     HYPERBOLICCHIRP, INTERP, LINEAR, LINEARCHIRP, MOLLIFIER, SINC, SINH,
-    PackedStack, PackedWaveform, accumulate_template, affine_expression,
-    basic, basic_expression, constant, get_time_resolution,
-    piecewise, piecewise_canonical, place_quantized_template,
-    place_template_quantized,
+    accumulate_template, get_time_resolution,
+    lock_time_resolution,
+    place_quantized_template, place_template_quantized,
     quantize_samples, quantize_time, registerBaseFunc,
-    registerDerivative, sample_clock, sample_grid, set_time_resolution,
+    registerDerivative, sample_clock, sample_grid,
+    set_time_resolution as _set_time_resolution,
     tick_to_time, time_to_tick,
 )
 from ._waveform import (
-    NativeCore as _NativeCore,
-    NativeStackCore as _NativeStackCore,
-    TICKS_PER_SECOND as _NATIVE_TICKS_PER_SECOND,
-    native_format_description,
+    CWaveformCore as _CWaveformCore,
+    CWaveformStackCore as _CWaveformStackCore,
+    TICKS_PER_SECOND as _CORE_TICKS_PER_SECOND,
+    set_c_ticks_per_second as _set_c_ticks_per_second,
 )
 
 _ZERO_EXPR = ((), ())
@@ -53,6 +52,30 @@ _SUPPORTED_SAMPLE_RATES = frozenset({
     10_000_000_000,
 })
 _INF_TICK = np.iinfo(np.int64).max
+_C_CLOCK_ACTIVE = get_time_resolution() == 1 / _CORE_TICKS_PER_SECOND
+_C_CLOCK_LOCKED = False
+
+
+def set_time_resolution(value):
+    """Configure the global clock before the first waveform is created."""
+    global _C_CLOCK_ACTIVE, _CORE_TICKS_PER_SECOND
+    reciprocal = 1.0 / float(value)
+    ticks_per_second = int(round(reciprocal))
+    if not np.isclose(reciprocal, ticks_per_second, rtol=1e-15, atol=0.0):
+        raise ValueError(
+            "the C core requires a global tick that divides one second"
+        )
+    _set_time_resolution(value)
+    _set_c_ticks_per_second(ticks_per_second)
+    _CORE_TICKS_PER_SECOND = ticks_per_second
+    _C_CLOCK_ACTIVE = True
+
+
+def _ensure_c_clock_locked():
+    global _C_CLOCK_LOCKED
+    if not _C_CLOCK_LOCKED:
+        lock_time_resolution()
+        _C_CLOCK_LOCKED = True
 
 
 def _number_parts(value):
@@ -92,21 +115,87 @@ def _copy_sampling_metadata(source, target):
 
 
 def _scalar(opcode, *args, shift=0.0):
-    return basic(opcode, args, shift)
+    parameters = _builtin_parameters(opcode, args)
+    return _CWaveformCore.builtin(
+        opcode, parameters, _time_to_c_tick(shift)
+    )
 
 
 def _expression(opcode, *args, shift=0.0):
-    return basic_expression(opcode, args, shift)
+    return RealWaveform._from_core(_scalar(opcode, *args, shift=shift))
 
 
 def _affine_expression(opcode, *args, shift=0.0, scale=1.0, offset=0.0):
-    return affine_expression(opcode, args, shift, scale, offset)
+    return scale * _expression(opcode, *args, shift=shift) + offset
 
 
 def _piecewise(bounds, *expressions):
-    return Waveform._from_core(
-        piecewise_canonical(tuple(bounds), expressions)
-    )
+    if len(bounds) != len(expressions) or not bounds or bounds[-1] != inf:
+        raise ValueError("bounds and expressions must have equal lengths ending at +inf")
+    result = _c_zero()
+    lower = -inf
+    for upper, expression in zip(bounds, expressions):
+        wave = expression if isinstance(expression, RealWaveform) else _c_const(expression)
+        if not isinstance(wave, RealWaveform):
+            raise TypeError("piecewise expressions must be real C waveforms")
+        if not wave._is_zero() and lower < upper:
+            core = wave._materialized_core().window(
+                _time_to_c_tick(lower), _time_to_c_tick(upper)
+            )
+            result = result + RealWaveform._from_core(core)
+        lower = upper
+    return result
+
+
+def _builtin_parameters(opcode, args):
+    """Flatten public builtin arguments into the language-neutral C ABI."""
+    def time_value(value):
+        return _c_tick_to_time(_time_to_c_tick(value))
+
+    if opcode == INTERP:
+        start, stop, points = args
+        return (time_value(start), time_value(stop),
+                *(float(value) for value in points))
+    if opcode == DRAG:
+        t0, freq, width, delta, block_freq, phase = args
+        if block_freq is not None and not np.isscalar(block_freq):
+            values = tuple(block_freq)
+            if len(values) > 1:
+                raise ValueError("drag accepts at most one block frequency")
+            block_freq = None if not values else values[0]
+        return (time_value(t0), float(freq), time_value(width), float(delta),
+                np.nan if block_freq is None else float(block_freq),
+                float(phase))
+    if opcode in (DRAG_SIN, DRAG_SINX):
+        t0, freq, width, delta, block_freq, phase, plateau = args[:7]
+        tab = np.nan if opcode == DRAG_SIN else float(args[7])
+        frequencies = () if block_freq is None else tuple(block_freq)
+        return (time_value(t0), float(freq), time_value(width), float(delta),
+                float(phase), time_value(plateau), tab,
+                *(float(value) for value in frequencies))
+    if opcode in (GAUSSIAN, ERF, MOLLIFIER, D_GAUSSIAN):
+        return (time_value(args[0]), *(float(value) for value in args[1:]))
+    if opcode == LINEARCHIRP:
+        return (float(args[0]), float(args[1]), time_value(args[2]),
+                float(args[3]))
+    return tuple(float(value) for value in args)
+
+
+def _legacy_expression_to_c(expression):
+    """Translate the historic public ``seq`` expression into the C core."""
+    if isinstance(expression, RealWaveform):
+        return expression
+    if isinstance(expression, (int, float, np.number)):
+        return _c_const(expression)
+    terms, coefficients = expression
+    result = _c_zero()
+    for (functions, powers), coefficient in zip(terms, coefficients):
+        term = _c_const(coefficient)
+        for function, power in zip(functions, powers):
+            opcode, *args, shift = function
+            term = term * (_expression(opcode, *args, shift=shift) ** int(power))
+        result = result + term
+    return result
 
 
 def _is_tick_aligned(value, tick):
@@ -133,6 +222,21 @@ def _sampling_plan(start, stop, sample_rate):
     span_numerator = (stop_tick - start_tick) * step_denominator
     count = (max(0, span_numerator) + step_numerator - 1) // step_numerator
     return (start_tick, int(count), step_numerator, step_denominator)
+
+
+def _array_tick_plan(positions):
+    """Recognize a one-dimensional, uniform integer-tick input grid."""
+    if positions.ndim != 1 or len(positions) < 2:
+        return None
+    scaled = positions * _CORE_TICKS_PER_SECOND
+    ticks = np.rint(scaled)
+    if np.any(np.abs(scaled - ticks) > 1e-5):
+        return None
+    steps = np.diff(ticks)
+    step = int(steps[0])
+    if step <= 0 or np.any(steps != step):
+        return None
+    return int(ticks[0]), len(positions), step
 
 
 def _quantization_bits(dtype, out):
@@ -236,11 +340,36 @@ def _sample_iq(owner, sample_rate=None, out=None, chunk_size=None,
     return chunks()
 
 
-class _SamplingMixin:
+class _WaveformMeta(type):
+    """Keep the 2.2.x ``Waveform(...)`` constructor as a real-wave factory."""
+
+    def __call__(cls, *args, **kwargs):
+        if cls is Waveform:
+            return RealWaveform(*args, **kwargs)
+        return super().__call__(*args, **kwargs)
+
+
+class Waveform(metaclass=_WaveformMeta):
+    """Common base class for every real, complex, and stacked waveform."""
+
     start: float | None
     stop: float | None
     sample_rate: float | None
     filters: tuple[np.ndarray, float] | None
+
+    @classmethod
+    def from_bytes(cls, data):
+        """Restore any waveform kind from its canonical binary block."""
+        magic = bytes(data[:4])
+        if magic in (_COMPLEX_WAVE_MAGIC, b"WNC4"):
+            return ComplexWaveform.from_bytes(data)
+        if magic == _COMPLEX_STACK_MAGIC:
+            return ComplexWaveVStack.from_bytes(data)
+        if magic == b"WNS4":
+            return RealWaveVStack.from_bytes(data)
+        if magic == b"WNF4":
+            return RealWaveform.from_bytes(data)
+        raise ValueError("unsupported waveform block")
 
     def sample(self, sample_rate=None, out: np.ndarray | None = None,
                chunk_size=None, function_lib=None,
@@ -364,349 +493,16 @@ class _SamplingMixin:
         process.start()
 
 
-class Waveform(_SamplingMixin):
+class _RealWaveformBase(Waveform):
+    """Common real-waveform type; concrete storage is provided by the C core."""
+
     __slots__ = (
-        "_core", "_delay", "_scale", "max", "min", "start", "stop",
-        "sample_rate", "filters", "label",
+        "_core", "max", "min", "start", "stop", "sample_rate",
+        "filters", "label",
     )
 
-    def __init__(self, bounds=(inf,), seq=None, min=-inf, max=inf, *,
-                 _core=None, _delay=0.0, _scale=1.0):
-        if _core is None:
-            if seq is None:
-                seq = (_ZERO_EXPR,)
-            _core = PackedWaveform.from_legacy(tuple(bounds), tuple(seq))
-        self._core = _core
-        self._delay = quantize_time(_delay)
-        scale_real, scale_imag = _number_parts(_scale)
-        if scale_imag != 0:
-            raise TypeError("Waveform scale must be real; use ComplexWaveform")
-        self._scale = scale_real
-        self.max = max
-        self.min = min
-        self.start = None
-        self.stop = None
-        self.sample_rate = None
-        self.filters = None
-        self.label = None
 
-    @classmethod
-    def _from_core(cls, core, delay=0.0, scale=1.0):
-        # Internal cores and affine values are already real and tick-aligned.
-        # Bypass the public constructor's legacy conversion and type checks.
-        obj = cls.__new__(cls)
-        obj._core = core
-        obj._delay = quantize_time(delay)
-        obj._scale = scale
-        obj.max = inf
-        obj.min = -inf
-        obj.start = None
-        obj.stop = None
-        obj.sample_rate = None
-        obj.filters = None
-        obj.label = None
-        return obj
-
-    def _materialized_core(self):
-        core = self._core
-        if self._scale != 1:
-            core = core.scaled(self._scale)
-        if self._delay != 0:
-            core = core.shifted(self._delay)
-        return core
-
-    def _sample_supported_quantized(
-            self, start_tick, count, step_numerator, step_denominator,
-            bits, full_scale, out=None):
-        """Quantize non-zero pieces directly into the integer output."""
-        x = sample_grid(
-            start_tick, count, step_numerator, step_denominator
-        )
-        output = _integer_output(count, bits, out)
-        parts, _ = self._core.parts_shifted(x, self._delay)
-        should_scale = self._scale != 1
-        should_clip = self.min != -inf or self.max != inf
-        # Several tiny pieces cost more as separate quantizer calls than one
-        # contiguous pass.  Materialize short composite waveforms once, while
-        # retaining sparse direct writes for large windows.
-        if len(parts) > 1 and count < 2048:
-            signal = np.zeros(count, dtype=np.float64)
-            for start, stop, part in parts:
-                if should_scale:
-                    part = part * self._scale
-                if should_clip:
-                    part = np.clip(part, self.min, self.max)
-                signal[start:stop] += part
-            return quantize_samples(signal, bits, full_scale, out)
-        for start, stop, part in parts:
-            if should_scale:
-                part = part * self._scale
-            if should_clip:
-                part = np.clip(part, self.min, self.max)
-            quantize_samples(
-                part, bits, full_scale, output[start:stop]
-            )
-        return output
-
-    @property
-    def bounds(self):
-        return tuple(self._materialized_core().get_bounds())
-
-    @property
-    def seq(self):
-        return self._materialized_core().to_legacy()[1]
-
-    @staticmethod
-    def _begin(bounds, seq):
-        for index, expression in enumerate(seq):
-            if expression != _ZERO_EXPR:
-                return -inf if index == 0 else bounds[index - 1]
-        return inf
-
-    @staticmethod
-    def _end(bounds, seq):
-        count = len(bounds)
-        for index, expression in enumerate(reversed(seq)):
-            if expression != _ZERO_EXPR:
-                return inf if index == 0 else bounds[count - index - 1]
-        return -inf
-
-    @property
-    def begin(self):
-        value = self._begin(*self._core.to_legacy()) + self._delay
-        return value if self.start is None else max(self.start, value)
-
-    @property
-    def end(self):
-        value = self._end(*self._core.to_legacy()) + self._delay
-        return value if self.stop is None else min(self.stop, value)
-
-    def to_bytes(self):
-        """Return the canonical signal block; sampling metadata is separate."""
-        return self._materialized_core().to_bytes()
-
-    @classmethod
-    def from_bytes(cls, data):
-        if bytes(data[:4]) == _COMPLEX_WAVE_MAGIC:
-            return ComplexWaveform.from_bytes(data)
-        return cls._from_core(PackedWaveform.from_bytes(data))
-
-    def simplify(self, eps=1e-15):
-        return Waveform._from_core(self._materialized_core().simplify(eps))
-
-    def filter(self, low=0, high=inf, eps=1e-15):
-        return Waveform._from_core(self._materialized_core().filtered(low, high, eps))
-
-    def __pow__(self, n):
-        return Waveform._from_core(self._materialized_core().power(n))
-
-    def __add__(self, other):
-        if isinstance(other, ComplexWaveform):
-            return other + self
-        if isinstance(other, ComplexWaveVStack):
-            return other + self
-        if isinstance(other, WaveVStack):
-            return other + self
-        if not isinstance(other, Waveform):
-            real, imag = _number_parts(other)
-            if imag != 0:
-                return ComplexWaveform(self + real, _real_const(imag))
-            other = _real_const(real)
-        if self._delay == other._delay:
-            if self._scale == other._scale:
-                return Waveform._from_core(
-                    self._core.add(other._core), self._delay, self._scale
-                )
-            return Waveform._from_core(
-                self._core.add_affine(
-                    other._core, 0.0, self._scale, 0.0, other._scale
-                ),
-                self._delay,
-            )
-        return Waveform._from_core(self._core.add_affine(
-            other._core, self._delay, self._scale,
-            other._delay, other._scale,
-        ))
-
-    def __radd__(self, value):
-        return self + value
-
-    def __sub__(self, other):
-        return self + (-other)
-
-    def __rsub__(self, value):
-        real, imag = _number_parts(value)
-        if imag != 0:
-            return ComplexWaveform(real - self, _real_const(imag))
-        return real + (-self)
-
-    def __mul__(self, other):
-        if isinstance(other, ComplexWaveform):
-            return other * self
-        if isinstance(other, ComplexWaveVStack):
-            return other * self
-        if isinstance(other, WaveVStack):
-            return other * self
-        if isinstance(other, Waveform):
-            scale = self._scale * other._scale
-            if self._delay == other._delay:
-                return Waveform._from_core(
-                    self._core.mul(other._core), self._delay, scale
-                )
-            return Waveform._from_core(
-                self._core.mul_affine(
-                    other._core, self._delay, other._delay
-                ),
-                scale=scale,
-            )
-        real, imag = _number_parts(other)
-        if imag != 0:
-            return ComplexWaveform(self * real, self * imag)
-        return Waveform._from_core(self._core, self._delay, self._scale * real)
-
-    def __rmul__(self, value):
-        return self * value
-
-    def __truediv__(self, other):
-        if isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
-                              ComplexWaveVStack)):
-            raise TypeError("division by waveform")
-        return self * (1 / other)
-
-    def __neg__(self):
-        return self * -1
-
-    def __rshift__(self, time):
-        delay = quantize_time(self._delay + time)
-        return Waveform._from_core(self._core, delay, self._scale)
-
-    def __lshift__(self, time):
-        return self >> -time
-
-    @property
-    def marker(self):
-        core = self._materialized_core().simplify()
-        bounds, expressions = core.to_legacy()
-        return Waveform(bounds, tuple(
-            _ZERO_EXPR if expression == _ZERO_EXPR else _ONE_EXPR
-            for expression in expressions
-        ))
-
-    def mask(self, edge=0):
-        marker = self.marker
-        bounds = marker.bounds
-        expressions = marker.seq
-        out_bounds = []
-        out_expressions = []
-        in_wave = expressions[0] != _ZERO_EXPR
-
-        if expressions[0] == _ZERO_EXPR:
-            out_bounds.append(bounds[0] - edge)
-            out_expressions.append(_ZERO_EXPR)
-
-        for boundary, expression in zip(bounds[1:], expressions[1:]):
-            if not in_wave and expression != _ZERO_EXPR:
-                in_wave = True
-                out_bounds.append(boundary + edge)
-                out_expressions.append(_ONE_EXPR)
-            elif in_wave and expression == _ZERO_EXPR:
-                in_wave = False
-                boundary -= edge
-                if boundary > out_bounds[-1]:
-                    out_bounds.append(boundary)
-                    out_expressions.append(_ZERO_EXPR)
-                else:
-                    out_bounds[-1] = boundary
-        return Waveform(tuple(out_bounds), tuple(out_expressions))
-
-    def __or__(self, other):
-        if not isinstance(other, Waveform):
-            other = const(other)
-        return (self.marker + other.marker).marker
-
-    def __ior__(self, other):
-        return self | other
-
-    def __and__(self, other):
-        if not isinstance(other, Waveform):
-            other = const(other)
-        return (self.marker * other.marker).marker
-
-    def __iand__(self, other):
-        return self & other
-
-    def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None):
-        if function_lib is not None:
-            raise NotImplementedError("custom waveform functions are not supported")
-        scalar = isinstance(x, (int, float, complex, np.number))
-        values = np.asarray([x]) if scalar else np.asarray(x)
-        parts, _ = self._core.parts_shifted(values, self._delay)
-        scaled_parts = []
-        should_scale = self._scale != 1
-        should_clip = self.min != -inf or self.max != inf
-        for start, stop, part in parts:
-            if should_scale:
-                part = part * self._scale
-            if should_clip:
-                part = np.clip(part, self.min, self.max)
-            scaled_parts.append((start, stop, part))
-        if frag:
-            if out is None:
-                return scaled_parts
-            if not accumulate:
-                out.clear()
-            out.extend(scaled_parts)
-            return out
-
-        if out is None:
-            out = np.zeros_like(values, dtype=float)
-        elif not accumulate:
-            out[...] = 0
-        for start, stop, part in scaled_parts:
-            out[start:stop] += part
-        return out[0] if scalar else out
-
-    def __eq__(self, other):
-        if self is other:
-            return True
-        if isinstance(other, (int, float, complex, np.number)):
-            real, imag = _number_parts(other)
-            if imag != 0:
-                return False
-            other = _real_const(real)
-        if isinstance(other, ComplexWaveform):
-            return other == self
-        if not isinstance(other, Waveform):
-            return False
-        if (self.max, self.min, self.start, self.stop) != (
-                other.max, other.min, other.start, other.stop):
-            return False
-        return self.simplify().to_bytes() == other.simplify().to_bytes()
-
-    def __hash__(self):
-        return hash((self.simplify().to_bytes(), self.max, self.min,
-                     self.start, self.stop))
-
-    def __repr__(self):
-        return (f"Waveform(segments={len(self.bounds)}, bytes={len(self.to_bytes())}, "
-                f"begin={self.begin}, end={self.end})")
-
-    def _repr_latex_(self):
-        return rf"f(t)\quad\mathrm{{on}}\ [{self.begin:g},\,{self.end:g}]"
-
-    def __getstate__(self):
-        return (self._core.to_bytes(), self._delay, self._scale, self.max,
-                self.min, self.start, self.stop, self.sample_rate,
-                self.filters, self.label)
-
-    def __setstate__(self, state):
-        (data, self._delay, self._scale, self.max, self.min, self.start,
-         self.stop, self.sample_rate, self.filters, self.label) = state
-        self._core = PackedWaveform.from_bytes(data)
-
-
-class ComplexWaveform(_SamplingMixin):
+class ComplexWaveform(Waveform):
     """Complex waveform represented by two independent real waveforms."""
 
     __slots__ = (
@@ -721,7 +517,7 @@ class ComplexWaveform(_SamplingMixin):
             self._real = real._real
             self._imag = real._imag
         else:
-            if isinstance(real, Waveform):
+            if isinstance(real, RealWaveform):
                 self._real = real
             else:
                 real_value, embedded_imag = _number_parts(real)
@@ -736,8 +532,9 @@ class ComplexWaveform(_SamplingMixin):
                 else:
                     self._real = _real_const(real_value)
             if not hasattr(self, "_imag"):
-                self._imag = imag if isinstance(imag, Waveform) else _real_const(imag)
-        if not isinstance(self._real, Waveform) or not isinstance(self._imag, Waveform):
+                self._imag = imag if isinstance(imag, RealWaveform) else _real_const(imag)
+        if (not isinstance(self._real, RealWaveform)
+                or not isinstance(self._imag, RealWaveform)):
             raise TypeError("ComplexWaveform components must be real Waveform objects")
         self.max = inf
         self.min = -inf
@@ -784,8 +581,12 @@ class ComplexWaveform(_SamplingMixin):
 
     @classmethod
     def from_bytes(cls, data):
-        real_data, imag_data = _unpack_complex(data, _COMPLEX_WAVE_MAGIC)
-        return cls(Waveform.from_bytes(real_data), Waveform.from_bytes(imag_data))
+        magic = bytes(data[:4])
+        if magic not in (_COMPLEX_WAVE_MAGIC, b"WNC4"):
+            raise ValueError("unsupported complex waveform format")
+        real_data, imag_data = _unpack_complex(data, magic)
+        return cls(Waveform.from_bytes(real_data),
+                   Waveform.from_bytes(imag_data))
 
     def simplify(self, eps=1e-15):
         return ComplexWaveform(self._real.simplify(eps),
@@ -816,7 +617,7 @@ class ComplexWaveform(_SamplingMixin):
         if isinstance(other, ComplexWaveform):
             return ComplexWaveform(self._real + other._real,
                                    self._imag + other._imag)
-        if isinstance(other, Waveform):
+        if isinstance(other, RealWaveform):
             return ComplexWaveform(self._real + other, self._imag)
         real, imag = _number_parts(other)
         return ComplexWaveform(self._real + real, self._imag + imag)
@@ -841,7 +642,7 @@ class ComplexWaveform(_SamplingMixin):
                 self._real * other._real - self._imag * other._imag,
                 self._real * other._imag + self._imag * other._real,
             )
-        if isinstance(other, Waveform):
+        if isinstance(other, RealWaveform):
             return ComplexWaveform(self._real * other, self._imag * other)
         real, imag = _number_parts(other)
         return ComplexWaveform(
@@ -925,6 +726,22 @@ class ComplexWaveform(_SamplingMixin):
             else:
                 out.real[...] = real
                 out.imag[...] = imag
+        elif (isinstance(self._real, RealWaveform)
+              and isinstance(self._imag, RealWaveform)):
+            real = self._real._core.evaluate(
+                values, self._real._delay_tick, self._real._scale,
+                self._real.min, self._real.max,
+            )
+            imag = self._imag._core.evaluate(
+                values, self._imag._delay_tick, self._imag._scale,
+                self._imag.min, self._imag.max,
+            )
+            if accumulate:
+                out.real[...] += real
+                out.imag[...] += imag
+            else:
+                out.real[...] = real
+                out.imag[...] = imag
         else:
             self._real(values, out=out.real, accumulate=True)
             self._imag(values, out=out.imag, accumulate=True)
@@ -936,7 +753,7 @@ class ComplexWaveform(_SamplingMixin):
         if isinstance(other, (int, float, complex, np.number)):
             real, imag = _number_parts(other)
             other = ComplexWaveform(real, imag)
-        elif isinstance(other, Waveform):
+        elif isinstance(other, RealWaveform):
             other = ComplexWaveform(other, _real_const(0))
         if not isinstance(other, ComplexWaveform):
             return False
@@ -971,386 +788,39 @@ class ComplexWaveform(_SamplingMixin):
         self._imag = restored._imag
 
 
-class WaveVStack(_SamplingMixin):
-    __slots__ = (
-        "_stack", "start", "stop", "sample_rate", "offset", "shift",
-        "filters", "label", "function_lib", "_sample_plan_cache",
-    )
+class _WaveVStackMeta(_WaveformMeta):
+    """Route the abstract stack constructor to the native real stack."""
 
-    def __init__(self, wlist=()):
-        if isinstance(wlist, WaveVStack):
-            self._stack = wlist._stack
-        else:
-            events = []
-            for wav in wlist:
-                if isinstance(wav, ComplexWaveform):
-                    raise TypeError(
-                        "WaveVStack is real-only; use ComplexWaveVStack"
-                    )
-                if not isinstance(wav, Waveform):
-                    raise TypeError("WaveVStack accepts Waveform objects")
-                events.append((wav._core, wav._delay, wav._scale))
-            self._stack = PackedStack.from_events(events)
-        self.start = None
-        self.stop = None
-        self.sample_rate = None
-        self.offset = 0
-        self.shift = 0
-        self.filters = None
-        self.label = None
-        self.function_lib = None
-        self._sample_plan_cache = None
+    def __call__(cls, *args, **kwargs):
+        if cls is WaveVStack:
+            return _make_real_stack(*args, **kwargs)
+        return super().__call__(*args, **kwargs)
 
-    @classmethod
-    def _from_stack(cls, stack):
-        result = cls()
-        result._stack = stack
-        return result
 
-    @property
-    def wlist(self):
-        return [Waveform._from_core(core, delay, scale)
-                for core, delay, scale in self._stack.events()]
-
-    @property
-    def begin(self):
-        events = self._stack.events()
-        if events:
-            value = min(Waveform._from_core(core, delay + self.shift, scale).begin
-                        for core, delay, scale in events)
-        else:
-            value = -inf
-        return value if self.start is None else max(self.start, value)
-
-    @property
-    def end(self):
-        events = self._stack.events()
-        if events:
-            value = max(Waveform._from_core(core, delay + self.shift, scale).end
-                        for core, delay, scale in events)
-        else:
-            value = inf
-        return value if self.stop is None else min(self.stop, value)
-
-    def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None):
-        if frag:
-            raise AssertionError("WaveVStack does not support frag mode")
-        if function_lib is not None or self.function_lib is not None:
-            raise NotImplementedError("custom waveform functions are not supported")
-        scalar = isinstance(x, (int, float, complex, np.number))
-        values = self._stack.evaluate(
-            np.asarray([x]) if scalar else np.asarray(x), self.offset, self.shift
-        )
-        if out is not None:
-            if accumulate:
-                out[...] += values
-            else:
-                out[...] = values
-            values = out
-        return values[0] if scalar else values
-
-    def _template_sample_plan(self, start_tick, count, step_numerator,
-                              index_offset=0):
-        window_start = start_tick + index_offset * step_numerator
-        cache_key = (
-            window_start, count, step_numerator, self.shift,
-        )
-        if (self._sample_plan_cache is not None
-                and self._sample_plan_cache[0] == cache_key):
-            return self._sample_plan_cache[1]
-
-        groups = {}
-        support_cache = {}
-        non_overlapping = True
-        previous_start = -1
-        previous_stop = -1
-        for core, delay, scale in self._stack.events():
-            if scale == 0:
-                continue
-            delay_tick = time_to_tick(delay + self.shift)
-            support = support_cache.get(core)
-            if support is None:
-                support = core.support_ticks()
-                support_cache[core] = support
-            lower_tick, upper_tick = support
-            if lower_tick >= upper_tick:
-                continue
-            if lower_tick == -_INF_TICK or upper_tick == _INF_TICK:
-                self._sample_plan_cache = cache_key, None
-                return None
-
-            phase = (window_start - delay_tick) % step_numerator
-            key = (core, phase)
-            group = groups.get(key)
-            if group is None:
-                first_tick = lower_tick + (
-                    (phase - lower_tick) % step_numerator
-                )
-                template_count = max(
-                    0,
-                    (upper_tick - first_tick + step_numerator - 1)
-                    // step_numerator,
-                )
-                template_grid = sample_grid(
-                    first_tick, template_count, step_numerator, 1
-                )
-                group = [first_tick, core.evaluate(template_grid), [], []]
-                groups[key] = group
-            first_tick, template, destinations, scales = group
-            destination = (
-                delay_tick + first_tick - window_start
-            ) // step_numerator
-            start = max(0, destination)
-            stop = min(count, destination + len(template))
-            if start < stop:
-                if start < previous_start or start < previous_stop:
-                    non_overlapping = False
-                previous_start = start
-                previous_stop = max(previous_stop, stop)
-                destinations.append(destination)
-                scales.append(scale)
-
-        compiled = []
-        for _, template, destinations, scales in groups.values():
-            destinations = np.asarray(destinations, dtype=np.int64)
-            scales = np.asarray(scales, dtype=np.float64)
-            scale_groups = None
-            if len(scales):
-                unique_scales = np.unique(scales)
-                if len(unique_scales) <= 64:
-                    scale_groups = tuple(
-                        (float(scale), destinations[scales == scale])
-                        for scale in unique_scales
-                    )
-            compiled.append(
-                (template, destinations, scales, scale_groups)
-            )
-        plan = tuple(compiled), non_overlapping
-        self._sample_plan_cache = cache_key, plan
-        return plan
-
-    def _sample_supported(self, start_tick, count, step_numerator,
-                          step_denominator, index_offset=0):
-        # The common 120 GHz/device-rate case evaluates each distinct pulse
-        # only once per grid phase.  The compiled placement plan is retained
-        # for repeated float or integer sampling.
-        if step_denominator != 1:
-            return super()._sample_supported(
-                start_tick, count, step_numerator, step_denominator,
-                index_offset,
-            )
-        plan = self._template_sample_plan(
-            start_tick, count, step_numerator, index_offset
-        )
-        if plan is None:
-            return super()._sample_supported(
-                start_tick, count, step_numerator, 1, index_offset
-            )
-        groups, _ = plan
-        result = np.full(count, self.offset, dtype=np.float64)
-        for template, destinations, scales, _ in groups:
-            accumulate_template(result, template, destinations, scales)
-        return result
-
-    def _sample_supported_quantized(
-            self, start_tick, count, step_numerator, step_denominator,
-            bits, full_scale, out=None):
-        """Write separated repeated templates directly to integer output."""
-        if step_denominator != 1:
-            return NotImplemented
-        plan = self._template_sample_plan(
-            start_tick, count, step_numerator
-        )
-        if plan is None:
-            return NotImplemented
-        groups, non_overlapping = plan
-        if not non_overlapping:
-            return NotImplemented
-
-        base = quantize_samples(
-            np.asarray([self.offset]), bits, full_scale
-        )[0]
-        output = _integer_output(count, bits, out, fill=base)
-        for template, destinations, scales, scale_groups in groups:
-            if scale_groups is not None:
-                for scale, scale_destinations in scale_groups:
-                    quantized = quantize_samples(
-                        self.offset + scale * template,
-                        bits, full_scale,
-                    )
-                    place_quantized_template(
-                        output, quantized, scale_destinations
-                    )
-            elif len(destinations):
-                place_template_quantized(
-                    output, template, destinations, scales,
-                    self.offset, full_scale,
-                )
-        return output
-
-    def to_bytes(self):
-        if self.shift == 0 and self.offset == 0:
-            return self._stack.to_bytes()
-        events = [(core, quantize_time(delay + self.shift), scale)
-                  for core, delay, scale in self._stack.events()]
-        if self.offset != 0:
-            events.append((constant(self.offset), 0.0, 1.0))
-        return PackedStack.from_events(events).to_bytes()
+class WaveVStack(Waveform, metaclass=_WaveVStackMeta):
+    """Common base class for real and complex waveform stacks."""
 
     @classmethod
     def from_bytes(cls, data):
-        if bytes(data[:4]) == _COMPLEX_STACK_MAGIC:
+        magic = bytes(data[:4])
+        if magic == _COMPLEX_STACK_MAGIC:
             return ComplexWaveVStack.from_bytes(data)
-        return cls._from_stack(PackedStack.from_bytes(data))
-
-    def simplify(self, eps=1e-15):
-        wav = Waveform._from_core(
-            self._stack.simplified(self.shift, self.offset, eps)
-        )
-        return _copy_sampling_metadata(self, wav)
-
-    def __rshift__(self, time):
-        result = self._from_stack(self._stack)
-        _copy_sampling_metadata(self, result)
-        result.offset = self.offset
-        result.shift = quantize_time(self.shift + time)
-        return result
-
-    def __lshift__(self, time):
-        return self >> -time
-
-    def __add__(self, other):
-        if isinstance(other, ComplexWaveVStack):
-            return other + self
-        if isinstance(other, ComplexWaveform):
-            return ComplexWaveVStack(self) + other
-        if isinstance(other, WaveVStack):
-            left = [(core, delay + self.shift, scale)
-                    for core, delay, scale in self._stack.events()]
-            right = [(core, delay + other.shift, scale)
-                     for core, delay, scale in other._stack.events()]
-            result = self._from_stack(PackedStack.from_events((*left, *right)))
-            result.offset = self.offset + other.offset
-        elif isinstance(other, Waveform):
-            events = [*self._stack.events(),
-                      (other._core, other._delay - self.shift, other._scale)]
-            result = self._from_stack(PackedStack.from_events(events))
-            result.offset = self.offset
-            result.shift = self.shift
-        else:
-            real, imag = _number_parts(other)
-            if imag != 0:
-                return ComplexWaveVStack(self + real,
-                                         WaveVStack() + imag)
-            result = self._from_stack(self._stack)
-            result.offset = self.offset + real
-            result.shift = self.shift
-        result.filters = self.filters
-        result.label = self.label
-        return result
-
-    def __radd__(self, value):
-        return self + value
-
-    def __sub__(self, other):
-        return self + (-other)
-
-    def __rsub__(self, value):
-        return (-self) + value
-
-    def __mul__(self, other):
-        if isinstance(other, ComplexWaveVStack):
-            return other * self
-        if isinstance(other, ComplexWaveform):
-            return ComplexWaveVStack(self * other.real,
-                                     self * other.imag)
-        if not isinstance(other, Waveform):
-            real, imag = _number_parts(other)
-            if imag != 0:
-                return ComplexWaveVStack(self * real, self * imag)
-            result = self._from_stack(self._stack.scaled(real))
-            result.offset = self.offset * real
-            result.shift = self.shift
-            result.filters = self.filters
-            result.label = self.label
-            return result
-
-        waves = [Waveform._from_core(core, delay + self.shift, scale) * other
-                 for core, delay, scale in self._stack.events()]
-        if self.offset != 0:
-            waves.append(self.offset * other)
-        result = WaveVStack(waves)
-        result.filters = self.filters
-        result.label = self.label
-        return result
-
-    def __rmul__(self, value):
-        return self * value
-
-    def __truediv__(self, other):
-        if isinstance(other, (Waveform, ComplexWaveform, WaveVStack,
-                              ComplexWaveVStack)):
-            raise TypeError("division by waveform")
-        return self * (1 / other)
-
-    def __neg__(self):
-        return self * -1
-
-    def __pow__(self, n):
-        return self.simplify() ** n
-
-    def filter(self, low=0, high=inf, eps=1e-15):
-        return self.simplify(eps).filter(low, high, eps)
-
-    @property
-    def marker(self):
-        return self.simplify().marker
-
-    def mask(self, edge=0):
-        return self.simplify().mask(edge)
-
-    def __or__(self, other):
-        return self.simplify() | other
-
-    def __and__(self, other):
-        return self.simplify() & other
-
-    def __eq__(self, other):
-        if self is other:
-            return True
-        if isinstance(other, ComplexWaveVStack):
-            return other == self
-        if isinstance(other, ComplexWaveform):
-            return other == self.simplify()
-        if isinstance(other, WaveVStack):
-            return self.simplify() == other.simplify()
-        return self.simplify() == other
-
-    __hash__ = None
-
-    def __repr__(self):
-        return (f"WaveVStack(events={len(self._stack.events())}, "
-                f"bytes={len(self.to_bytes())})")
-
-    def _repr_latex_(self):
-        return rf"\sum_{{i=1}}^{{{len(self._stack.events())}}}f_i(t)"
-
-    def __getstate__(self):
-        return (self._stack.to_bytes(), self.start, self.stop,
-                self.sample_rate, self.offset, self.shift, self.filters,
-                self.label)
-
-    def __setstate__(self, state):
-        (data, self.start, self.stop, self.sample_rate, self.offset,
-         self.shift, self.filters, self.label) = state
-        self._stack = PackedStack.from_bytes(data)
-        self.function_lib = None
-        self._sample_plan_cache = None
+        if magic == b"WNS4":
+            return RealWaveVStack.from_bytes(data)
+        return RealWaveVStack.from_bytes(data)
 
 
-class ComplexWaveVStack(_SamplingMixin):
-    """Complex stack represented by two real packed stacks."""
+class _RealWaveVStackBase(WaveVStack):
+    """Common real-stack type; concrete storage is provided by the C core."""
+
+    __slots__ = (
+        "start", "stop", "sample_rate", "offset", "filters", "label",
+        "function_lib", "_sample_plan_cache",
+    )
+
+
+class ComplexWaveVStack(WaveVStack):
+    """Complex stack represented by two real C stacks."""
 
     __slots__ = (
         "_real_stack", "_imag_stack", "start", "stop", "sample_rate",
@@ -1370,7 +840,7 @@ class ComplexWaveVStack(_SamplingMixin):
             self._imag_stack, imag_offset = self._normalize_stack(imag_stack)
             self.offset = complex(real_offset, imag_offset)
             self.shift = 0.0
-        elif imag is not None or isinstance(wlist, (Waveform, WaveVStack)):
+        elif imag is not None or isinstance(wlist, (RealWaveform, WaveVStack)):
             real_stack = self._coerce_stack(wlist)
             imag_stack = self._coerce_stack(WaveVStack() if imag is None else imag)
             self._real_stack, real_offset = self._normalize_stack(real_stack)
@@ -1384,7 +854,7 @@ class ComplexWaveVStack(_SamplingMixin):
                 if isinstance(wav, ComplexWaveform):
                     real_waves.append(wav.real)
                     imag_waves.append(wav.imag)
-                elif isinstance(wav, Waveform):
+                elif isinstance(wav, RealWaveform):
                     real_waves.append(wav)
                 else:
                     raise TypeError(
@@ -1405,28 +875,29 @@ class ComplexWaveVStack(_SamplingMixin):
     def _coerce_stack(value):
         if isinstance(value, WaveVStack):
             return value
-        if isinstance(value, Waveform):
+        if isinstance(value, RealWaveform):
             return WaveVStack((value,))
         raise TypeError("complex stack components must be real waveforms or stacks")
 
     @staticmethod
     def _normalize_stack(stack):
-        events = tuple((core, quantize_time(delay + stack.shift), scale)
-                       for core, delay, scale in stack._stack.events())
-        return WaveVStack._from_stack(PackedStack.from_events(events)), stack.offset
+        result = WaveVStack(stack.wlist)
+        if stack.shift:
+            result = result >> stack.shift
+        return result, stack.offset
 
     @property
     def real(self):
-        result = WaveVStack._from_stack(self._real_stack._stack)
-        result.offset = self.offset.real
-        result.shift = self.shift
+        result = self._real_stack + self.offset.real
+        if self.shift:
+            result = result >> self.shift
         return _copy_sampling_metadata(self, result)
 
     @property
     def imag(self):
-        result = WaveVStack._from_stack(self._imag_stack._stack)
-        result.offset = self.offset.imag
-        result.shift = self.shift
+        result = self._imag_stack + self.offset.imag
+        if self.shift:
+            result = result >> self.shift
         return _copy_sampling_metadata(self, result)
 
     @property
@@ -1438,9 +909,9 @@ class ComplexWaveVStack(_SamplingMixin):
     @property
     def begin(self):
         values = []
-        if self._real_stack._stack.events() or self.offset.real != 0:
+        if self._real_stack.wlist or self.offset.real != 0:
             values.append(self.real.begin)
-        if self._imag_stack._stack.events() or self.offset.imag != 0:
+        if self._imag_stack.wlist or self.offset.imag != 0:
             values.append(self.imag.begin)
         value = min(values) if values else inf
         return value if self.start is None else max(self.start, value)
@@ -1448,9 +919,9 @@ class ComplexWaveVStack(_SamplingMixin):
     @property
     def end(self):
         values = []
-        if self._real_stack._stack.events() or self.offset.real != 0:
+        if self._real_stack.wlist or self.offset.real != 0:
             values.append(self.real.end)
-        if self._imag_stack._stack.events() or self.offset.imag != 0:
+        if self._imag_stack.wlist or self.offset.imag != 0:
             values.append(self.imag.end)
         value = max(values) if values else -inf
         return value if self.stop is None else min(self.stop, value)
@@ -1514,7 +985,7 @@ class ComplexWaveVStack(_SamplingMixin):
         elif isinstance(other, ComplexWaveform):
             result = ComplexWaveVStack(self.real + other.real,
                                        self.imag + other.imag)
-        elif isinstance(other, Waveform):
+        elif isinstance(other, RealWaveform):
             result = ComplexWaveVStack(self.real + other, self.imag)
         else:
             real, imag = _number_parts(other)
@@ -1542,7 +1013,7 @@ class ComplexWaveVStack(_SamplingMixin):
                 self.real * other.real - self.imag * other.imag,
                 self.real * other.imag + self.imag * other.real,
             )
-        elif isinstance(other, Waveform):
+        elif isinstance(other, RealWaveform):
             result = ComplexWaveVStack(self.real * other,
                                        self.imag * other)
         else:
@@ -1620,41 +1091,51 @@ class ComplexWaveVStack(_SamplingMixin):
         self.function_lib = None
 
 
-def _native_time_to_tick(value):
+def _time_to_c_tick(value):
     if value == inf:
         return np.iinfo(np.int64).max
     if value == -inf:
         return np.iinfo(np.int64).min
-    return int(round(float(value) * _NATIVE_TICKS_PER_SECOND))
+    return int(round(float(value) * _CORE_TICKS_PER_SECOND))
 
 
-def _native_tick_to_time(value):
+def _c_tick_to_time(value):
     if value == np.iinfo(np.int64).max:
         return inf
     if value == np.iinfo(np.int64).min:
         return -inf
-    return int(value) / _NATIVE_TICKS_PER_SECOND
+    return int(value) / _CORE_TICKS_PER_SECOND
 
 
-class NativeWaveform:
-    """Thin Python owner for the language-neutral WNF4 native core."""
+class RealWaveform(_RealWaveformBase):
+    """Thin Python owner for the language-neutral WNF4 C core."""
 
-    __slots__ = (
-        "_core", "_delay_tick", "_scale", "max", "min", "start", "stop",
-        "sample_rate", "filters", "label",
-    )
+    __slots__ = ("_delay_tick", "_canonical_core_cache")
 
-    def __init__(self, value=0.0, *, _core=None, _delay_tick=0, _scale=1.0):
+    def __init__(self, bounds=(inf,), seq=None, min=-inf, max=inf, *,
+                 _core=None, _delay_tick=0, _scale=1.0):
+        _ensure_c_clock_locked()
         if _core is None:
-            real, imag = _number_parts(value)
-            if imag != 0:
-                raise TypeError("NativeWaveform is real-only")
-            _core = _NativeCore.constant(real)
+            if isinstance(bounds, (int, float, complex, np.number)) and seq is None:
+                real, imag = _number_parts(bounds)
+                if imag != 0:
+                    raise TypeError("RealWaveform is real-only")
+                _core = _CWaveformCore.constant(real)
+            else:
+                bounds = tuple(bounds)
+                if seq is None:
+                    seq = (_ZERO_EXPR,)
+                seq = tuple(seq)
+                result = _piecewise(
+                    bounds, *(_legacy_expression_to_c(item) for item in seq)
+                )
+                _core = result._materialized_core()
         self._core = _core
         self._delay_tick = int(_delay_tick)
         self._scale = float(_scale)
-        self.max = inf
-        self.min = -inf
+        self._canonical_core_cache = None
+        self.max = max
+        self.min = min
         self.start = None
         self.stop = None
         self.sample_rate = None
@@ -1670,16 +1151,42 @@ class NativeWaveform:
             return self._core
         return self._core.materialize(self._delay_tick, self._scale)
 
+    def _canonical_core(self):
+        if self._canonical_core_cache is None:
+            self._canonical_core_cache = self._materialized_core().simplify(1e-15)
+        return self._canonical_core_cache
+
     def _is_zero(self):
         return (self._scale == 0.0
                 or self._core.lower_tick >= self._core.upper_tick)
+
+    @property
+    def bounds(self):
+        lower = self.begin
+        upper = self.end
+        if lower == -inf and upper == inf:
+            return (inf,)
+        if lower == -inf:
+            return (upper, inf)
+        if upper == inf:
+            return (lower, inf)
+        return (lower, upper, inf)
+
+    @property
+    def seq(self):
+        token = ("C", self.to_bytes())
+        if self.begin == -inf and self.end == inf:
+            return (token,)
+        if self.begin == -inf or self.end == inf:
+            return (token, 0)
+        return (0, token, 0)
 
     @property
     def begin(self):
         tick = self._core.lower_tick
         if tick != np.iinfo(np.int64).max:
             tick += self._delay_tick
-        value = _native_tick_to_time(tick)
+        value = _c_tick_to_time(tick)
         return value if self.start is None else max(self.start, value)
 
     @property
@@ -1687,17 +1194,28 @@ class NativeWaveform:
         tick = self._core.upper_tick
         if tick != np.iinfo(np.int64).min:
             tick += self._delay_tick
-        value = _native_tick_to_time(tick)
+        value = _c_tick_to_time(tick)
         return value if self.stop is None else min(self.stop, value)
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
                  function_lib=None):
         if frag:
-            raise AssertionError("NativeWaveform does not expose fragment mode")
+            values = self(x, frag=False)
+            values = np.asarray([values]) if np.isscalar(values) else values
+            parts = [] if not np.any(values) else [(0, len(values), values)]
+            if out is None:
+                return parts
+            if not accumulate:
+                out.clear()
+            out.extend(parts)
+            return out
         if function_lib is not None:
-            raise NotImplementedError("custom native functions are unsupported")
+            raise NotImplementedError("custom C-core functions are unsupported")
         scalar = isinstance(x, (int, float, np.number))
-        positions = np.asarray([x] if scalar else x, dtype=np.float64)
+        raw_positions = np.asarray([x] if scalar else x)
+        if np.iscomplexobj(raw_positions):
+            raise TypeError("waveform positions must be real")
+        positions = np.asarray(raw_positions, dtype=np.float64)
         values = self._core.evaluate(
             positions, self._delay_tick, self._scale, self.min, self.max
         )
@@ -1712,19 +1230,22 @@ class NativeWaveform:
     def sample(self, sample_rate=None, out=None, chunk_size=None,
                function_lib=None, filters=None, dtype=None, full_scale=1.0):
         if chunk_size is not None:
-            raise NotImplementedError("native chunked sampling is not implemented")
+            return Waveform.sample(
+                self, sample_rate, out, chunk_size, function_lib, filters,
+                dtype, full_scale,
+            )
         if function_lib is not None:
-            raise NotImplementedError("custom native functions are unsupported")
+            raise NotImplementedError("custom C-core functions are unsupported")
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
-            raise ValueError("NativeWaveform sampling metadata is incomplete")
+            raise ValueError("RealWaveform sampling metadata is incomplete")
         if filters is None:
             filters = self.filters
         plan = _sampling_plan(self.start, self.stop, sample_rate)
         dtype, bits = _quantization_bits(dtype, out)
-        native_clock = get_time_resolution() == 1 / _NATIVE_TICKS_PER_SECOND
-        if plan is None or not native_clock:
+        core_clock = get_time_resolution() == 1 / _CORE_TICKS_PER_SECOND
+        if plan is None or not core_clock:
             positions = np.arange(self.start, self.stop, 1 / float(sample_rate))
             values = self(positions)
         else:
@@ -1747,28 +1268,42 @@ class NativeWaveform:
 
     @classmethod
     def from_bytes(cls, data):
-        return cls._from_core(_NativeCore.from_bytes(data))
+        return cls._from_core(_CWaveformCore.from_bytes(data))
 
     def simplify(self, eps=1e-15):
-        return NativeWaveform._from_core(self._materialized_core())
+        return RealWaveform._from_core(
+            self._materialized_core().simplify(eps)
+        )
+
+    def filter(self, low=0, high=inf, eps=1e-15):
+        return RealWaveform._from_core(
+            self._materialized_core().filtered(low, high, eps)
+        )
+
+    def __pow__(self, n):
+        if not isinstance(n, int) or n < 0:
+            raise ValueError("non-constant waveform powers must be non-negative integers")
+        return RealWaveform._from_core(
+            self._materialized_core().power(n)
+        )
 
     def __add__(self, other):
-        if isinstance(other, NativeComplexWaveform):
+        if isinstance(other, ComplexWaveform):
             return other + self
-        if isinstance(other, NativeWaveVStack):
+        if isinstance(other, WaveVStack):
             return other + self
-        if not isinstance(other, NativeWaveform):
+        if not isinstance(other, RealWaveform):
             real, imag = _number_parts(other)
             if imag:
-                return NativeComplexWaveform(self + real, native_const(imag))
-            other = native_const(real)
+                return ComplexWaveform(self + real, _c_const(imag))
+            other = _c_const(real)
         if self._is_zero():
-            return NativeWaveform._from_core(
+            return RealWaveform._from_core(
                 other._core, other._delay_tick, other._scale)
         if other._is_zero():
-            return NativeWaveform._from_core(
+            return RealWaveform._from_core(
                 self._core, self._delay_tick, self._scale)
-        return NativeWaveform._from_core(self._core.add_affine(
+        return RealWaveform._from_core(self._core.add_affine(
             other._core, self._delay_tick, self._scale,
             other._delay_tick, other._scale,
         ))
@@ -1780,17 +1315,19 @@ class NativeWaveform:
         return self + (-other)
 
     def __rsub__(self, other):
-        return native_const(other) + (-self)
+        if isinstance(other, (RealWaveform, WaveVStack)):
+            return other + (-self)
+        return _c_const(other) + (-self)
 
     def __mul__(self, other):
-        if isinstance(other, NativeComplexWaveform):
+        if isinstance(other, ComplexWaveform):
             return other * self
-        if isinstance(other, NativeWaveVStack):
+        if isinstance(other, WaveVStack):
             return other * self
-        if isinstance(other, NativeWaveform):
+        if isinstance(other, RealWaveform):
             if self._is_zero() or other._is_zero():
-                return native_zero()
-            return NativeWaveform._from_core(
+                return _c_zero()
+            return RealWaveform._from_core(
                 self._core.mul_affine(
                     other._core, self._delay_tick, 1.0,
                     other._delay_tick, 1.0,
@@ -1799,10 +1336,10 @@ class NativeWaveform:
             )
         real, imag = _number_parts(other)
         if imag:
-            return NativeComplexWaveform(self * real, self * imag)
+            return ComplexWaveform(self * real, self * imag)
         if real == 0.0 or self._is_zero():
-            return native_zero()
-        return NativeWaveform._from_core(
+            return _c_zero()
+        return RealWaveform._from_core(
             self._core, self._delay_tick, self._scale * real
         )
 
@@ -1813,14 +1350,14 @@ class NativeWaveform:
         return self * (1 / other)
 
     def __neg__(self):
-        return NativeWaveform._from_core(
+        return RealWaveform._from_core(
             self._core, self._delay_tick, -self._scale
         )
 
     def __rshift__(self, seconds):
-        return NativeWaveform._from_core(
+        return RealWaveform._from_core(
             self._core,
-            self._delay_tick + _native_time_to_tick(seconds),
+            self._delay_tick + _time_to_c_tick(seconds),
             self._scale,
         )
 
@@ -1829,174 +1366,111 @@ class NativeWaveform:
 
     def __eq__(self, other):
         if isinstance(other, (int, float, np.number)):
-            other = native_const(other)
-        if not isinstance(other, NativeWaveform):
+            other = _c_const(other)
+        if not isinstance(other, RealWaveform):
             return False
         if (self.max, self.min, self.start, self.stop) != (
                 other.max, other.min, other.start, other.stop):
             return False
-        return self._materialized_core() == other._materialized_core()
+        return self._canonical_core() == other._canonical_core()
 
     def __hash__(self):
-        return hash((self.to_bytes(), self.max, self.min,
+        canonical = self._canonical_core().to_bytes()
+        return hash((canonical, self.max, self.min,
                      self.start, self.stop))
+
+    @property
+    def marker(self):
+        if self.begin == -inf and self.end == inf:
+            return one()
+        return _piecewise((self.begin, self.end, inf), 0, 1, 0)
+
+    def mask(self, edge=0):
+        begin = self.begin
+        end = self.end
+        if begin != -inf:
+            begin += edge
+        if end != inf:
+            end -= edge
+        return _piecewise((begin, end, inf), 0, 1, 0)
+
+    def __or__(self, other):
+        if not isinstance(other, RealWaveform):
+            other = const(other)
+        return (self.marker + other.marker).marker
+
+    def __and__(self, other):
+        if not isinstance(other, RealWaveform):
+            other = const(other)
+        return (self.marker * other.marker).marker
+
+    def __repr__(self):
+        return (f"RealWaveform(nodes={self._core.node_count}, "
+                f"bytes={len(self.to_bytes())}, begin={self.begin}, "
+                f"end={self.end})")
 
     def __getstate__(self):
         return (self.to_bytes(), self.max, self.min, self.start, self.stop,
                 self.sample_rate, self.filters, self.label)
 
     def __setstate__(self, state):
+        _ensure_c_clock_locked()
         (data, self.max, self.min, self.start, self.stop, self.sample_rate,
          self.filters, self.label) = state
-        self._core = _NativeCore.from_bytes(data)
+        self._core = _CWaveformCore.from_bytes(data)
         self._delay_tick = 0
         self._scale = 1.0
+        self._canonical_core_cache = None
 
 
-class NativeComplexWaveform:
-    """Complex native waveform represented by two WNF4 real blocks."""
-
-    __slots__ = ("_real", "_imag", "start", "stop", "sample_rate",
-                 "filters", "label", "_bytes_cache")
-
-    def __init__(self, real=0.0, imag=0.0):
-        self._real = real if isinstance(real, NativeWaveform) else native_const(real)
-        self._imag = imag if isinstance(imag, NativeWaveform) else native_const(imag)
-        self.start = None
-        self.stop = None
-        self.sample_rate = None
-        self.filters = None
-        self.label = None
-        self._bytes_cache = None
-
-    @property
-    def real(self):
-        return self._real
-
-    @property
-    def imag(self):
-        return self._imag
-
-    @property
-    def begin(self):
-        value = min(self.real.begin, self.imag.begin)
-        return value if self.start is None else max(self.start, value)
-
-    @property
-    def end(self):
-        value = max(self.real.end, self.imag.end)
-        return value if self.stop is None else min(self.stop, value)
-
-    def __call__(self, x, out=None, accumulate=False, **kwargs):
-        scalar = isinstance(x, (int, float, np.number))
-        positions = np.asarray([x] if scalar else x, dtype=np.float64)
-        if out is None:
-            values = np.empty(positions.shape, dtype=np.complex128)
-        else:
-            values = np.asarray(out)
-            if values.shape != positions.shape or values.dtype != np.complex128:
-                raise ValueError("out must be a matching complex128 array")
-            if accumulate:
-                values[...] += self.real(positions) + 1j * self.imag(positions)
-                return values[0] if scalar else values
-        values.real = self.real(positions)
-        values.imag = self.imag(positions)
-        if out is not None:
-            out[...] = values
-        return values[0] if scalar else values
-
-    def __add__(self, other):
-        if isinstance(other, NativeComplexWaveform):
-            return NativeComplexWaveform(self.real + other.real,
-                                         self.imag + other.imag)
-        if isinstance(other, NativeWaveform):
-            return NativeComplexWaveform(self.real + other, self.imag)
-        real, imag = _number_parts(other)
-        return NativeComplexWaveform(self.real + real, self.imag + imag)
-
-    __radd__ = __add__
-
-    def __sub__(self, other):
-        return self + (-other)
-
-    def __mul__(self, other):
-        if isinstance(other, NativeComplexWaveform):
-            return NativeComplexWaveform(
-                self.real * other.real - self.imag * other.imag,
-                self.real * other.imag + self.imag * other.real,
-            )
-        if isinstance(other, NativeWaveform):
-            return NativeComplexWaveform(self.real * other, self.imag * other)
-        real, imag = _number_parts(other)
-        return NativeComplexWaveform(
-            self.real * real - self.imag * imag,
-            self.real * imag + self.imag * real,
-        )
-
-    __rmul__ = __mul__
-
-    def __neg__(self):
-        return NativeComplexWaveform(-self.real, -self.imag)
-
-    def __rshift__(self, seconds):
-        return NativeComplexWaveform(self.real >> seconds, self.imag >> seconds)
-
-    def __lshift__(self, seconds):
-        return self >> -seconds
-
-    def simplify(self, eps=1e-15):
-        return NativeComplexWaveform(self.real.simplify(), self.imag.simplify())
-
-    def to_bytes(self):
-        if self._bytes_cache is None:
-            real = self.real.to_bytes()
-            imag = self.imag.to_bytes()
-            self._bytes_cache = (
-                struct.pack("<4sII", b"WNC4", len(real), len(imag))
-                + real + imag
-            )
-        return self._bytes_cache
-
-    @classmethod
-    def from_bytes(cls, data):
-        real, imag = _unpack_complex(data, b"WNC4")
-        return cls(NativeWaveform.from_bytes(real),
-                   NativeWaveform.from_bytes(imag))
-
-    def __eq__(self, other):
-        return (isinstance(other, NativeComplexWaveform)
-                and self.real == other.real and self.imag == other.imag
-                and (self.start, self.stop) == (other.start, other.stop))
-
-    def __getstate__(self):
-        return (self.to_bytes(), self.start, self.stop, self.sample_rate,
-                self.filters, self.label)
-
-    def __setstate__(self, state):
-        (data, self.start, self.stop, self.sample_rate,
-         self.filters, self.label) = state
-        real, imag = _unpack_complex(data, b"WNC4")
-        self._real = NativeWaveform.from_bytes(real)
-        self._imag = NativeWaveform.from_bytes(imag)
-        self._bytes_cache = data
+def _c_stack_waves(data):
+    """Decode WNS4 event metadata while leaving templates in C blocks."""
+    data = bytes(data)
+    if len(data) < 16 or data[:8] != b"WNS4\x02\x00\x00\x00":
+        raise ValueError("invalid WNS4 stack block")
+    template_count, event_count = struct.unpack_from("<II", data, 8)
+    cursor = 16 + 4 * template_count
+    event_offset = len(data) - 20 * event_count
+    templates = []
+    for index in range(template_count):
+        size = struct.unpack_from("<I", data, 16 + 4 * index)[0]
+        templates.append(RealWaveform.from_bytes(data[cursor:cursor + size]))
+        cursor += size
+    if cursor != event_offset:
+        raise ValueError("invalid WNS4 stack layout")
+    waves = []
+    for index in range(event_count):
+        template_id = struct.unpack_from("<I", data, event_offset + 4 * index)[0]
+        delay_tick = struct.unpack_from(
+            "<q", data, event_offset + 4 * event_count + 8 * index
+        )[0]
+        scale = struct.unpack_from(
+            "<d", data, event_offset + 12 * event_count + 8 * index
+        )[0]
+        waves.append(RealWaveform._from_core(
+            templates[template_id]._core, delay_tick, scale
+        ))
+    return tuple(waves)
 
 
-class NativeWaveVStack:
-    """Thin Python metadata wrapper around a WNS4 native template stack."""
+class RealWaveVStack(_RealWaveVStackBase):
+    """Thin Python metadata wrapper around a WNS4 C template stack."""
 
-    __slots__ = ("_core", "start", "stop", "sample_rate", "offset",
-                 "_shift_tick", "filters", "label", "_sample_plan_cache")
+    __slots__ = ("_core", "_shift_tick", "_waves_cache",
+                 "_eval_core_cache")
 
     def __init__(self, waves=(), *, _core=None):
+        _ensure_c_clock_locked()
         if _core is None:
+            waves = tuple(waves)
             templates = []
             template_map = {}
             ids = []
             delays = []
             scales = []
             for wave in waves:
-                if not isinstance(wave, NativeWaveform):
-                    raise TypeError("NativeWaveVStack accepts NativeWaveform objects")
+                if not isinstance(wave, RealWaveform):
+                    raise TypeError("RealWaveVStack accepts RealWaveform objects")
                 key = id(wave._core)
                 template_id = template_map.get(key)
                 if template_id is None:
@@ -2006,7 +1480,7 @@ class NativeWaveVStack:
                 ids.append(template_id)
                 delays.append(wave._delay_tick)
                 scales.append(wave._scale)
-            _core = _NativeStackCore.from_events(templates, ids, delays, scales)
+            _core = _CWaveformStackCore.from_events(templates, ids, delays, scales)
         self._core = _core
         self.start = None
         self.stop = None
@@ -2015,12 +1489,71 @@ class NativeWaveVStack:
         self._shift_tick = 0
         self.filters = None
         self.label = None
+        self.function_lib = None
         self._sample_plan_cache = None
+        self._waves_cache = tuple(waves) if waves else None
+        self._eval_core_cache = None
+
+    @property
+    def shift(self):
+        return _c_tick_to_time(self._shift_tick)
+
+    @shift.setter
+    def shift(self, value):
+        self._shift_tick = _time_to_c_tick(value)
+
+    @property
+    def wlist(self):
+        if self._waves_cache is None:
+            self._waves_cache = _c_stack_waves(self._core.to_bytes())
+        return list(self._waves_cache)
+
+    @property
+    def begin(self):
+        if self.wlist:
+            value = min((wave >> self.shift).begin for wave in self.wlist)
+        else:
+            value = -inf
+        return value if self.start is None else max(self.start, value)
+
+    @property
+    def end(self):
+        if self.wlist:
+            value = max((wave >> self.shift).end for wave in self.wlist)
+        else:
+            value = inf
+        return value if self.stop is None else min(self.stop, value)
 
     def __call__(self, x, out=None, accumulate=False, **kwargs):
         scalar = isinstance(x, (int, float, np.number))
-        positions = np.asarray([x] if scalar else x, dtype=np.float64)
-        values = self._core.evaluate(positions, self._shift_tick, self.offset)
+        raw_positions = np.asarray([x] if scalar else x)
+        if np.iscomplexobj(raw_positions):
+            raise TypeError("waveform positions must be real")
+        positions = np.asarray(raw_positions, dtype=np.float64)
+        plan = _array_tick_plan(positions)
+        if plan is not None:
+            cache_key = (plan[0], plan[1], plan[2], 1, self._shift_tick)
+            if (self._sample_plan_cache is not None
+                    and self._sample_plan_cache[0] == cache_key):
+                sample_plan = self._sample_plan_cache[1]
+            else:
+                sample_plan = self._core.prepare_sample(
+                    plan[0], plan[1], plan[2], 1, self._shift_tick
+                )
+                self._sample_plan_cache = cache_key, sample_plan
+            if sample_plan is None:
+                values = self._core.sample(
+                    plan[0], plan[1], plan[2], 1,
+                    self._shift_tick, self.offset,
+                )
+            else:
+                values = sample_plan.sample(self.offset)
+        else:
+            if self._eval_core_cache is None:
+                self._eval_core_cache = self._core.simplify(
+                    self._shift_tick, self.offset
+                )
+            values = self._eval_core_cache.evaluate(positions)
         if out is not None:
             if accumulate:
                 out[...] += values
@@ -2032,16 +1565,19 @@ class NativeWaveVStack:
     def sample(self, sample_rate=None, out=None, chunk_size=None,
                filters=None, dtype=None, full_scale=1.0, **kwargs):
         if chunk_size is not None:
-            raise NotImplementedError("native chunked stack sampling is not implemented")
+            return Waveform.sample(
+                self, sample_rate, out, chunk_size, filters=filters,
+                dtype=dtype, full_scale=full_scale,
+            )
         if sample_rate is None:
             sample_rate = self.sample_rate
         if self.start is None or self.stop is None or sample_rate is None:
-            raise ValueError("NativeWaveVStack sampling metadata is incomplete")
+            raise ValueError("RealWaveVStack sampling metadata is incomplete")
         if filters is None:
             filters = self.filters
         plan = _sampling_plan(self.start, self.stop, sample_rate)
         dtype, bits = _quantization_bits(dtype, out)
-        if plan is None or get_time_resolution() != 1 / _NATIVE_TICKS_PER_SECOND:
+        if plan is None or get_time_resolution() != 1 / _CORE_TICKS_PER_SECOND:
             positions = np.arange(self.start, self.stop, 1 / float(sample_rate))
             values = self(positions)
         else:
@@ -2052,19 +1588,19 @@ class NativeWaveVStack:
             )
             if (self._sample_plan_cache is not None
                     and self._sample_plan_cache[0] == cache_key):
-                native_plan = self._sample_plan_cache[1]
+                sample_plan = self._sample_plan_cache[1]
             else:
-                native_plan = self._core.prepare_sample(
+                sample_plan = self._core.prepare_sample(
                     start_tick, count, step_numerator, step_denominator,
                     self._shift_tick,
                 )
-                self._sample_plan_cache = cache_key, native_plan
-            if native_plan is not None:
+                self._sample_plan_cache = cache_key, sample_plan
+            if sample_plan is not None:
                 if bits is not None and filters is None:
-                    return native_plan.sample(
+                    return sample_plan.sample(
                         self.offset, bits, full_scale, out,
                     )
-                values = native_plan.sample(self.offset)
+                values = sample_plan.sample(self.offset)
             else:
                 if bits is not None and filters is None:
                     return self._core.sample(
@@ -2079,8 +1615,8 @@ class NativeWaveVStack:
         return _finish_samples(values, dtype, full_scale, out)
 
     def simplify(self, eps=1e-15):
-        return NativeWaveform._from_core(
-            self._core.simplify(self._shift_tick, self.offset)
+        return RealWaveform._from_core(
+            self._core.simplify(self._shift_tick, self.offset).simplify(eps)
         )
 
     def to_bytes(self):
@@ -2091,35 +1627,127 @@ class NativeWaveVStack:
 
     @classmethod
     def from_bytes(cls, data):
-        return cls(_core=_NativeStackCore.from_bytes(data))
+        return cls(_core=_CWaveformStackCore.from_bytes(data))
 
     def __rshift__(self, seconds):
-        result = NativeWaveVStack(_core=self._core)
-        result._shift_tick = self._shift_tick + _native_time_to_tick(seconds)
+        result = RealWaveVStack(_core=self._core)
+        result._shift_tick = self._shift_tick + _time_to_c_tick(seconds)
         result.offset = self.offset
+        _copy_sampling_metadata(self, result)
         return result
 
     def __lshift__(self, seconds):
         return self >> -seconds
 
     def __add__(self, other):
-        if isinstance(other, (int, float, np.number)):
-            result = NativeWaveVStack(_core=self._core)
-            result.offset = self.offset + float(other)
-            result._shift_tick = self._shift_tick
+        if isinstance(other, ComplexWaveVStack):
+            return other + self
+        if isinstance(other, ComplexWaveform):
+            return ComplexWaveVStack(self) + other
+        if isinstance(other, RealWaveVStack):
+            result = RealWaveVStack(_core=self._core.combine(
+                other._core, self._shift_tick, other._shift_tick
+            ))
+            result.offset = self.offset + other.offset
+            _copy_sampling_metadata(self, result)
             return result
-        if isinstance(other, NativeWaveform):
-            return self.simplify() + other
+        if isinstance(other, RealWaveform):
+            result = RealWaveVStack(_core=self._core.append(
+                other._core, self._shift_tick,
+                other._delay_tick, other._scale,
+            ))
+            result.offset = self.offset
+            _copy_sampling_metadata(self, result)
+            return result
+        if isinstance(other, (int, float, complex, np.number)):
+            real, imag = _number_parts(other)
+            if imag:
+                return ComplexWaveVStack(self + real,
+                                         WaveVStack() + imag)
+            result = RealWaveVStack(_core=self._core)
+            result.offset = self.offset + real
+            result._shift_tick = self._shift_tick
+            _copy_sampling_metadata(self, result)
+            return result
         return NotImplemented
 
     __radd__ = __add__
 
+    def __sub__(self, other):
+        return self + (-other)
+
+    def __rsub__(self, other):
+        return (-self) + other
+
+    def __mul__(self, other):
+        if isinstance(other, (ComplexWaveform, ComplexWaveVStack)):
+            return ComplexWaveVStack(self) * other
+        if isinstance(other, RealWaveform):
+            waves = [(wave >> self.shift) * other for wave in self.wlist]
+            if self.offset:
+                waves.append(self.offset * other)
+            return WaveVStack(waves)
+        real, imag = _number_parts(other)
+        if imag:
+            return ComplexWaveVStack(self * real, self * imag)
+        result = RealWaveVStack(_core=self._core.scaled(real))
+        result.offset = self.offset * real
+        result._shift_tick = self._shift_tick
+        _copy_sampling_metadata(self, result)
+        return result
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, other):
+        if isinstance(other, Waveform):
+            raise TypeError("division by waveform")
+        return self * (1 / other)
+
+    def __neg__(self):
+        return self * -1
+
+    def __pow__(self, n):
+        return self.simplify() ** n
+
+    def filter(self, low=0, high=inf, eps=1e-15):
+        return self.simplify(eps).filter(low, high, eps)
+
+    @property
+    def marker(self):
+        return self.simplify().marker
+
+    def mask(self, edge=0):
+        return self.marker.mask(edge)
+
+    def __or__(self, other):
+        return self.simplify() | other
+
+    def __and__(self, other):
+        return self.simplify() & other
+
     def __eq__(self, other):
-        return (isinstance(other, NativeWaveVStack)
-                and self._shift_tick == other._shift_tick
-                and self.offset == other.offset
-                and self._core.to_bytes() == other._core.to_bytes()
-                and (self.start, self.stop) == (other.start, other.stop))
+        if self is other:
+            return True
+        if isinstance(other, RealWaveVStack):
+            if (self._shift_tick == other._shift_tick
+                    and self.offset == other.offset
+                    and self._core.to_bytes() == other._core.to_bytes()
+                    and (self.start, self.stop) == (other.start, other.stop)):
+                return True
+            return self.simplify() == other.simplify()
+        if isinstance(other, WaveVStack):
+            return self.simplify() == other.simplify()
+        return self.simplify() == other
+
+    __hash__ = None
+
+    def __repr__(self):
+        return (f"RealWaveVStack(events={self._core.event_count}, "
+                f"templates={self._core.template_count}, "
+                f"bytes={len(self.to_bytes())})")
+
+    def _repr_latex_(self):
+        return rf"\sum_{{i=1}}^{{{self._core.event_count}}}f_i(t)"
 
     def __getstate__(self):
         return (self._core.to_bytes(), self.start, self.stop,
@@ -2127,48 +1755,70 @@ class NativeWaveVStack:
                 self.filters, self.label)
 
     def __setstate__(self, state):
+        _ensure_c_clock_locked()
         (data, self.start, self.stop, self.sample_rate, self.offset,
          self._shift_tick, self.filters, self.label) = state
-        self._core = _NativeStackCore.from_bytes(data)
+        self._core = _CWaveformStackCore.from_bytes(data)
+        self.function_lib = None
         self._sample_plan_cache = None
+        self._waves_cache = None
+        self._eval_core_cache = None
 
 
-def native_zero():
-    return NativeWaveform._from_core(_NativeCore.constant(0.0))
+def _make_real_stack(wlist=()):
+    """Build the single native real-stack representation."""
+    if isinstance(wlist, ComplexWaveVStack):
+        return ComplexWaveVStack(wlist)
+    if isinstance(wlist, RealWaveVStack):
+        return RealWaveVStack(_core=wlist._core)
+    if isinstance(wlist, RealWaveVStack):
+        return RealWaveVStack(wlist.wlist)
+    waves = tuple(wlist)
+    if any(isinstance(wave, ComplexWaveform) for wave in waves):
+        raise TypeError("WaveVStack is real-only; use ComplexWaveVStack")
+    if not all(isinstance(wave, RealWaveform) for wave in waves):
+        raise TypeError("WaveVStack accepts RealWaveform objects")
+    if not all(isinstance(wave, RealWaveform) for wave in waves):
+        raise TypeError("all real waveforms must use the C core")
+    return RealWaveVStack(waves)
 
 
-def native_one():
-    return NativeWaveform._from_core(_NativeCore.constant(1.0))
+def _c_zero():
+    return RealWaveform._from_core(_CWaveformCore.constant(0.0))
 
 
-def native_const(value):
+def _c_one():
+    return RealWaveform._from_core(_CWaveformCore.constant(1.0))
+
+
+def _c_const(value):
     real, imag = _number_parts(value)
     if imag:
-        return NativeComplexWaveform(native_const(real), native_const(imag))
-    return NativeWaveform._from_core(_NativeCore.constant(real))
+        return ComplexWaveform(_c_const(real), _c_const(imag))
+    return RealWaveform._from_core(_CWaveformCore.constant(real))
 
 
-def native_gaussian(width):
-    return NativeWaveform._from_core(_NativeCore.gaussian(width))
+def _c_gaussian(width):
+    return RealWaveform._from_core(_CWaveformCore.gaussian(width))
 
 
-def native_cos(w, phi=0.0):
-    return NativeWaveform._from_core(_NativeCore.cos(w, phi))
+def _c_cos(w, phi=0.0):
+    return RealWaveform._from_core(_CWaveformCore.cos(w, phi))
 
 
-def native_sin(w, phi=0.0):
-    return NativeWaveform._from_core(_NativeCore.sin(w, phi))
+def _c_sin(w, phi=0.0):
+    return RealWaveform._from_core(_CWaveformCore.sin(w, phi))
 
 
-def native_square(width):
-    return NativeWaveform._from_core(_NativeCore.square(width))
+def _c_square(width):
+    return RealWaveform._from_core(_CWaveformCore.square(width))
 
 
 def _real_const(value):
     real, imag = _number_parts(value)
     if imag != 0:
         raise TypeError("real waveform constant cannot have an imaginary part")
-    return Waveform._from_core(constant(real))
+    return _c_const(real)
 
 
 def zero():
@@ -2186,14 +1836,16 @@ def const(value):
     return _real_const(real)
 
 
-def D(wav: Waveform | ComplexWaveform, d: int = 1):
+def D(wav: Waveform, d: int = 1):
     if isinstance(wav, ComplexWaveform):
         return ComplexWaveform(D(wav.real, d), D(wav.imag, d))
-    if not isinstance(wav, Waveform):
+    if not isinstance(wav, RealWaveform):
         raise TypeError("D expects a Waveform or ComplexWaveform")
     if d < 0 or not isinstance(d, int):
         raise ValueError("d must be a non-negative integer")
-    return Waveform._from_core(wav._materialized_core().derivative(d))
+    return RealWaveform._from_core(
+        wav._materialized_core().derivative(d)
+    )
 
 
 def sign():
@@ -2218,6 +1870,8 @@ def step(edge, type="erf"):
 def square(width, edge=0, type="erf"):
     if width <= 0:
         return zero()
+    if edge == 0 and _C_CLOCK_ACTIVE:
+        return _c_square(width)
     if edge == 0:
         return _piecewise((-width / 2, width / 2, inf), 0, 1, 0)
     return (step(edge, type=type) << width / 2) - (step(edge, type=type) >> width / 2)
@@ -2226,6 +1880,8 @@ def square(width, edge=0, type="erf"):
 def gaussian(width, plateau=0.0, d=None):
     if width <= 0 and plateau <= 0:
         return zero()
+    if d is None and plateau == 0 and _C_CLOCK_ACTIVE:
+        return _c_gaussian(width)
     std_sq2 = width / 3.3302184446307908
     opcode = GAUSSIAN if d is None else D_GAUSSIAN
 
@@ -2248,7 +1904,9 @@ def cos(w, phi=0):
     if w < 0:
         phi = -phi
         w = -w
-    return Waveform._from_core(_scalar(COS, w, shift=-phi / w))
+    if _C_CLOCK_ACTIVE:
+        return _c_cos(w, phi)
+    return RealWaveform._from_core(_scalar(COS, w, shift=-phi / w))
 
 
 def sin(w, phi=0):
@@ -2257,7 +1915,11 @@ def sin(w, phi=0):
     if w < 0:
         phi = -phi + pi
         w = -w
-    return Waveform._from_core(_scalar(COS, w, shift=(pi / 2 - phi) / w))
+    if _C_CLOCK_ACTIVE:
+        return _c_sin(w, phi)
+    return RealWaveform._from_core(
+        _scalar(COS, w, shift=(pi / 2 - phi) / w)
+    )
 
 
 def exp(alpha):
@@ -2265,7 +1927,7 @@ def exp(alpha):
         alpha = complex(alpha)
         carrier = cos(alpha.imag) + 1j * sin(alpha.imag)
         return carrier if alpha.real == 0 else exp(alpha.real) * carrier
-    return Waveform._from_core(_scalar(EXP, alpha))
+    return RealWaveform._from_core(_scalar(EXP, alpha))
 
 
 def sinc(bw):
@@ -2293,11 +1955,11 @@ def hanning(width, plateau=0.0):
 
 
 def cosh(w):
-    return Waveform._from_core(_scalar(COSH, w))
+    return RealWaveform._from_core(_scalar(COSH, w))
 
 
 def sinh(w):
-    return Waveform._from_core(_scalar(SINH, w))
+    return RealWaveform._from_core(_scalar(SINH, w))
 
 
 def coshPulse(width, eps=1.0, plateau=0.0):
@@ -2365,7 +2027,7 @@ def poly(a):
 
 
 def t():
-    return Waveform._from_core(_scalar(LINEAR))
+    return RealWaveform._from_core(_scalar(LINEAR))
 
 
 def drag(freq, width, plateau=0, delta=0, block_freq=None, phase=0, t0=0):
@@ -2553,7 +2215,7 @@ def play(data, rate=48_000):
 
 @lru_cache(maxsize=1024)
 def wave_eval(expr: str) -> Waveform | ComplexWaveform:
-    """Parse an expression directly against the packed waveform backend."""
+    """Parse an expression through the unified waveform constructors."""
     import sys
 
     from .waveform_parser import WaveformParseError, parse_waveform_expression
@@ -2566,8 +2228,8 @@ def wave_eval(expr: str) -> Waveform | ComplexWaveform:
 
 
 __all__ = [
-    "D", "ComplexWaveform", "ComplexWaveVStack", "Waveform", "WaveVStack",
-    "NativeWaveform", "NativeWaveVStack", "NativeComplexWaveform",
+    "D", "ComplexWaveform", "ComplexWaveVStack", "RealWaveform",
+    "RealWaveVStack", "Waveform", "WaveVStack",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",
     "exp", "function",
@@ -2576,6 +2238,4 @@ __all__ = [
     "registerBaseFunc", "registerDerivative", "samplingPoints",
     "set_time_resolution", "sign", "sin", "sinc", "sinh", "slepian",
     "square", "step", "t", "wave_eval", "zero", "e", "inf", "pi",
-    "native_zero", "native_one", "native_const", "native_gaussian",
-    "native_cos", "native_sin", "native_square", "native_format_description",
 ]

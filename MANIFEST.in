@@ -1,5 +1,3 @@
-include src/*.h
-include src/*.c
 include waveforms/_cwaveform.h
 include waveforms/_cwaveform.c
 include waveforms/_cwaveform.md
