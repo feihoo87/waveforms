@@ -91,13 +91,16 @@ def main():
     def make_template():
         return 0.8 * gaussian(20e-9) * cosine(2 * np.pi * 100e6)
 
-    def make_stack(event_count):
+    def make_stack(event_count, spacing=40e-9, varied_scales=False):
         template = make_template()
+        scales = (0.25, 0.5, 1.0)
         stack = stack_type(
-            [template >> (index * 40e-9) for index in range(event_count)]
+            [((scales[index % len(scales)] * template
+               if varied_scales else template) >> (index * spacing))
+             for index in range(event_count)]
         )
         stack.start = -20e-9
-        stack.stop = event_count * 40e-9
+        stack.stop = event_count * spacing
         stack.sample_rate = rate
         return stack
 
@@ -115,6 +118,11 @@ def main():
     complex_wave.sample_rate = rate
 
     stacks = {count: make_stack(count) for count in (100, 1000, 10_000)}
+    overlap_stacks = {
+        count: make_stack(count, spacing=10e-9)
+        for count in (1000, 10_000)
+    }
+    varied_stack = make_stack(1000, varied_scales=True)
     simple = cosine(2 * np.pi * 100e6)
     simple_x = np.linspace(-200e-6, 200e-6, 1_000_000, endpoint=False)
     pulse_x = np.linspace(-20e-9, 20e-9, 200_000, endpoint=False)
@@ -152,6 +160,18 @@ def main():
             np.rint(values * 32768), -32768, 32767
         ).astype(np.int16)
 
+    def clear_sample_cache(stack):
+        try:
+            stack._sample_plan_cache = None
+        except AttributeError:
+            pass
+
+    def cold_sample(stack, dtype=None):
+        clear_sample_cache(stack)
+        if dtype is None:
+            return stack.sample()
+        return stack.sample(dtype=dtype)
+
     for count in (1000, 10_000):
         stack = stacks[count]
         grid = np.arange(stack.start, stack.stop, 1 / rate)
@@ -159,14 +179,49 @@ def main():
             lambda stack=stack, grid=grid: stack(grid)
         )
         metrics[f"sample.stack{count}_float"] = measure(stack.sample)
+        metrics[f"sample.stack{count}_float_cold"] = measure(
+            lambda stack=stack: cold_sample(stack)
+        )
         if current_integer_sampling:
             metrics[f"sample.stack{count}_dac16"] = measure(
                 lambda stack=stack: stack.sample(dtype=np.int16)
+            )
+            metrics[f"sample.stack{count}_dac16_cold"] = measure(
+                lambda stack=stack: cold_sample(stack, np.int16)
             )
         else:
             metrics[f"sample.stack{count}_dac16"] = measure(
                 lambda stack=stack: external_dac16(stack)
             )
+            metrics[f"sample.stack{count}_dac16_cold"] = measure(
+                lambda stack=stack: external_dac16(stack)
+            )
+
+        overlap = overlap_stacks[count]
+        metrics[f"sample.overlap_stack{count}_float"] = measure(
+            overlap.sample
+        )
+        metrics[f"sample.overlap_stack{count}_float_cold"] = measure(
+            lambda stack=overlap: cold_sample(stack)
+        )
+        if current_integer_sampling:
+            metrics[f"sample.overlap_stack{count}_dac16"] = measure(
+                lambda stack=overlap: stack.sample(dtype=np.int16)
+            )
+        else:
+            metrics[f"sample.overlap_stack{count}_dac16"] = measure(
+                lambda stack=overlap: external_dac16(stack)
+            )
+
+    metrics["sample.varied_stack1000_float"] = measure(varied_stack.sample)
+    if current_integer_sampling:
+        metrics["sample.varied_stack1000_dac16"] = measure(
+            lambda: varied_stack.sample(dtype=np.int16)
+        )
+    else:
+        metrics["sample.varied_stack1000_dac16"] = measure(
+            lambda: external_dac16(varied_stack)
+        )
 
     serialization = {}
     objects = {

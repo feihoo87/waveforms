@@ -1,11 +1,9 @@
 include src/*.h
 include src/*.c
-include waveforms/native/*.h
-include waveforms/native/*.c
-include waveforms/native/*.md
+include waveforms/_cwaveform.h
+include waveforms/_cwaveform.c
+include waveforms/_cwaveform.md
 include waveforms/_waveform.pyx
 include waveforms/_waveform.pyi
-include waveforms/_native.pyx
-include waveforms/_native.pyi
 include waveforms/Waveform.g4
 include MANIFEST.in

@@ -1,5 +1,5 @@
-#define WF_NATIVE_BUILD 1
-#include "wf_native.h"
+#define CWAVEFORM_BUILD 1
+#include "_cwaveform.h"
 
 #include <float.h>
 #include <limits.h>
@@ -40,7 +40,7 @@ typedef struct wf_node {
     int64_t upper;
 } wf_node;
 
-struct wf_native_wave {
+struct cwaveform_wave {
     uint32_t references;
     uint32_t node_count;
     uint32_t root;
@@ -50,17 +50,50 @@ struct wf_native_wave {
     wf_node *nodes;
 };
 
-struct wf_native_stack {
+struct cwaveform_stack {
     uint32_t references;
     size_t template_count;
     size_t event_count;
-    wf_native_wave **templates;
+    cwaveform_wave **templates;
     uint32_t *template_ids;
     int64_t *delays;
     double *scales;
     uint64_t hash;
     size_t data_size;
     uint8_t *data;
+};
+
+typedef struct wf_plan_scale_group {
+    double scale;
+    double *samples;
+    size_t destination_count;
+    size_t destination_capacity;
+    int64_t *destinations;
+} wf_plan_scale_group;
+
+typedef struct wf_plan_group {
+    uint32_t template_id;
+    uint64_t phase;
+    int64_t first_tick;
+    size_t sample_count;
+    double *samples;
+    size_t placement_count;
+    size_t placement_capacity;
+    int64_t *destinations;
+    double *scales;
+    size_t scale_group_count;
+    size_t scale_group_capacity;
+    wf_plan_scale_group *scale_groups;
+    int grouped_scales;
+} wf_plan_group;
+
+struct cwaveform_sample_plan {
+    uint32_t references;
+    size_t count;
+    size_t group_count;
+    size_t group_capacity;
+    wf_plan_group *groups;
+    int non_overlapping;
 };
 
 static void wf_put_u16(uint8_t *p, uint16_t value) {
@@ -260,10 +293,10 @@ static int wf_prepare_decoded_node(wf_node *node, const wf_node *nodes,
     return 0;
 }
 
-static wf_native_wave *wf_wave_from_nodes(const wf_node *nodes,
+static cwaveform_wave *wf_wave_from_nodes(const wf_node *nodes,
                                            uint32_t node_count,
                                            uint32_t root) {
-    wf_native_wave *wave;
+    cwaveform_wave *wave;
     size_t size;
     uint32_t index;
     if (nodes == NULL || node_count == 0 || root >= node_count) {
@@ -273,14 +306,14 @@ static wf_native_wave *wf_wave_from_nodes(const wf_node *nodes,
         return NULL;
     }
     size = WF_WAVE_HEADER_SIZE + (size_t)node_count * WF_NODE_SIZE;
-    wave = (wf_native_wave *)calloc(1, sizeof(*wave));
+    wave = (cwaveform_wave *)calloc(1, sizeof(*wave));
     if (wave == NULL) {
         return NULL;
     }
     wave->data = (uint8_t *)calloc(1, size);
     wave->nodes = (wf_node *)malloc((size_t)node_count * sizeof(*wave->nodes));
     if (wave->data == NULL || wave->nodes == NULL) {
-        wf_native_wave_release(wave);
+        cwaveform_wave_release(wave);
         return NULL;
     }
     memcpy(wave->nodes, nodes, (size_t)node_count * sizeof(*nodes));
@@ -302,7 +335,7 @@ static wf_native_wave *wf_wave_from_nodes(const wf_node *nodes,
     return wave;
 }
 
-static wf_native_wave *wf_wave_single(uint8_t op, int64_t lower, int64_t upper,
+static cwaveform_wave *wf_wave_single(uint8_t op, int64_t lower, int64_t upper,
                                       int64_t shift, double p0, double p1) {
     wf_node node;
     memset(&node, 0, sizeof(node));
@@ -315,11 +348,11 @@ static wf_native_wave *wf_wave_single(uint8_t op, int64_t lower, int64_t upper,
     return wf_wave_from_nodes(&node, 1, 0);
 }
 
-uint64_t wf_native_ticks_per_second(void) {
+uint64_t cwaveform_ticks_per_second(void) {
     return WF_TICKS_PER_SECOND;
 }
 
-wf_native_wave *wf_native_wave_constant(double value) {
+cwaveform_wave *cwaveform_wave_constant(double value) {
     int64_t lower = value == 0.0 ? INT64_MAX : INT64_MIN;
     int64_t upper = value == 0.0 ? INT64_MIN : INT64_MAX;
     if (!isfinite(value)) {
@@ -328,11 +361,11 @@ wf_native_wave *wf_native_wave_constant(double value) {
     return wf_wave_single(WF_OP_CONSTANT, lower, upper, 0, value, 0.0);
 }
 
-wf_native_wave *wf_native_wave_gaussian(double width_seconds) {
+cwaveform_wave *cwaveform_wave_gaussian(double width_seconds) {
     int64_t lower;
     int64_t upper;
     if (!isfinite(width_seconds) || width_seconds <= 0.0) {
-        return wf_native_wave_constant(0.0);
+        return cwaveform_wave_constant(0.0);
     }
     lower = wf_seconds_to_tick(-0.75 * width_seconds);
     upper = wf_seconds_to_tick(0.75 * width_seconds);
@@ -343,12 +376,12 @@ wf_native_wave *wf_native_wave_gaussian(double width_seconds) {
                           / (double)WF_TICKS_PER_SECOND);
 }
 
-wf_native_wave *wf_native_wave_cos(double angular_frequency, double phase) {
+cwaveform_wave *cwaveform_wave_cos(double angular_frequency, double phase) {
     if (!isfinite(angular_frequency) || !isfinite(phase)) {
         return NULL;
     }
     if (angular_frequency == 0.0) {
-        return wf_native_wave_constant(cos(phase));
+        return cwaveform_wave_constant(cos(phase));
     }
     if (angular_frequency < 0.0) {
         angular_frequency = -angular_frequency;
@@ -361,12 +394,12 @@ wf_native_wave *wf_native_wave_cos(double angular_frequency, double phase) {
     );
 }
 
-wf_native_wave *wf_native_wave_sin(double angular_frequency, double phase) {
+cwaveform_wave *cwaveform_wave_sin(double angular_frequency, double phase) {
     if (!isfinite(angular_frequency) || !isfinite(phase)) {
         return NULL;
     }
     if (angular_frequency == 0.0) {
-        return wf_native_wave_constant(sin(phase));
+        return cwaveform_wave_constant(sin(phase));
     }
     if (angular_frequency < 0.0) {
         angular_frequency = -angular_frequency;
@@ -380,11 +413,11 @@ wf_native_wave *wf_native_wave_sin(double angular_frequency, double phase) {
     );
 }
 
-wf_native_wave *wf_native_wave_square(double width_seconds) {
+cwaveform_wave *cwaveform_wave_square(double width_seconds) {
     int64_t lower;
     int64_t upper;
     if (!isfinite(width_seconds) || width_seconds <= 0.0) {
-        return wf_native_wave_constant(0.0);
+        return cwaveform_wave_constant(0.0);
     }
     lower = wf_seconds_to_tick(-0.5 * width_seconds);
     upper = wf_seconds_to_tick(0.5 * width_seconds);
@@ -392,8 +425,8 @@ wf_native_wave *wf_native_wave_square(double width_seconds) {
                           width_seconds, 0.0);
 }
 
-wf_native_wave *wf_native_wave_from_bytes(const uint8_t *data, size_t size) {
-    wf_native_wave *wave;
+cwaveform_wave *cwaveform_wave_from_bytes(const uint8_t *data, size_t size) {
+    cwaveform_wave *wave;
     uint32_t node_count;
     uint32_t root;
     uint32_t index;
@@ -410,14 +443,14 @@ wf_native_wave *wf_native_wave_from_bytes(const uint8_t *data, size_t size) {
             || size != WF_WAVE_HEADER_SIZE + (size_t)node_count * WF_NODE_SIZE) {
         return NULL;
     }
-    wave = (wf_native_wave *)calloc(1, sizeof(*wave));
+    wave = (cwaveform_wave *)calloc(1, sizeof(*wave));
     if (wave == NULL) {
         return NULL;
     }
     wave->data = (uint8_t *)malloc(size);
     wave->nodes = (wf_node *)malloc((size_t)node_count * sizeof(*wave->nodes));
     if (wave->data == NULL || wave->nodes == NULL) {
-        wf_native_wave_release(wave);
+        cwaveform_wave_release(wave);
         return NULL;
     }
     memcpy(wave->data, data, size);
@@ -426,7 +459,7 @@ wf_native_wave *wf_native_wave_from_bytes(const uint8_t *data, size_t size) {
                        data + WF_WAVE_HEADER_SIZE + (size_t)index * WF_NODE_SIZE);
         if (wf_prepare_decoded_node(wave->nodes + index, wave->nodes,
                                     index) != 0) {
-            wf_native_wave_release(wave);
+            cwaveform_wave_release(wave);
             return NULL;
         }
     }
@@ -438,7 +471,7 @@ wf_native_wave *wf_native_wave_from_bytes(const uint8_t *data, size_t size) {
     return wave;
 }
 
-static uint32_t wf_clone_affine(const wf_native_wave *source, wf_node *target,
+static uint32_t wf_clone_affine(const cwaveform_wave *source, wf_node *target,
                                 uint32_t offset, int64_t delay, double scale,
                                 uint32_t *next) {
     uint32_t index;
@@ -474,9 +507,9 @@ static uint32_t wf_clone_affine(const wf_native_wave *source, wf_node *target,
     return root;
 }
 
-static wf_native_wave *wf_combine_affine(
-    const wf_native_wave *left, int64_t left_delay, double left_scale,
-    const wf_native_wave *right, int64_t right_delay, double right_scale,
+static cwaveform_wave *wf_combine_affine(
+    const cwaveform_wave *left, int64_t left_delay, double left_scale,
+    const cwaveform_wave *right, int64_t right_delay, double right_scale,
     uint8_t operation) {
     uint32_t capacity;
     uint32_t next = 0;
@@ -484,7 +517,7 @@ static wf_native_wave *wf_combine_affine(
     uint32_t right_root;
     wf_node *nodes;
     wf_node node;
-    wf_native_wave *result;
+    cwaveform_wave *result;
     if (left == NULL || right == NULL || !isfinite(left_scale)
             || !isfinite(right_scale)) {
         return NULL;
@@ -519,26 +552,26 @@ static wf_native_wave *wf_combine_affine(
     return result;
 }
 
-wf_native_wave *wf_native_wave_add_affine(
-    const wf_native_wave *left, int64_t left_delay, double left_scale,
-    const wf_native_wave *right, int64_t right_delay, double right_scale) {
+cwaveform_wave *cwaveform_wave_add_affine(
+    const cwaveform_wave *left, int64_t left_delay, double left_scale,
+    const cwaveform_wave *right, int64_t right_delay, double right_scale) {
     return wf_combine_affine(left, left_delay, left_scale, right, right_delay,
                              right_scale, WF_OP_ADD);
 }
 
-wf_native_wave *wf_native_wave_mul_affine(
-    const wf_native_wave *left, int64_t left_delay, double left_scale,
-    const wf_native_wave *right, int64_t right_delay, double right_scale) {
+cwaveform_wave *cwaveform_wave_mul_affine(
+    const cwaveform_wave *left, int64_t left_delay, double left_scale,
+    const cwaveform_wave *right, int64_t right_delay, double right_scale) {
     return wf_combine_affine(left, left_delay, left_scale, right, right_delay,
                              right_scale, WF_OP_MUL);
 }
 
-wf_native_wave *wf_native_wave_materialize(const wf_native_wave *wave,
+cwaveform_wave *cwaveform_wave_materialize(const cwaveform_wave *wave,
                                             int64_t delay, double scale) {
     wf_node *nodes;
     uint32_t next = 0;
     uint32_t root;
-    wf_native_wave *result;
+    cwaveform_wave *result;
     if (wave == NULL || !isfinite(scale)) {
         return NULL;
     }
@@ -552,13 +585,13 @@ wf_native_wave *wf_native_wave_materialize(const wf_native_wave *wave,
     return result;
 }
 
-void wf_native_wave_retain(wf_native_wave *wave) {
+void cwaveform_wave_retain(cwaveform_wave *wave) {
     if (wave != NULL) {
         ++wave->references;
     }
 }
 
-void wf_native_wave_release(wf_native_wave *wave) {
+void cwaveform_wave_release(cwaveform_wave *wave) {
     if (wave == NULL) {
         return;
     }
@@ -571,7 +604,7 @@ void wf_native_wave_release(wf_native_wave *wave) {
     free(wave);
 }
 
-const uint8_t *wf_native_wave_bytes(const wf_native_wave *wave, size_t *size) {
+const uint8_t *cwaveform_wave_bytes(const cwaveform_wave *wave, size_t *size) {
     if (wave == NULL) {
         return NULL;
     }
@@ -581,30 +614,30 @@ const uint8_t *wf_native_wave_bytes(const wf_native_wave *wave, size_t *size) {
     return wave->data;
 }
 
-uint64_t wf_native_wave_hash(const wf_native_wave *wave) {
+uint64_t cwaveform_wave_hash(const cwaveform_wave *wave) {
     return wave == NULL ? 0 : wave->hash;
 }
 
-int wf_native_wave_equal(const wf_native_wave *left,
-                         const wf_native_wave *right) {
+int cwaveform_wave_equal(const cwaveform_wave *left,
+                         const cwaveform_wave *right) {
     return left != NULL && right != NULL && left->hash == right->hash
         && left->data_size == right->data_size
         && memcmp(left->data, right->data, left->data_size) == 0;
 }
 
-int64_t wf_native_wave_lower_tick(const wf_native_wave *wave) {
+int64_t cwaveform_wave_lower_tick(const cwaveform_wave *wave) {
     return wave == NULL ? INT64_MAX : wave->nodes[wave->root].lower;
 }
 
-int64_t wf_native_wave_upper_tick(const wf_native_wave *wave) {
+int64_t cwaveform_wave_upper_tick(const cwaveform_wave *wave) {
     return wave == NULL ? INT64_MIN : wave->nodes[wave->root].upper;
 }
 
-uint32_t wf_native_wave_node_count(const wf_native_wave *wave) {
+uint32_t cwaveform_wave_node_count(const cwaveform_wave *wave) {
     return wave == NULL ? 0 : wave->node_count;
 }
 
-static double wf_evaluate_one(const wf_native_wave *wave, double position,
+static double wf_evaluate_one(const cwaveform_wave *wave, double position,
                               double *values) {
     uint32_t index;
     const double ticks = (double)WF_TICKS_PER_SECOND;
@@ -680,7 +713,7 @@ static void wf_vector_cos(double *output, const double *input, size_t count) {
 /* Evaluate one node at a time so vForce can process transcendental functions
  * in wide batches.  The portable path below deliberately stays scalar. */
 static int wf_evaluate_many_apple(
-    const wf_native_wave *wave, const double *positions, size_t count,
+    const cwaveform_wave *wave, const double *positions, size_t count,
     double delay, double scale, double lower_clip, double upper_clip,
     double *output) {
     double *matrix;
@@ -793,8 +826,8 @@ static int wf_evaluate_many_apple(
 }
 #endif
 
-int wf_native_wave_evaluate(
-    const wf_native_wave *wave, const double *positions, size_t count,
+int cwaveform_wave_evaluate(
+    const cwaveform_wave *wave, const double *positions, size_t count,
     int64_t delay_tick, double scale, double lower_clip, double upper_clip,
     double *output) {
     double *values;
@@ -864,8 +897,8 @@ static double wf_local_grid_position(int64_t start_tick, size_t index,
                                 * (long double)WF_TICKS_PER_SECOND));
 }
 
-int wf_native_wave_sample(
-    const wf_native_wave *wave, int64_t start_tick, size_t count,
+int cwaveform_wave_sample(
+    const cwaveform_wave *wave, int64_t start_tick, size_t count,
     int64_t step_numerator, int64_t step_denominator, int64_t delay_tick,
     double scale, double lower_clip, double upper_clip, int dtype,
     double full_scale, void *output) {
@@ -888,11 +921,11 @@ int wf_native_wave_sample(
             free(values);
             return -3;
         }
-        if (dtype == WF_NATIVE_FLOAT64) {
+        if (dtype == CWAVEFORM_FLOAT64) {
             ((double *)output)[index] = value;
-        } else if (dtype == WF_NATIVE_INT16) {
+        } else if (dtype == CWAVEFORM_INT16) {
             ((int16_t *)output)[index] = wf_quantize16(value, full_scale);
-        } else if (dtype == WF_NATIVE_INT32) {
+        } else if (dtype == CWAVEFORM_INT32) {
             ((int32_t *)output)[index] = wf_quantize32(value, full_scale);
         } else {
             free(values);
@@ -903,7 +936,7 @@ int wf_native_wave_sample(
     return 0;
 }
 
-static int wf_stack_encode(wf_native_stack *stack) {
+static int wf_stack_encode(cwaveform_stack *stack) {
     size_t sizes_size;
     size_t template_bytes = 0;
     size_t event_bytes;
@@ -960,23 +993,23 @@ static int wf_stack_encode(wf_native_stack *stack) {
     return 0;
 }
 
-wf_native_stack *wf_native_stack_create(
-    wf_native_wave *const *templates, const uint32_t *template_ids,
+cwaveform_stack *cwaveform_stack_create(
+    cwaveform_wave *const *templates, const uint32_t *template_ids,
     const int64_t *delay_ticks, const double *scales,
     size_t template_count, size_t event_count) {
-    wf_native_stack *stack;
+    cwaveform_stack *stack;
     size_t index;
     if ((template_count != 0 && templates == NULL)
             || (event_count != 0 && (template_ids == NULL
                 || delay_ticks == NULL || scales == NULL))) {
         return NULL;
     }
-    stack = (wf_native_stack *)calloc(1, sizeof(*stack));
+    stack = (cwaveform_stack *)calloc(1, sizeof(*stack));
     if (stack == NULL) return NULL;
     stack->references = 1;
     stack->template_count = template_count;
     stack->event_count = event_count;
-    stack->templates = (wf_native_wave **)calloc(template_count,
+    stack->templates = (cwaveform_wave **)calloc(template_count,
                                                   sizeof(*stack->templates));
     stack->template_ids = (uint32_t *)malloc(event_count * sizeof(uint32_t));
     stack->delays = (int64_t *)malloc(event_count * sizeof(int64_t));
@@ -984,20 +1017,20 @@ wf_native_stack *wf_native_stack_create(
     if ((template_count && stack->templates == NULL)
             || (event_count && (stack->template_ids == NULL
                 || stack->delays == NULL || stack->scales == NULL))) {
-        wf_native_stack_release(stack);
+        cwaveform_stack_release(stack);
         return NULL;
     }
     for (index = 0; index < template_count; ++index) {
         if (templates[index] == NULL) {
-            wf_native_stack_release(stack);
+            cwaveform_stack_release(stack);
             return NULL;
         }
         stack->templates[index] = templates[index];
-        wf_native_wave_retain(stack->templates[index]);
+        cwaveform_wave_retain(stack->templates[index]);
     }
     for (index = 0; index < event_count; ++index) {
         if (template_ids[index] >= template_count || !isfinite(scales[index])) {
-            wf_native_stack_release(stack);
+            cwaveform_stack_release(stack);
             return NULL;
         }
         stack->template_ids[index] = template_ids[index];
@@ -1005,35 +1038,35 @@ wf_native_stack *wf_native_stack_create(
         stack->scales[index] = scales[index];
     }
     if (wf_stack_encode(stack) != 0) {
-        wf_native_stack_release(stack);
+        cwaveform_stack_release(stack);
         return NULL;
     }
     return stack;
 }
 
-wf_native_stack *wf_native_stack_materialize(
-    const wf_native_stack *stack, int64_t global_shift, double offset) {
-    wf_native_wave **templates;
+cwaveform_stack *cwaveform_stack_materialize(
+    const cwaveform_stack *stack, int64_t global_shift, double offset) {
+    cwaveform_wave **templates;
     uint32_t *ids;
     int64_t *delays;
     double *scales;
-    wf_native_wave *constant = NULL;
-    wf_native_stack *result;
+    cwaveform_wave *constant = NULL;
+    cwaveform_stack *result;
     size_t template_count;
     size_t event_count;
     size_t index;
     int add_offset;
     if (stack == NULL || !isfinite(offset)) return NULL;
     if (global_shift == 0 && offset == 0.0) {
-        wf_native_stack_retain((wf_native_stack *)stack);
-        return (wf_native_stack *)stack;
+        cwaveform_stack_retain((cwaveform_stack *)stack);
+        return (cwaveform_stack *)stack;
     }
     add_offset = offset != 0.0;
     if (add_offset && (stack->template_count == SIZE_MAX
                        || stack->event_count == SIZE_MAX)) return NULL;
     template_count = stack->template_count + (size_t)add_offset;
     event_count = stack->event_count + (size_t)add_offset;
-    templates = (wf_native_wave **)malloc(template_count * sizeof(*templates));
+    templates = (cwaveform_wave **)malloc(template_count * sizeof(*templates));
     ids = (uint32_t *)malloc(event_count * sizeof(*ids));
     delays = (int64_t *)malloc(event_count * sizeof(*delays));
     scales = (double *)malloc(event_count * sizeof(*scales));
@@ -1054,7 +1087,7 @@ wf_native_stack *wf_native_stack_materialize(
         scales[index] = stack->scales[index];
     }
     if (add_offset) {
-        constant = wf_native_wave_constant(offset);
+        constant = cwaveform_wave_constant(offset);
         if (constant == NULL) {
             free(templates);
             free(ids);
@@ -1067,9 +1100,9 @@ wf_native_stack *wf_native_stack_materialize(
         delays[stack->event_count] = 0;
         scales[stack->event_count] = 1.0;
     }
-    result = wf_native_stack_create(templates, ids, delays, scales,
+    result = cwaveform_stack_create(templates, ids, delays, scales,
                                     template_count, event_count);
-    wf_native_wave_release(constant);
+    cwaveform_wave_release(constant);
     free(templates);
     free(ids);
     free(delays);
@@ -1077,16 +1110,16 @@ wf_native_stack *wf_native_stack_materialize(
     return result;
 }
 
-wf_native_stack *wf_native_stack_from_bytes(const uint8_t *data, size_t size) {
+cwaveform_stack *cwaveform_stack_from_bytes(const uint8_t *data, size_t size) {
     uint32_t template_count;
     uint32_t event_count;
     size_t event_offset;
     size_t cursor;
-    wf_native_wave **templates = NULL;
+    cwaveform_wave **templates = NULL;
     uint32_t *ids = NULL;
     int64_t *delays = NULL;
     double *scales = NULL;
-    wf_native_stack *stack = NULL;
+    cwaveform_stack *stack = NULL;
     uint32_t index;
     if (data == NULL || size < WF_STACK_HEADER_SIZE
             || memcmp(data, "WNS4", 4) != 0
@@ -1105,7 +1138,7 @@ wf_native_stack *wf_native_stack_from_bytes(const uint8_t *data, size_t size) {
     event_offset = size - 20 * (size_t)event_count;
     cursor = WF_STACK_HEADER_SIZE + 4 * (size_t)template_count;
     if (cursor > event_offset) return NULL;
-    templates = (wf_native_wave **)calloc(template_count, sizeof(*templates));
+    templates = (cwaveform_wave **)calloc(template_count, sizeof(*templates));
     ids = (uint32_t *)malloc((size_t)event_count * sizeof(*ids));
     delays = (int64_t *)malloc((size_t)event_count * sizeof(*delays));
     scales = (double *)malloc((size_t)event_count * sizeof(*scales));
@@ -1117,7 +1150,7 @@ wf_native_stack *wf_native_stack_from_bytes(const uint8_t *data, size_t size) {
         size_t template_size = wf_get_u32(
             data + WF_STACK_HEADER_SIZE + 4 * index);
         if (template_size > event_offset - cursor) goto done;
-        templates[index] = wf_native_wave_from_bytes(data + cursor,
+        templates[index] = cwaveform_wave_from_bytes(data + cursor,
                                                       template_size);
         if (templates[index] == NULL) goto done;
         cursor += template_size;
@@ -1130,12 +1163,12 @@ wf_native_stack *wf_native_stack_from_bytes(const uint8_t *data, size_t size) {
         scales[index] = wf_get_f64(data + event_offset + 12 * event_count
                                    + 8 * index);
     }
-    stack = wf_native_stack_create(templates, ids, delays, scales,
+    stack = cwaveform_stack_create(templates, ids, delays, scales,
                                    template_count, event_count);
 done:
     if (templates != NULL) {
         for (index = 0; index < template_count; ++index) {
-            wf_native_wave_release(templates[index]);
+            cwaveform_wave_release(templates[index]);
         }
     }
     free(templates);
@@ -1145,11 +1178,11 @@ done:
     return stack;
 }
 
-void wf_native_stack_retain(wf_native_stack *stack) {
+void cwaveform_stack_retain(cwaveform_stack *stack) {
     if (stack != NULL) ++stack->references;
 }
 
-void wf_native_stack_release(wf_native_stack *stack) {
+void cwaveform_stack_release(cwaveform_stack *stack) {
     size_t index;
     if (stack == NULL) return;
     if (stack->references > 1) {
@@ -1158,7 +1191,7 @@ void wf_native_stack_release(wf_native_stack *stack) {
     }
     if (stack->templates != NULL) {
         for (index = 0; index < stack->template_count; ++index) {
-            wf_native_wave_release(stack->templates[index]);
+            cwaveform_wave_release(stack->templates[index]);
         }
     }
     free(stack->templates);
@@ -1169,22 +1202,22 @@ void wf_native_stack_release(wf_native_stack *stack) {
     free(stack);
 }
 
-const uint8_t *wf_native_stack_bytes(const wf_native_stack *stack,
+const uint8_t *cwaveform_stack_bytes(const cwaveform_stack *stack,
                                       size_t *size) {
     if (stack == NULL) return NULL;
     if (size != NULL) *size = stack->data_size;
     return stack->data;
 }
 
-uint64_t wf_native_stack_hash(const wf_native_stack *stack) {
+uint64_t cwaveform_stack_hash(const cwaveform_stack *stack) {
     return stack == NULL ? 0 : stack->hash;
 }
 
-size_t wf_native_stack_event_count(const wf_native_stack *stack) {
+size_t cwaveform_stack_event_count(const cwaveform_stack *stack) {
     return stack == NULL ? 0 : stack->event_count;
 }
 
-size_t wf_native_stack_template_count(const wf_native_stack *stack) {
+size_t cwaveform_stack_template_count(const cwaveform_stack *stack) {
     return stack == NULL ? 0 : stack->template_count;
 }
 
@@ -1203,8 +1236,8 @@ static size_t wf_lower_bound(const double *values, size_t count, double target) 
     return first;
 }
 
-int wf_native_stack_evaluate(
-    const wf_native_stack *stack, const double *positions, size_t count,
+int cwaveform_stack_evaluate(
+    const cwaveform_stack *stack, const double *positions, size_t count,
     int64_t global_shift, double offset, double *output) {
     size_t event_index;
     size_t index;
@@ -1221,7 +1254,7 @@ int wf_native_stack_evaluate(
     if (values == NULL) return -2;
     for (index = 0; index < count; ++index) output[index] = offset;
     for (event_index = 0; event_index < stack->event_count; ++event_index) {
-        wf_native_wave *wave = stack->templates[stack->template_ids[event_index]];
+        cwaveform_wave *wave = stack->templates[stack->template_ids[event_index]];
         int64_t delay_tick = wf_add_tick(stack->delays[event_index], global_shift);
         int64_t lower_tick = wf_add_tick(wave->nodes[wave->root].lower, delay_tick);
         int64_t upper_tick = wf_add_tick(wave->nodes[wave->root].upper, delay_tick);
@@ -1254,8 +1287,566 @@ static size_t wf_grid_bound(int64_t boundary, int64_t start_tick,
     return (size_t)rounded;
 }
 
-int wf_native_stack_sample(
-    const wf_native_stack *stack, int64_t start_tick, size_t count,
+static uint64_t wf_tick_mod(int64_t value, uint64_t modulus) {
+    uint64_t magnitude;
+    uint64_t remainder;
+    if (value >= 0) return (uint64_t)value % modulus;
+    magnitude = (uint64_t)(-(value + 1)) + 1;
+    remainder = magnitude % modulus;
+    return remainder == 0 ? 0 : modulus - remainder;
+}
+
+static void wf_plan_scale_group_clear(wf_plan_scale_group *group) {
+    if (group == NULL) return;
+    free(group->samples);
+    free(group->destinations);
+    memset(group, 0, sizeof(*group));
+}
+
+static void wf_plan_group_clear(wf_plan_group *group) {
+    size_t index;
+    if (group == NULL) return;
+    free(group->samples);
+    free(group->destinations);
+    free(group->scales);
+    for (index = 0; index < group->scale_group_count; ++index)
+        wf_plan_scale_group_clear(group->scale_groups + index);
+    free(group->scale_groups);
+    memset(group, 0, sizeof(*group));
+}
+
+static int wf_plan_grow_groups(cwaveform_sample_plan *plan) {
+    size_t capacity = plan->group_capacity == 0 ? 4 : plan->group_capacity * 2;
+    wf_plan_group *groups;
+    if (capacity < plan->group_capacity
+            || capacity > SIZE_MAX / sizeof(*groups)) return -1;
+    groups = (wf_plan_group *)calloc(capacity, sizeof(*groups));
+    if (groups == NULL) return -2;
+    if (plan->group_count != 0)
+        memcpy(groups, plan->groups,
+               plan->group_count * sizeof(*groups));
+    free(plan->groups);
+    plan->groups = groups;
+    plan->group_capacity = capacity;
+    return 0;
+}
+
+static int wf_plan_group_grow_placements(wf_plan_group *group) {
+    size_t capacity = group->placement_capacity == 0
+        ? 16 : group->placement_capacity * 2;
+    int64_t *destinations;
+    double *scales;
+    if (capacity < group->placement_capacity
+            || capacity > SIZE_MAX / sizeof(*destinations)
+            || capacity > SIZE_MAX / sizeof(*scales)) return -1;
+    destinations = (int64_t *)malloc(capacity * sizeof(*destinations));
+    scales = (double *)malloc(capacity * sizeof(*scales));
+    if (destinations == NULL || scales == NULL) {
+        free(destinations);
+        free(scales);
+        return -2;
+    }
+    if (group->placement_count != 0) {
+        memcpy(destinations, group->destinations,
+               group->placement_count * sizeof(*destinations));
+        memcpy(scales, group->scales,
+               group->placement_count * sizeof(*scales));
+    }
+    free(group->destinations);
+    free(group->scales);
+    group->destinations = destinations;
+    group->scales = scales;
+    group->placement_capacity = capacity;
+    return 0;
+}
+
+static int wf_plan_scale_group_append(wf_plan_scale_group *group,
+                                      int64_t destination) {
+    if (group->destination_count == group->destination_capacity) {
+        size_t capacity = group->destination_capacity == 0
+            ? 16 : group->destination_capacity * 2;
+        int64_t *destinations;
+        if (capacity < group->destination_capacity
+                || capacity > SIZE_MAX / sizeof(*destinations)) return -1;
+        destinations = (int64_t *)realloc(
+            group->destinations, capacity * sizeof(*destinations));
+        if (destinations == NULL) return -2;
+        group->destinations = destinations;
+        group->destination_capacity = capacity;
+    }
+    group->destinations[group->destination_count++] = destination;
+    return 0;
+}
+
+static void wf_plan_group_disable_scale_groups(wf_plan_group *group) {
+    size_t index;
+    for (index = 0; index < group->scale_group_count; ++index)
+        wf_plan_scale_group_clear(group->scale_groups + index);
+    free(group->scale_groups);
+    group->scale_groups = NULL;
+    group->scale_group_count = 0;
+    group->scale_group_capacity = 0;
+    group->grouped_scales = 0;
+}
+
+static int wf_plan_group_add_scale_destination(wf_plan_group *group,
+                                               double scale,
+                                               int64_t destination) {
+    size_t index;
+    wf_plan_scale_group *scale_group;
+    if (!group->grouped_scales) return 0;
+    for (index = 0; index < group->scale_group_count; ++index) {
+        if (group->scale_groups[index].scale == scale)
+            return wf_plan_scale_group_append(group->scale_groups + index,
+                                              destination);
+    }
+    if (group->scale_group_count == 64) {
+        wf_plan_group_disable_scale_groups(group);
+        return 0;
+    }
+    if (group->scale_group_count == group->scale_group_capacity) {
+        size_t capacity = group->scale_group_capacity == 0
+            ? 4 : group->scale_group_capacity * 2;
+        wf_plan_scale_group *scale_groups;
+        if (capacity > SIZE_MAX / sizeof(*scale_groups)) return -1;
+        scale_groups = (wf_plan_scale_group *)calloc(
+            capacity, sizeof(*scale_groups));
+        if (scale_groups == NULL) return -2;
+        if (group->scale_group_count != 0)
+            memcpy(scale_groups, group->scale_groups,
+                   group->scale_group_count * sizeof(*scale_groups));
+        free(group->scale_groups);
+        group->scale_groups = scale_groups;
+        group->scale_group_capacity = capacity;
+    }
+    scale_group = group->scale_groups + group->scale_group_count++;
+    scale_group->scale = scale;
+    if (group->sample_count != 0) {
+        if (group->sample_count > SIZE_MAX / sizeof(*scale_group->samples))
+            return -1;
+        scale_group->samples = (double *)malloc(
+            group->sample_count * sizeof(*scale_group->samples));
+        if (scale_group->samples == NULL) return -2;
+        for (index = 0; index < group->sample_count; ++index)
+            scale_group->samples[index] = scale * group->samples[index];
+    }
+    return wf_plan_scale_group_append(scale_group, destination);
+}
+
+static int wf_plan_group_add_placement(wf_plan_group *group,
+                                       int64_t destination, double scale) {
+    int status;
+    if (group->placement_count == group->placement_capacity) {
+        status = wf_plan_group_grow_placements(group);
+        if (status != 0) return status;
+    }
+    group->destinations[group->placement_count] = destination;
+    group->scales[group->placement_count] = scale;
+    ++group->placement_count;
+    return wf_plan_group_add_scale_destination(group, scale, destination);
+}
+
+static int wf_plan_placement_bounds(
+    int64_t destination, size_t template_count, size_t output_count,
+    size_t *source_start, size_t *output_start, size_t *copy_count) {
+    long double start = (long double)destination;
+    long double stop = start + (long double)template_count;
+    long double clipped_start = start < 0.0L ? 0.0L : start;
+    long double clipped_stop = stop > (long double)output_count
+        ? (long double)output_count : stop;
+    if (clipped_start >= clipped_stop || clipped_stop <= 0.0L
+            || clipped_start >= (long double)output_count) {
+        *copy_count = 0;
+        return 0;
+    }
+    *source_start = (size_t)(clipped_start - start);
+    *output_start = (size_t)clipped_start;
+    *copy_count = (size_t)(clipped_stop - clipped_start);
+    return 1;
+}
+
+static wf_plan_group *wf_plan_get_group(
+    cwaveform_sample_plan *plan, const cwaveform_stack *stack,
+    uint32_t template_id, uint64_t phase, int64_t step_numerator) {
+    size_t index;
+    wf_plan_group *group;
+    cwaveform_wave *wave;
+    int64_t lower;
+    int64_t upper;
+    uint64_t lower_phase;
+    uint64_t delta;
+    long double sample_count;
+    double *values;
+    for (index = 0; index < plan->group_count; ++index) {
+        group = plan->groups + index;
+        if (group->template_id == template_id && group->phase == phase)
+            return group;
+    }
+    if (plan->group_count == plan->group_capacity
+            && wf_plan_grow_groups(plan) != 0) return NULL;
+    group = plan->groups + plan->group_count;
+    memset(group, 0, sizeof(*group));
+    group->template_id = template_id;
+    group->phase = phase;
+    group->grouped_scales = 1;
+    wave = stack->templates[template_id];
+    lower = wave->nodes[wave->root].lower;
+    upper = wave->nodes[wave->root].upper;
+    if (lower == INT64_MIN || upper == INT64_MAX || lower >= upper)
+        return NULL;
+    lower_phase = wf_tick_mod(lower, (uint64_t)step_numerator);
+    delta = phase >= lower_phase
+        ? phase - lower_phase
+        : (uint64_t)step_numerator - (lower_phase - phase);
+    group->first_tick = wf_add_tick(lower, (int64_t)delta);
+    if (group->first_tick >= upper) {
+        group->sample_count = 0;
+    } else {
+        sample_count = ceill(
+            ((long double)upper - (long double)group->first_tick)
+            / (long double)step_numerator);
+        if (sample_count < 0.0L || sample_count > (long double)SIZE_MAX)
+            return NULL;
+        group->sample_count = (size_t)sample_count;
+    }
+    if (group->sample_count != 0) {
+        if (group->sample_count > SIZE_MAX / sizeof(*group->samples))
+            return NULL;
+        group->samples = (double *)malloc(
+            group->sample_count * sizeof(*group->samples));
+        values = (double *)malloc((size_t)wave->node_count * sizeof(*values));
+        if (group->samples == NULL || values == NULL) {
+            free(values);
+            wf_plan_group_clear(group);
+            return NULL;
+        }
+        for (index = 0; index < group->sample_count; ++index) {
+            long double tick = (long double)group->first_tick
+                + (long double)index * (long double)step_numerator;
+            group->samples[index] = wf_evaluate_one(
+                wave,
+                (double)(tick / (long double)WF_TICKS_PER_SECOND),
+                values);
+        }
+        free(values);
+    }
+    ++plan->group_count;
+    return group;
+}
+
+cwaveform_sample_plan *cwaveform_sample_plan_create(
+    const cwaveform_stack *stack, int64_t start_tick, size_t count,
+    int64_t step_numerator, int64_t step_denominator,
+    int64_t global_shift) {
+    cwaveform_sample_plan *plan;
+    size_t event_index;
+    size_t previous_start = 0;
+    size_t previous_stop = 0;
+    int have_previous = 0;
+    if (stack == NULL || step_numerator <= 0 || step_denominator != 1)
+        return NULL;
+    plan = (cwaveform_sample_plan *)calloc(1, sizeof(*plan));
+    if (plan == NULL) return NULL;
+    plan->references = 1;
+    plan->count = count;
+    plan->non_overlapping = 1;
+    for (event_index = 0; event_index < stack->event_count; ++event_index) {
+        uint32_t template_id = stack->template_ids[event_index];
+        cwaveform_wave *wave = stack->templates[template_id];
+        int64_t delay;
+        uint64_t start_phase;
+        uint64_t delay_phase;
+        uint64_t phase;
+        wf_plan_group *group;
+        long double destination_value;
+        int64_t destination;
+        size_t source_start;
+        size_t output_start;
+        size_t copy_count;
+        int status;
+        if (stack->scales[event_index] == 0.0
+                || wave->nodes[wave->root].lower
+                   >= wave->nodes[wave->root].upper) continue;
+        if (wave->nodes[wave->root].lower == INT64_MIN
+                || wave->nodes[wave->root].upper == INT64_MAX) {
+            cwaveform_sample_plan_release(plan);
+            return NULL;
+        }
+        delay = wf_add_tick(stack->delays[event_index], global_shift);
+        start_phase = wf_tick_mod(start_tick, (uint64_t)step_numerator);
+        delay_phase = wf_tick_mod(delay, (uint64_t)step_numerator);
+        phase = start_phase >= delay_phase
+            ? start_phase - delay_phase
+            : (uint64_t)step_numerator - (delay_phase - start_phase);
+        group = wf_plan_get_group(plan, stack, template_id, phase,
+                                  step_numerator);
+        if (group == NULL) {
+            cwaveform_sample_plan_release(plan);
+            return NULL;
+        }
+        destination_value = (
+            (long double)delay + (long double)group->first_tick
+            - (long double)start_tick) / (long double)step_numerator;
+        if (destination_value < (long double)INT64_MIN
+                || destination_value > (long double)INT64_MAX) {
+            cwaveform_sample_plan_release(plan);
+            return NULL;
+        }
+        destination = (int64_t)llroundl(destination_value);
+        status = wf_plan_group_add_placement(
+            group, destination, stack->scales[event_index]);
+        if (status != 0) {
+            cwaveform_sample_plan_release(plan);
+            return NULL;
+        }
+        if (wf_plan_placement_bounds(
+                destination, group->sample_count, count,
+                &source_start, &output_start, &copy_count)) {
+            size_t stop = output_start + copy_count;
+            if (have_previous
+                    && (output_start < previous_start
+                        || output_start < previous_stop))
+                plan->non_overlapping = 0;
+            previous_start = output_start;
+            previous_stop = stop > previous_stop ? stop : previous_stop;
+            have_previous = 1;
+        }
+    }
+    return plan;
+}
+
+void cwaveform_sample_plan_retain(cwaveform_sample_plan *plan) {
+    if (plan != NULL) ++plan->references;
+}
+
+void cwaveform_sample_plan_release(cwaveform_sample_plan *plan) {
+    size_t index;
+    if (plan == NULL) return;
+    if (plan->references > 1) {
+        --plan->references;
+        return;
+    }
+    for (index = 0; index < plan->group_count; ++index)
+        wf_plan_group_clear(plan->groups + index);
+    free(plan->groups);
+    free(plan);
+}
+
+size_t cwaveform_sample_plan_count(const cwaveform_sample_plan *plan) {
+    return plan == NULL ? 0 : plan->count;
+}
+
+size_t cwaveform_sample_plan_group_count(const cwaveform_sample_plan *plan) {
+    return plan == NULL ? 0 : plan->group_count;
+}
+
+int cwaveform_sample_plan_non_overlapping(
+    const cwaveform_sample_plan *plan) {
+    return plan != NULL && plan->non_overlapping;
+}
+
+static void wf_plan_sample_float(const cwaveform_sample_plan *plan,
+                                 double offset, double *output) {
+    size_t group_index;
+    size_t index;
+    for (index = 0; index < plan->count; ++index) output[index] = offset;
+    for (group_index = 0; group_index < plan->group_count; ++group_index) {
+        const wf_plan_group *group = plan->groups + group_index;
+        if (group->grouped_scales && plan->non_overlapping) {
+            size_t scale_index;
+            double *transformed = (offset == 0.0 || group->sample_count == 0)
+                ? NULL
+                : (double *)malloc(group->sample_count * sizeof(double));
+            if (offset != 0.0 && group->sample_count != 0
+                    && transformed == NULL) goto generic;
+            for (scale_index = 0;
+                    scale_index < group->scale_group_count; ++scale_index) {
+                const wf_plan_scale_group *scale_group
+                    = group->scale_groups + scale_index;
+                const double *source_values = scale_group->samples;
+                size_t destination_index;
+                if (offset != 0.0) {
+                    for (index = 0; index < group->sample_count; ++index)
+                        transformed[index] = offset
+                            + scale_group->samples[index];
+                    source_values = transformed;
+                }
+                for (destination_index = 0;
+                        destination_index < scale_group->destination_count;
+                        ++destination_index) {
+                    size_t source_start;
+                    size_t output_start;
+                    size_t copy_count;
+                    if (wf_plan_placement_bounds(
+                            scale_group->destinations[destination_index],
+                            group->sample_count, plan->count,
+                            &source_start, &output_start, &copy_count))
+                        memcpy(output + output_start,
+                               source_values + source_start,
+                               copy_count * sizeof(double));
+                }
+            }
+            free(transformed);
+            continue;
+        }
+        if (group->grouped_scales) {
+            size_t scale_index;
+            for (scale_index = 0;
+                    scale_index < group->scale_group_count; ++scale_index) {
+                const wf_plan_scale_group *scale_group
+                    = group->scale_groups + scale_index;
+                size_t destination_index;
+                for (destination_index = 0;
+                        destination_index < scale_group->destination_count;
+                        ++destination_index) {
+                    size_t source_start;
+                    size_t output_start;
+                    size_t copy_count;
+                    size_t sample_index;
+                    if (!wf_plan_placement_bounds(
+                            scale_group->destinations[destination_index],
+                            group->sample_count, plan->count,
+                            &source_start, &output_start, &copy_count)) continue;
+                    for (sample_index = 0; sample_index < copy_count;
+                            ++sample_index)
+                        output[output_start + sample_index]
+                            += scale_group->samples[source_start + sample_index];
+                }
+            }
+            continue;
+        }
+generic:
+        for (index = 0; index < group->placement_count; ++index) {
+            size_t source_start;
+            size_t output_start;
+            size_t copy_count;
+            size_t sample_index;
+            if (!wf_plan_placement_bounds(
+                    group->destinations[index], group->sample_count,
+                    plan->count, &source_start, &output_start, &copy_count))
+                continue;
+            if (plan->non_overlapping) {
+                for (sample_index = 0; sample_index < copy_count; ++sample_index)
+                    output[output_start + sample_index] = offset
+                        + group->scales[index]
+                        * group->samples[source_start + sample_index];
+            } else {
+                for (sample_index = 0; sample_index < copy_count; ++sample_index)
+                    output[output_start + sample_index] += group->scales[index]
+                        * group->samples[source_start + sample_index];
+            }
+        }
+    }
+}
+
+static int wf_plan_sample_integer_grouped(
+    const cwaveform_sample_plan *plan, const wf_plan_group *group,
+    double offset, int dtype, double full_scale, void *output) {
+    size_t scale_index;
+    size_t item_size = dtype == CWAVEFORM_INT16
+        ? sizeof(int16_t) : sizeof(int32_t);
+    void *quantized = group->sample_count == 0 ? NULL
+        : malloc(group->sample_count * item_size);
+    if (group->sample_count != 0 && quantized == NULL) return -2;
+    for (scale_index = 0;
+            scale_index < group->scale_group_count; ++scale_index) {
+        const wf_plan_scale_group *scale_group
+            = group->scale_groups + scale_index;
+        size_t index;
+        for (index = 0; index < group->sample_count; ++index) {
+            double value = offset + scale_group->samples[index];
+            if (dtype == CWAVEFORM_INT16)
+                ((int16_t *)quantized)[index] = wf_quantize16(value, full_scale);
+            else
+                ((int32_t *)quantized)[index] = wf_quantize32(value, full_scale);
+        }
+        for (index = 0; index < scale_group->destination_count; ++index) {
+            size_t source_start;
+            size_t output_start;
+            size_t copy_count;
+            if (wf_plan_placement_bounds(
+                    scale_group->destinations[index], group->sample_count,
+                    plan->count, &source_start, &output_start, &copy_count))
+                memcpy((uint8_t *)output + output_start * item_size,
+                       (uint8_t *)quantized + source_start * item_size,
+                       copy_count * item_size);
+        }
+    }
+    free(quantized);
+    return 0;
+}
+
+int cwaveform_sample_plan_sample(
+    const cwaveform_sample_plan *plan, double offset, int dtype,
+    double full_scale, void *output) {
+    size_t index;
+    if (plan == NULL || output == NULL || !isfinite(offset)
+            || !isfinite(full_scale) || full_scale <= 0.0) return -1;
+    if (dtype == CWAVEFORM_FLOAT64) {
+        wf_plan_sample_float(plan, offset, (double *)output);
+        return 0;
+    }
+    if (dtype != CWAVEFORM_INT16 && dtype != CWAVEFORM_INT32) return -1;
+    if (!plan->non_overlapping) {
+        double *values = plan->count == 0 ? NULL
+            : (double *)malloc(plan->count * sizeof(double));
+        if (plan->count != 0 && values == NULL) return -2;
+        wf_plan_sample_float(plan, offset, values);
+        for (index = 0; index < plan->count; ++index) {
+            if (dtype == CWAVEFORM_INT16)
+                ((int16_t *)output)[index] = wf_quantize16(values[index], full_scale);
+            else
+                ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
+        }
+        free(values);
+        return 0;
+    }
+    if (dtype == CWAVEFORM_INT16) {
+        int16_t base = wf_quantize16(offset, full_scale);
+        for (index = 0; index < plan->count; ++index)
+            ((int16_t *)output)[index] = base;
+    } else {
+        int32_t base = wf_quantize32(offset, full_scale);
+        for (index = 0; index < plan->count; ++index)
+            ((int32_t *)output)[index] = base;
+    }
+    for (index = 0; index < plan->group_count; ++index) {
+        const wf_plan_group *group = plan->groups + index;
+        if (group->grouped_scales) {
+            int status = wf_plan_sample_integer_grouped(
+                plan, group, offset, dtype, full_scale, output);
+            if (status != 0) return status;
+        } else {
+            size_t placement_index;
+            for (placement_index = 0;
+                    placement_index < group->placement_count;
+                    ++placement_index) {
+                size_t source_start;
+                size_t output_start;
+                size_t copy_count;
+                size_t sample_index;
+                if (!wf_plan_placement_bounds(
+                        group->destinations[placement_index],
+                        group->sample_count, plan->count,
+                        &source_start, &output_start, &copy_count)) continue;
+                for (sample_index = 0; sample_index < copy_count; ++sample_index) {
+                    double value = offset + group->scales[placement_index]
+                        * group->samples[source_start + sample_index];
+                    if (dtype == CWAVEFORM_INT16)
+                        ((int16_t *)output)[output_start + sample_index]
+                            = wf_quantize16(value, full_scale);
+                    else
+                        ((int32_t *)output)[output_start + sample_index]
+                            = wf_quantize32(value, full_scale);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+int cwaveform_stack_sample(
+    const cwaveform_stack *stack, int64_t start_tick, size_t count,
     int64_t step_numerator, int64_t step_denominator, int64_t global_shift,
     double offset, int dtype, double full_scale, void *output) {
     size_t event_index;
@@ -1275,7 +1866,7 @@ int wf_native_stack_sample(
     values = (double *)malloc((size_t)maximum_nodes * sizeof(*values));
     if (values == NULL) return -2;
     for (event_index = 0; event_index < stack->event_count; ++event_index) {
-        wf_native_wave *wave = stack->templates[stack->template_ids[event_index]];
+        cwaveform_wave *wave = stack->templates[stack->template_ids[event_index]];
         int64_t delay = wf_add_tick(stack->delays[event_index], global_shift);
         int64_t lower = wf_add_tick(wave->nodes[wave->root].lower, delay);
         int64_t upper = wf_add_tick(wave->nodes[wave->root].upper, delay);
@@ -1284,8 +1875,8 @@ int wf_native_stack_sample(
         previous_lower = lower;
         previous_upper = upper;
     }
-    if (dtype == WF_NATIVE_FLOAT64 || !non_overlapping) {
-        double *float_output = dtype == WF_NATIVE_FLOAT64
+    if (dtype == CWAVEFORM_FLOAT64 || !non_overlapping) {
+        double *float_output = dtype == CWAVEFORM_FLOAT64
             ? (double *)output : (double *)malloc(count * sizeof(double));
         if (float_output == NULL) {
             free(values);
@@ -1293,7 +1884,7 @@ int wf_native_stack_sample(
         }
         for (index = 0; index < count; ++index) float_output[index] = offset;
         for (event_index = 0; event_index < stack->event_count; ++event_index) {
-            wf_native_wave *wave = stack->templates[stack->template_ids[event_index]];
+            cwaveform_wave *wave = stack->templates[stack->template_ids[event_index]];
             int64_t delay_tick = wf_add_tick(stack->delays[event_index], global_shift);
             int64_t lower_tick = wf_add_tick(wave->nodes[wave->root].lower, delay_tick);
             int64_t upper_tick = wf_add_tick(wave->nodes[wave->root].upper, delay_tick);
@@ -1309,23 +1900,23 @@ int wf_native_stack_sample(
                     * wf_evaluate_one(wave, position, values);
             }
         }
-        if (dtype == WF_NATIVE_INT16) {
+        if (dtype == CWAVEFORM_INT16) {
             for (index = 0; index < count; ++index)
                 ((int16_t *)output)[index] = wf_quantize16(float_output[index], full_scale);
-        } else if (dtype == WF_NATIVE_INT32) {
+        } else if (dtype == CWAVEFORM_INT32) {
             for (index = 0; index < count; ++index)
                 ((int32_t *)output)[index] = wf_quantize32(float_output[index], full_scale);
-        } else if (dtype != WF_NATIVE_FLOAT64) {
+        } else if (dtype != CWAVEFORM_FLOAT64) {
             if (float_output != output) free(float_output);
             free(values);
             return -1;
         }
         if ((void *)float_output != output) free(float_output);
     } else {
-        if (dtype == WF_NATIVE_INT16) {
+        if (dtype == CWAVEFORM_INT16) {
             int16_t base = wf_quantize16(offset, full_scale);
             for (index = 0; index < count; ++index) ((int16_t *)output)[index] = base;
-        } else if (dtype == WF_NATIVE_INT32) {
+        } else if (dtype == CWAVEFORM_INT32) {
             int32_t base = wf_quantize32(offset, full_scale);
             for (index = 0; index < count; ++index) ((int32_t *)output)[index] = base;
         } else {
@@ -1333,7 +1924,7 @@ int wf_native_stack_sample(
             return -1;
         }
         for (event_index = 0; event_index < stack->event_count; ++event_index) {
-            wf_native_wave *wave = stack->templates[stack->template_ids[event_index]];
+            cwaveform_wave *wave = stack->templates[stack->template_ids[event_index]];
             int64_t delay_tick = wf_add_tick(stack->delays[event_index], global_shift);
             int64_t lower_tick = wf_add_tick(wave->nodes[wave->root].lower, delay_tick);
             int64_t upper_tick = wf_add_tick(wave->nodes[wave->root].upper, delay_tick);
@@ -1351,7 +1942,7 @@ int wf_native_stack_sample(
                     free(values);
                     return -3;
                 }
-                if (dtype == WF_NATIVE_INT16)
+                if (dtype == CWAVEFORM_INT16)
                     ((int16_t *)output)[index] = wf_quantize16(value, full_scale);
                 else
                     ((int32_t *)output)[index] = wf_quantize32(value, full_scale);
@@ -1362,7 +1953,7 @@ int wf_native_stack_sample(
     return 0;
 }
 
-wf_native_wave *wf_native_stack_simplify(const wf_native_stack *stack,
+cwaveform_wave *cwaveform_stack_simplify(const cwaveform_stack *stack,
                                          int64_t global_shift,
                                          double offset) {
     size_t event_index;
@@ -1370,10 +1961,10 @@ wf_native_wave *wf_native_stack_simplify(const wf_native_stack *stack,
     uint32_t next = 0;
     uint32_t root = UINT32_MAX;
     wf_node *nodes;
-    wf_native_wave *result;
+    cwaveform_wave *result;
     if (stack == NULL || !isfinite(offset)) return NULL;
     for (event_index = 0; event_index < stack->event_count; ++event_index) {
-        wf_native_wave *wave = stack->templates[stack->template_ids[event_index]];
+        cwaveform_wave *wave = stack->templates[stack->template_ids[event_index]];
         if ((size_t)wave->node_count > SIZE_MAX - capacity - 2) return NULL;
         capacity += wave->node_count + 2;
     }
@@ -1381,7 +1972,7 @@ wf_native_wave *wf_native_stack_simplify(const wf_native_stack *stack,
     nodes = (wf_node *)calloc(capacity, sizeof(*nodes));
     if (nodes == NULL) return NULL;
     for (event_index = 0; event_index < stack->event_count; ++event_index) {
-        wf_native_wave *wave = stack->templates[stack->template_ids[event_index]];
+        cwaveform_wave *wave = stack->templates[stack->template_ids[event_index]];
         uint32_t event_root = wf_clone_affine(
             wave, nodes, next,
             wf_add_tick(stack->delays[event_index], global_shift),
@@ -1438,6 +2029,6 @@ wf_native_wave *wf_native_stack_simplify(const wf_native_stack *stack,
     return result;
 }
 
-const char *wf_native_format_description(void) {
+const char *cwaveform_format_description(void) {
     return "WNF4/WNS4 little-endian immutable waveform blocks; 120 GHz ticks; ABI 1";
 }

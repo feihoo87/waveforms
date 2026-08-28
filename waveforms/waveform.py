@@ -28,7 +28,7 @@ from ._waveform import (
     registerDerivative, sample_clock, sample_grid, set_time_resolution,
     tick_to_time, time_to_tick,
 )
-from ._native import (
+from ._waveform import (
     NativeCore as _NativeCore,
     NativeStackCore as _NativeStackCore,
     TICKS_PER_SECOND as _NATIVE_TICKS_PER_SECOND,
@@ -1985,7 +1985,7 @@ class NativeWaveVStack:
     """Thin Python metadata wrapper around a WNS4 native template stack."""
 
     __slots__ = ("_core", "start", "stop", "sample_rate", "offset",
-                 "_shift_tick", "filters", "label")
+                 "_shift_tick", "filters", "label", "_sample_plan_cache")
 
     def __init__(self, waves=(), *, _core=None):
         if _core is None:
@@ -2015,6 +2015,7 @@ class NativeWaveVStack:
         self._shift_tick = 0
         self.filters = None
         self.label = None
+        self._sample_plan_cache = None
 
     def __call__(self, x, out=None, accumulate=False, **kwargs):
         scalar = isinstance(x, (int, float, np.number))
@@ -2045,15 +2046,35 @@ class NativeWaveVStack:
             values = self(positions)
         else:
             start_tick, count, step_numerator, step_denominator = plan
-            if bits is not None and filters is None:
-                return self._core.sample(
-                    start_tick, count, step_numerator, step_denominator,
-                    self._shift_tick, self.offset, bits, full_scale, out,
-                )
-            values = self._core.sample(
+            cache_key = (
                 start_tick, count, step_numerator, step_denominator,
-                self._shift_tick, self.offset,
+                self._shift_tick,
             )
+            if (self._sample_plan_cache is not None
+                    and self._sample_plan_cache[0] == cache_key):
+                native_plan = self._sample_plan_cache[1]
+            else:
+                native_plan = self._core.prepare_sample(
+                    start_tick, count, step_numerator, step_denominator,
+                    self._shift_tick,
+                )
+                self._sample_plan_cache = cache_key, native_plan
+            if native_plan is not None:
+                if bits is not None and filters is None:
+                    return native_plan.sample(
+                        self.offset, bits, full_scale, out,
+                    )
+                values = native_plan.sample(self.offset)
+            else:
+                if bits is not None and filters is None:
+                    return self._core.sample(
+                        start_tick, count, step_numerator, step_denominator,
+                        self._shift_tick, self.offset, bits, full_scale, out,
+                    )
+                values = self._core.sample(
+                    start_tick, count, step_numerator, step_denominator,
+                    self._shift_tick, self.offset,
+                )
         values, _ = _filter_samples(values, filters)
         return _finish_samples(values, dtype, full_scale, out)
 
@@ -2109,6 +2130,7 @@ class NativeWaveVStack:
         (data, self.start, self.stop, self.sample_rate, self.offset,
          self._shift_tick, self.filters, self.label) = state
         self._core = _NativeStackCore.from_bytes(data)
+        self._sample_plan_cache = None
 
 
 def native_zero():

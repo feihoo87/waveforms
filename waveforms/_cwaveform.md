@@ -2,7 +2,7 @@
 
 WNF4 and WNS4 are immutable, little-endian binary blocks. They are designed
 to be read by C, Rust, Python, or device-side tooling without reconstructing a
-Python object graph. The public ABI is declared in `wf_native.h`.
+Python object graph. The public ABI is declared in `_cwaveform.h`.
 
 All times are signed 64-bit ticks at 120,000,000,000 ticks per second. A sample
 clock is represented by the rational number `step_numerator / step_denominator`
@@ -66,7 +66,7 @@ into events when a standalone WNS4 block is requested.
 ## Ownership and validation
 
 The C API returns reference-counted immutable handles. Byte pointers returned
-by `wf_native_wave_bytes` and `wf_native_stack_bytes` stay valid until the last
+by `cwaveform_wave_bytes` and `cwaveform_stack_bytes` stay valid until the last
 matching release. Constructors validate topology, finite parameters, template
 indices, sizes, and the embedded tick rate before evaluation. The Python
 binding retains an input `bytes` object and lazily builds the decoded sidecar

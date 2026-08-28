@@ -1,4 +1,5 @@
 import pickle
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -138,6 +139,56 @@ def test_native_stack_sampling_lazy_roundtrip_shift_offset_and_pickle():
     assert unpickled.label == actual.label
 
 
+@pytest.mark.parametrize("dtype,bits", [
+    (np.float64, 0),
+    (np.int16, 16),
+    (np.int32, 32),
+])
+def test_native_stack_sample_plan_matches_direct_sampler(dtype, bits):
+    pulse = (wf.native_gaussian(20e-9)
+             * wf.native_cos(2 * np.pi * 100e6))
+    scales = (0.25, 0.5, 1.0)
+    actual = wf.NativeWaveVStack([
+        scales[index % len(scales)] * pulse >> (index * 40e-9)
+        for index in range(75)
+    ])
+    actual.start = -20e-9
+    actual.stop = 75 * 40e-9
+    actual.sample_rate = RATE
+    actual.offset = 0.071
+
+    assert actual._sample_plan_cache is None
+    first = actual.sample(dtype=dtype)
+    cache_key, sample_plan = actual._sample_plan_cache
+    target = np.empty_like(first)
+    result = actual.sample(dtype=dtype, out=target)
+    direct = actual._core.sample(
+        cache_key[0], cache_key[1], cache_key[2], cache_key[3],
+        cache_key[4], actual.offset, bits, 1.0,
+    )
+
+    assert result is target
+    assert sample_plan.count == len(result)
+    assert sample_plan.group_count == 1
+    assert sample_plan.non_overlapping
+    assert np.array_equal(result, direct)
+    assert actual._sample_plan_cache[1] is sample_plan
+
+
+def test_native_sample_plan_overlaps_and_rational_fallback():
+    actual = _stack(50, native=True, spacing=10e-9)
+    result = actual.sample(dtype=np.int16)
+    cache_key, sample_plan = actual._sample_plan_cache
+    expected = actual._core.sample(
+        cache_key[0], cache_key[1], cache_key[2], cache_key[3],
+        cache_key[4], actual.offset, 16, 1.0,
+    )
+
+    assert np.array_equal(result, expected)
+    assert not sample_plan.non_overlapping
+    assert actual._core.prepare_sample(0, 64, 1200, 11, 0) is None
+
+
 def test_native_overlapping_stack_quantization_and_empty_stack():
     expected = _stack(50, spacing=10e-9)
     actual = _stack(50, native=True, spacing=10e-9)
@@ -185,3 +236,7 @@ def test_native_format_is_language_neutral_and_self_describing():
     assert "little-endian" in description
     assert "120 GHz" in description
     assert "ABI 1" in description
+    assert type(_pulse(native=True)._core).__module__ == "waveforms._waveform"
+    package_dir = Path(wf.__file__).resolve().parent
+    assert (package_dir / "_cwaveform.c").is_file()
+    assert (package_dir / "_cwaveform.h").is_file()

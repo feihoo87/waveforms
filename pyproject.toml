@@ -76,8 +76,10 @@ waveforms = [
     "WaveformParser.py",
     "WaveformListener.py",
     "*.pyi",
+    "_cwaveform.h",
+    "_cwaveform.c",
+    "_cwaveform.md",
 ]
-"waveforms.native" = ["*.h", "*.c", "*.md"]
 
 [tool.setuptools.dynamic]
 version = {attr = "waveforms.version.__version__"}
