@@ -48,6 +48,10 @@ jobs:
     - name: Test with pytest
       run: |
         coverage run --source=waveforms -m pytest --verbose tests/
+    - name: Benchmark SIMD hot paths
+      if: ${{ matrix.python-version == '3.12' }}
+      run: |
+        python benchmarks/benchmark_simd.py --count 1000000 --repeats 7
     - name: Coveralls
       if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
       continue-on-error: true

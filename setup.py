@@ -39,15 +39,19 @@ def get_extensions():
                 sources = [os.path.join(dirpath, filename)]
                 include_dirs = []
                 extra_link_args = []
+                libraries = []
                 if filename == '_waveform.pyx':
                     sources.append(os.path.join(
                         'waveforms', '_cwaveform.c'))
                     include_dirs.append('waveforms')
                     if sys.platform == 'darwin':
                         extra_link_args.extend(['-framework', 'Accelerate'])
+                    elif sys.platform.startswith('linux'):
+                        libraries.append('m')
                 extensions.append(
                     Extension(module_name(dirpath, filename), sources,
                               include_dirs=include_dirs,
+                              libraries=libraries,
                               extra_link_args=extra_link_args))
 
     return extensions

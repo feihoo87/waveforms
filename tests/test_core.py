@@ -80,6 +80,78 @@ def test_c_symbolic_frequency_filter():
     )
 
 
+def test_c_symbolic_filter_reduces_trigonometric_products_and_powers():
+    x = np.linspace(-1.0, 1.0, 4097)
+    envelope = wf.gaussian(2.0)
+    first_frequency = 9.0
+    second_frequency = 7.0
+    first_phase = 0.31
+    second_phase = -0.27
+    cutoff = 5.0
+
+    first_cos = wf.cos(first_frequency, first_phase)
+    first_sin = wf.sin(first_frequency, first_phase)
+    second_cos = wf.cos(second_frequency, second_phase)
+    second_sin = wf.sin(second_frequency, second_phase)
+    difference = first_frequency - second_frequency
+    phase_difference = first_phase - second_phase
+
+    assert np.allclose(
+        (2 * envelope * first_cos * second_cos).filter(high=cutoff)(x),
+        (envelope * wf.cos(difference, phase_difference))(x),
+        atol=2e-11,
+    )
+    assert np.allclose(
+        (2 * envelope * first_cos * second_sin).filter(high=cutoff)(x),
+        (-envelope * wf.sin(difference, phase_difference))(x),
+        atol=2e-11,
+    )
+    assert np.allclose(
+        (2 * envelope * first_sin * second_sin).filter(high=cutoff)(x),
+        (envelope * wf.cos(difference, phase_difference))(x),
+        atol=2e-11,
+    )
+
+    powered = wf.cos(first_frequency, first_phase) ** 2
+    assert np.allclose(powered.filter(high=cutoff)(x), 0.5, atol=2e-11)
+    assert np.allclose(
+        powered.filter(2 * first_frequency, np.inf)(x),
+        (0.5 * wf.cos(2 * first_frequency, 2 * first_phase))(x),
+        atol=2e-11,
+    )
+
+    retained = (1.5e-15 * first_cos).filter(eps=1e-15)
+    discarded = (0.5e-15 * first_cos).filter(eps=1e-15)
+    assert np.max(np.abs(retained(x))) > 1e-15
+    assert np.array_equal(discarded(x), np.zeros_like(x))
+
+
+def test_down_conversion_filter_matches_historic_symbolic_behavior():
+    x = np.linspace(-100.0, 100.0, 10001)
+    envelope = wf.gaussian(100.0)
+    radio_frequency = 92.0451
+    local_frequency = 92.0
+    phase = 0.32
+    rf, _ = wf.mixing(
+        envelope, freq=radio_frequency, phase=phase, DRAGScaling=0.0,
+    )
+
+    i = (2 * rf * wf.cos(-2 * np.pi * local_frequency)).filter(
+        high=2 * np.pi * local_frequency,
+    )
+    q = (2 * rf * wf.sin(-2 * np.pi * local_frequency)).filter(
+        high=2 * np.pi * local_frequency,
+    )
+    difference = 2 * np.pi * (radio_frequency - local_frequency)
+
+    assert np.allclose(
+        i(x), (envelope * wf.cos(difference, -phase))(x), atol=2e-9,
+    )
+    assert np.allclose(
+        q(x), (envelope * wf.sin(difference, -phase))(x), atol=2e-9,
+    )
+
+
 def test_wave_block_roundtrip_pickle_and_numerics():
     actual = _pulse()
     actual.start = -20e-9

@@ -134,26 +134,22 @@ def quantize_samples(values, bits, full_scale=1.0, out=None):
     """Saturating real-signal quantizer for signed 16- and 32-bit DAC data."""
     cdef object source
     cdef object target
-    cdef double[::1] source_view
-    cdef int16_t[::1] target16
-    cdef int32_t[::1] target32
-    cdef Py_ssize_t index, size
-    cdef double value, scaled
-    cdef double scale
-    cdef double maximum
-    cdef double minimum
+    cdef Py_ssize_t size
     cdef double full_scale_value
+    cdef const double *source_pointer
+    cdef void *target_pointer
+    cdef int status
+    cdef int bit_count
 
     full_scale_value = float(full_scale)
     if not np.isfinite(full_scale_value) or full_scale_value <= 0:
         raise ValueError("full_scale must be a finite positive number")
     if bits not in (16, 32):
         raise ValueError("bits must be 16 or 32")
+    bit_count = bits
     if np.iscomplexobj(values):
         raise TypeError("integer quantization requires a real signal")
     source = np.ascontiguousarray(values, dtype=np.float64)
-    if not np.all(np.isfinite(source)):
-        raise ValueError("cannot quantize non-finite samples")
     dtype = np.dtype(np.int16 if bits == 16 else np.int32)
     if out is None:
         target = np.empty(source.shape, dtype=dtype)
@@ -166,46 +162,21 @@ def quantize_samples(values, bits, full_scale=1.0, out=None):
         if not target.flags.c_contiguous or not target.flags.writeable:
             raise ValueError("out must be a writable C-contiguous array")
 
-    source_view = source.reshape(-1)
-    size = source_view.shape[0]
-    if bits == 16:
-        target16 = target.reshape(-1)
-        scale = 32768.0 / full_scale_value
-        minimum = -32768.0
-        maximum = 32767.0
-        with nogil:
-            for index in range(size):
-                value = source_view[index]
-                if value <= -full_scale_value:
-                    target16[index] = <int16_t>-32768
-                elif value >= full_scale_value:
-                    target16[index] = <int16_t>32767
-                else:
-                    scaled = c_round(value * scale)
-                    if scaled < minimum:
-                        scaled = minimum
-                    elif scaled > maximum:
-                        scaled = maximum
-                    target16[index] = <int16_t>scaled
-    else:
-        target32 = target.reshape(-1)
-        scale = 2147483648.0 / full_scale_value
-        minimum = -2147483648.0
-        maximum = 2147483647.0
-        with nogil:
-            for index in range(size):
-                value = source_view[index]
-                if value <= -full_scale_value:
-                    target32[index] = <int32_t>-2147483648
-                elif value >= full_scale_value:
-                    target32[index] = <int32_t>2147483647
-                else:
-                    scaled = c_round(value * scale)
-                    if scaled < minimum:
-                        scaled = minimum
-                    elif scaled > maximum:
-                        scaled = maximum
-                    target32[index] = <int32_t>scaled
+    size = source.size
+    if size == 0:
+        return target
+    source_pointer = <const double *><size_t>source.ctypes.data
+    target_pointer = <void *><size_t>target.ctypes.data
+    with nogil:
+        status = cwaveform_quantize(
+            source_pointer, size, bit_count, full_scale_value, target_pointer,
+        )
+    if status == -3:
+        raise ValueError("cannot quantize non-finite samples")
+    if status == -2:
+        raise MemoryError("C quantization allocation failed")
+    if status != 0:
+        raise RuntimeError(f"C quantization failed with status {status}")
     return target
 
 
@@ -525,6 +496,8 @@ cdef extern from "_cwaveform.h":
     int cwaveform_wave_sample(
         const cwaveform_wave *, int64_t, size_t, int64_t, int64_t, int64_t,
         double, double, double, int, double, void *) noexcept nogil
+    int cwaveform_quantize(
+        const double *, size_t, int, double, void *) noexcept nogil
 
     cwaveform_stack *cwaveform_stack_create(
         cwaveform_wave *const *, const uint32_t *, const int64_t *,

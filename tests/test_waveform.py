@@ -473,6 +473,15 @@ def test_fixed_width_quantization_supported_sampling_and_fallback():
          1073741824, 2147483647, 2147483647],
     )
 
+    # Exercise the fused SIMD path, including its historic half-away-from-zero
+    # rounding rule and multidimensional ``out`` handling.
+    half_steps = np.array([0.5, -0.5, 1.5, -1.5] * 8) / 32768.0
+    target = np.empty((8, 4), dtype=np.int16)
+    assert quantize_samples(half_steps.reshape(8, 4), 16, out=target) is target
+    assert np.array_equal(
+        target.reshape(-1), np.array([1, -1, 2, -2] * 8, dtype=np.int16)
+    )
+
     wav = 0.8 * wf.gaussian(20e-9)
     wav.start = -20e-9
     wav.stop = 20e-9
@@ -491,6 +500,21 @@ def test_fixed_width_quantization_supported_sampling_and_fallback():
     odd_rate = 7_000_000_000
     legacy_grid = np.arange(wav.start, wav.stop, 1 / odd_rate)
     assert np.array_equal(wav.sample(odd_rate), wav(legacy_grid))
+
+
+def test_simd_node_evaluation_matches_scalar_boundaries():
+    positions = np.linspace(-2.0, 2.0, 513)
+    waves = (
+        wf.t(),
+        wf.exp(0.2),
+        wf.sinc(1.3),
+        wf.cosh(0.3),
+        wf.sinh(0.3),
+        (wf.gaussian(4.0, 1.5) * wf.cos(2.2)) ** 2,
+    )
+    for wave in waves:
+        expected = np.array([wave(float(position)) for position in positions])
+        assert np.allclose(wave(positions), expected, rtol=1e-12, atol=1e-13)
 
 
 def test_integer_sampling_fast_paths_are_bit_exact_and_pickle_safe():
