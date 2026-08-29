@@ -7,6 +7,31 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(__aarch64__) && defined(__ARM_NEON)
+#include <arm_neon.h>
+#define WF_HAVE_ARM64_NEON 1
+#endif
+
+#if ((defined(__x86_64__) || defined(__i386__)) \
+        && (defined(__GNUC__) || defined(__clang__))) \
+        || (defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86)))
+#include <immintrin.h>
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+#define WF_HAVE_X86_SIMD 1
+#endif
+
+#if defined(WF_HAVE_X86_SIMD) \
+        && (defined(__GNUC__) || defined(__clang__))
+#define WF_TARGET_AVX2 __attribute__((target("avx2")))
+#define WF_TARGET_AVX512 \
+    __attribute__((target("avx512f,avx512dq,avx512bw,avx512vl")))
+#else
+#define WF_TARGET_AVX2
+#define WF_TARGET_AVX512
+#endif
+
 #if defined(__APPLE__)
 #include <Accelerate/Accelerate.h>
 #endif
@@ -122,6 +147,22 @@ struct cwaveform_sample_plan {
 
 static double wf_node_parameter(const cwaveform_wave *wave,
                                 const wf_node *node, size_t index);
+
+static double wf_hypot(double x, double y) {
+    double high = fabs(x);
+    double low = fabs(y);
+    double ratio;
+    if (isinf(high) || isinf(low)) return INFINITY;
+    if (isnan(high) || isnan(low)) return NAN;
+    if (low > high) {
+        double temporary = high;
+        high = low;
+        low = temporary;
+    }
+    if (high == 0.0) return 0.0;
+    ratio = low / high;
+    return high * sqrt(1.0 + ratio * ratio);
+}
 
 static void wf_put_u16(uint8_t *p, uint16_t value) {
     p[0] = (uint8_t)value;
@@ -1231,7 +1272,7 @@ static cwaveform_wave *wf_spectral_term_wave(const wf_spectral_term *term) {
     }
     /* Only the positive half of a real signal's conjugate spectrum is
      * reconstructed; double it here to recover the real carrier amplitude. */
-    amplitude = 2.0 * hypot(term->real, term->imag);
+    amplitude = 2.0 * wf_hypot(term->real, term->imag);
     if (amplitude == 0.0) return cwaveform_wave_constant(0.0);
     carrier = cwaveform_wave_cos(
         term->frequency, atan2(term->imag, term->real));
@@ -2285,7 +2326,7 @@ static double wf_drag_sin_value(const cwaveform_wave *wave,
             peak_components[0] += transform[index * 4 + 0] * values[index];
             peak_components[1] += transform[index * 4 + 2] * values[index];
         }
-        normalization = hypot(peak_components[0], peak_components[1]);
+        normalization = wf_hypot(peak_components[0], peak_components[1]);
         /* Restore the actual derivatives after the peak calculation. */
         {
             double midpoint = t0 + width / 2.0;
@@ -2509,6 +2550,8 @@ static double wf_evaluate_one(const cwaveform_wave *wave, double position,
     return values[wave->root];
 }
 
+#if (defined(__APPLE__) || defined(WF_HAVE_X86_SIMD) || defined(_WIN32)) \
+        && !defined(WF_DISABLE_BATCH_EVALUATOR)
 #if defined(__APPLE__)
 static void wf_vector_exp(double *output, const double *input, size_t count) {
     while (count != 0) {
@@ -2530,9 +2573,156 @@ static void wf_vector_cos(double *output, const double *input, size_t count) {
     }
 }
 
-/* Evaluate one node at a time so vForce can process transcendental functions
- * in wide batches.  The portable path below deliberately stays scalar. */
-static int wf_evaluate_many_apple(
+static void wf_vector_sin(double *output, const double *input, size_t count) {
+    while (count != 0) {
+        int batch = count > (size_t)INT_MAX ? INT_MAX : (int)count;
+        vvsin(output, input, &batch);
+        output += batch;
+        input += batch;
+        count -= (size_t)batch;
+    }
+}
+
+static void wf_vector_cosh(double *output, const double *input, size_t count) {
+    while (count != 0) {
+        int batch = count > (size_t)INT_MAX ? INT_MAX : (int)count;
+        vvcosh(output, input, &batch);
+        output += batch;
+        input += batch;
+        count -= (size_t)batch;
+    }
+}
+
+static void wf_vector_sinh(double *output, const double *input, size_t count) {
+    while (count != 0) {
+        int batch = count > (size_t)INT_MAX ? INT_MAX : (int)count;
+        vvsinh(output, input, &batch);
+        output += batch;
+        input += batch;
+        count -= (size_t)batch;
+    }
+}
+
+static void wf_vector_power_scalar(double *output, const double *input,
+                                   double exponent, size_t count) {
+    if (exponent == 2.0) {
+        vDSP_vsqD(input, 1, output, 1, (vDSP_Length)count);
+        return;
+    }
+    while (count != 0) {
+        int batch = count > (size_t)INT_MAX ? INT_MAX : (int)count;
+        vvpows(output, &exponent, input, &batch);
+        output += batch;
+        input += batch;
+        count -= (size_t)batch;
+    }
+}
+#else
+#if defined(__GLIBC__) && defined(__x86_64__) \
+        && defined(WF_HAVE_X86_SIMD) \
+        && !defined(WF_DISABLE_X86_SIMD)
+typedef double wf_v4df __attribute__((vector_size(32)));
+typedef double wf_v8df __attribute__((vector_size(64)));
+#if defined(WF_DISABLE_AVX512)
+#define WF_AVX512_ENABLED 0
+#else
+#define WF_AVX512_ENABLED 1
+#endif
+
+#define WF_DEFINE_VECTOR_MATH(name) \
+    extern wf_v4df _ZGVdN4v_##name(wf_v4df); \
+    extern wf_v8df _ZGVeN8v_##name(wf_v8df); \
+    __attribute__((target("avx2"))) \
+    static void wf_vector_##name##_avx2( \
+            double *output, const double *input, size_t count) { \
+        size_t index = 0; \
+        for (; index + 4 <= count; index += 4) { \
+            wf_v4df value = (wf_v4df)_mm256_loadu_pd(input + index); \
+            _mm256_storeu_pd(output + index, \
+                (__m256d)_ZGVdN4v_##name(value)); \
+        } \
+        for (; index < count; ++index) output[index] = name(input[index]); \
+    } \
+    __attribute__((target("avx512f"))) \
+    static void wf_vector_##name##_avx512( \
+            double *output, const double *input, size_t count) { \
+        size_t index = 0; \
+        for (; index + 8 <= count; index += 8) { \
+            wf_v8df value = (wf_v8df)_mm512_loadu_pd(input + index); \
+            _mm512_storeu_pd(output + index, \
+                (__m512d)_ZGVeN8v_##name(value)); \
+        } \
+        for (; index < count; ++index) output[index] = name(input[index]); \
+    } \
+    static void wf_vector_##name( \
+            double *output, const double *input, size_t count) { \
+        if (count >= 8) { \
+            if (WF_AVX512_ENABLED \
+                    && __builtin_cpu_supports("avx512f")) { \
+                wf_vector_##name##_avx512(output, input, count); \
+                return; \
+            } \
+            if (__builtin_cpu_supports("avx2")) { \
+                wf_vector_##name##_avx2(output, input, count); \
+                return; \
+            } \
+        } \
+        { \
+            size_t index; \
+            for (index = 0; index < count; ++index) \
+                output[index] = name(input[index]); \
+        } \
+    }
+
+WF_DEFINE_VECTOR_MATH(exp)
+WF_DEFINE_VECTOR_MATH(cos)
+WF_DEFINE_VECTOR_MATH(sin)
+#undef WF_DEFINE_VECTOR_MATH
+#undef WF_AVX512_ENABLED
+
+/* glibc only added vector cosh/sinh in 2.35, while Linux wheels target
+ * manylinux_2_34. Keep these uncommon nodes scalar to preserve that ABI. */
+static void wf_vector_cosh(double *output, const double *input, size_t count) {
+    size_t index;
+    for (index = 0; index < count; ++index) output[index] = cosh(input[index]);
+}
+
+static void wf_vector_sinh(double *output, const double *input, size_t count) {
+    size_t index;
+    for (index = 0; index < count; ++index) output[index] = sinh(input[index]);
+}
+#else
+#define WF_DEFINE_SCALAR_MATH(name) \
+    static void wf_vector_##name( \
+            double *output, const double *input, size_t count) { \
+        size_t index; \
+        for (index = 0; index < count; ++index) \
+            output[index] = name(input[index]); \
+    }
+WF_DEFINE_SCALAR_MATH(exp)
+WF_DEFINE_SCALAR_MATH(cos)
+WF_DEFINE_SCALAR_MATH(sin)
+WF_DEFINE_SCALAR_MATH(cosh)
+WF_DEFINE_SCALAR_MATH(sinh)
+#undef WF_DEFINE_SCALAR_MATH
+#endif
+
+static void wf_vector_power_scalar(double *output, const double *input,
+                                   double exponent, size_t count) {
+    size_t index;
+    if (exponent == 2.0) {
+        for (index = 0; index < count; ++index)
+            output[index] = input[index] * input[index];
+    } else {
+        for (index = 0; index < count; ++index)
+            output[index] = pow(input[index], exponent);
+    }
+}
+#endif
+
+/* Evaluate one node at a time so platform vector-math libraries can process
+ * transcendental functions in wide batches. */
+static int wf_evaluate_chunk_vector(
     const cwaveform_wave *wave, const double *positions, size_t count,
     double delay, double scale, double lower_clip, double upper_clip,
     double *output) {
@@ -2540,7 +2730,9 @@ static int wf_evaluate_many_apple(
     double *scratch;
     uint32_t node_index;
     size_t index;
-    if (count != 0 && (size_t)wave->node_count > SIZE_MAX / count) return -2;
+    if (count > SIZE_MAX / sizeof(double)
+            || (count != 0 && (size_t)wave->node_count
+                > (SIZE_MAX / sizeof(double)) / count)) return -2;
     matrix = (double *)malloc((size_t)wave->node_count * count * sizeof(double));
     scratch = (double *)malloc(count * sizeof(double));
     if (matrix == NULL || scratch == NULL) {
@@ -2558,16 +2750,22 @@ static int wf_evaluate_many_apple(
         double shift = (double)node->shift / (double)wf_ticks_per_second;
         switch (node->op) {
             case WF_OP_CONSTANT:
-                for (index = 0; index < count; ++index) {
-                    double position = positions[index] - delay;
-                    row[index] = position >= lower && position < upper
-                        ? node->p0 : 0.0;
+                if (lower == -DBL_MAX && upper == DBL_MAX) {
+                    for (index = 0; index < count; ++index)
+                        row[index] = node->p0;
+                } else {
+                    for (index = 0; index < count; ++index) {
+                        double position = positions[index] - delay;
+                        row[index] = position >= lower && position < upper
+                            ? node->p0 : 0.0;
+                    }
                 }
                 break;
             case WF_OP_GAUSSIAN:
                 for (index = 0; index < count; ++index) {
                     double position = positions[index] - delay;
-                    double local = (position - shift) / node->p1;
+                    double std = node->flags ? node->p0 : node->p1;
+                    double local = (position - shift) / std;
                     scratch[index] = position >= lower && position < upper
                         ? -(local * local) : -INFINITY;
                 }
@@ -2582,14 +2780,7 @@ static int wf_evaluate_many_apple(
                 if (node->op == WF_OP_COS) {
                     wf_vector_cos(row, scratch, count);
                 } else {
-                    int batch = count > (size_t)INT_MAX ? INT_MAX : (int)count;
-                    size_t cursor = 0;
-                    while (cursor < count) {
-                        batch = count - cursor > (size_t)INT_MAX
-                            ? INT_MAX : (int)(count - cursor);
-                        vvsin(row + cursor, scratch + cursor, &batch);
-                        cursor += (size_t)batch;
-                    }
+                    wf_vector_sin(row, scratch, count);
                 }
                 if (lower != -DBL_MAX || upper != DBL_MAX) {
                     for (index = 0; index < count; ++index) {
@@ -2597,6 +2788,44 @@ static int wf_evaluate_many_apple(
                         if (position < lower || position >= upper) row[index] = 0.0;
                     }
                 }
+                break;
+            case WF_OP_LINEAR:
+                for (index = 0; index < count; ++index) {
+                    double position = positions[index] - delay;
+                    row[index] = position >= lower && position < upper
+                        ? position - shift : 0.0;
+                }
+                break;
+            case WF_OP_ERF:
+                for (index = 0; index < count; ++index)
+                    scratch[index] = (positions[index] - delay - shift) / node->p0;
+                for (index = 0; index < count; ++index)
+                    row[index] = erf(scratch[index]);
+                break;
+            case WF_OP_SINC:
+                for (index = 0; index < count; ++index)
+                    scratch[index] = 3.14159265358979323846 * node->p0
+                        * (positions[index] - delay - shift);
+                wf_vector_sin(row, scratch, count);
+                for (index = 0; index < count; ++index)
+                    row[index] = scratch[index] == 0.0
+                        ? 1.0 : row[index] / scratch[index];
+                break;
+            case WF_OP_EXP:
+                for (index = 0; index < count; ++index)
+                    scratch[index] = node->p0
+                        * (positions[index] - delay - shift);
+                wf_vector_exp(row, scratch, count);
+                break;
+            case WF_OP_COSH:
+            case WF_OP_SINH:
+                for (index = 0; index < count; ++index)
+                    scratch[index] = node->p0
+                        * (positions[index] - delay - shift);
+                if (node->op == WF_OP_COSH)
+                    wf_vector_cosh(row, scratch, count);
+                else
+                    wf_vector_sinh(row, scratch, count);
                 break;
             case WF_OP_SQUARE:
                 for (index = 0; index < count; ++index) {
@@ -2625,6 +2854,26 @@ static int wf_evaluate_many_apple(
                     row[index] = node->p0 * source[index];
                 break;
             }
+            case WF_OP_POWER: {
+                const double *source = matrix + (size_t)node->left * count;
+                wf_vector_power_scalar(row, source, node->p0, count);
+                if (lower != -DBL_MAX || upper != DBL_MAX) {
+                    for (index = 0; index < count; ++index) {
+                        double position = positions[index] - delay;
+                        if (position < lower || position >= upper) row[index] = 0.0;
+                    }
+                }
+                break;
+            }
+            case WF_OP_WINDOW: {
+                const double *source = matrix + (size_t)node->left * count;
+                for (index = 0; index < count; ++index) {
+                    double position = positions[index] - delay;
+                    row[index] = position >= lower && position < upper
+                        ? source[index] : 0.0;
+                }
+                break;
+            }
             default:
                 free(matrix);
                 free(scratch);
@@ -2633,6 +2882,8 @@ static int wf_evaluate_many_apple(
     }
     {
         const double *root = matrix + (size_t)wave->root * count;
+        /* Keep scaling and clipping fused in one compiler-vectorized pass.
+         * Two separate vDSP calls cost an extra full memory traversal. */
         for (index = 0; index < count; ++index) {
             double value = scale * root[index];
             if (value < lower_clip) value = lower_clip;
@@ -2642,6 +2893,36 @@ static int wf_evaluate_many_apple(
     }
     free(matrix);
     free(scratch);
+    return 0;
+}
+
+static size_t wf_vector_chunk_count(const cwaveform_wave *wave, size_t count) {
+#if defined(__APPLE__)
+    (void)wave;
+    return count;
+#else
+    size_t chunk = (64u * 1024u)
+        / ((size_t)wave->node_count * sizeof(double));
+    if (chunk < 256) chunk = 256;
+    if (chunk > 8192) chunk = 8192;
+    return chunk < count ? chunk : count;
+#endif
+}
+
+static int wf_evaluate_many_vector(
+    const cwaveform_wave *wave, const double *positions, size_t count,
+    double delay, double scale, double lower_clip, double upper_clip,
+    double *output) {
+    size_t cursor = 0;
+    size_t chunk = wf_vector_chunk_count(wave, count);
+    while (cursor < count) {
+        size_t batch = count - cursor < chunk ? count - cursor : chunk;
+        int status = wf_evaluate_chunk_vector(
+            wave, positions + cursor, batch, delay, scale,
+            lower_clip, upper_clip, output + cursor);
+        if (status != 0) return status;
+        cursor += batch;
+    }
     return 0;
 }
 #endif
@@ -2656,9 +2937,10 @@ int cwaveform_wave_evaluate(
     if (wave == NULL || positions == NULL || output == NULL || !isfinite(scale)) {
         return -1;
     }
-#if defined(__APPLE__)
+#if (defined(__APPLE__) || defined(WF_HAVE_X86_SIMD) || defined(_WIN32)) \
+        && !defined(WF_DISABLE_BATCH_EVALUATOR)
     if (count >= 256) {
-        int status = wf_evaluate_many_apple(
+        int status = wf_evaluate_many_vector(
             wave, positions, count,
             (double)delay_tick / (double)wf_ticks_per_second,
             scale, lower_clip, upper_clip, output);
@@ -2685,7 +2967,7 @@ static int16_t wf_quantize16(double value, double full_scale) {
     double scaled;
     if (value <= -full_scale) return INT16_MIN;
     if (value >= full_scale) return INT16_MAX;
-    scaled = nearbyint(value * (32768.0 / full_scale));
+    scaled = round(value * (32768.0 / full_scale));
     if (scaled <= -32768.0) return INT16_MIN;
     if (scaled >= 32767.0) return INT16_MAX;
     return (int16_t)scaled;
@@ -2695,10 +2977,262 @@ static int32_t wf_quantize32(double value, double full_scale) {
     double scaled;
     if (value <= -full_scale) return INT32_MIN;
     if (value >= full_scale) return INT32_MAX;
-    scaled = nearbyint(value * (2147483648.0 / full_scale));
+    scaled = round(value * (2147483648.0 / full_scale));
     if (scaled <= -2147483648.0) return INT32_MIN;
     if (scaled >= 2147483647.0) return INT32_MAX;
     return (int32_t)scaled;
+}
+
+static int wf_values_are_finite(const double *values, size_t count) {
+    size_t index;
+    for (index = 0; index < count; ++index)
+        if (!isfinite(values[index])) return 0;
+    return 1;
+}
+
+#if defined(WF_HAVE_ARM64_NEON)
+static int wf_quantize_array_neon(const double *values, size_t count, int dtype,
+                                  double full_scale, void *output) {
+    const float64x2_t finite_limit = vdupq_n_f64(DBL_MAX);
+    const float64x2_t multiplier = vdupq_n_f64(
+        dtype == CWAVEFORM_INT16
+            ? 32768.0 / full_scale : 2147483648.0 / full_scale);
+    const float64x2_t minimum = vdupq_n_f64(
+        dtype == CWAVEFORM_INT16 ? -32768.0 : -2147483648.0);
+    const float64x2_t maximum = vdupq_n_f64(
+        dtype == CWAVEFORM_INT16 ? 32767.0 : 2147483647.0);
+    uint64x2_t finite = vdupq_n_u64(UINT64_MAX);
+    size_t index = 0;
+    for (; index + 4 <= count; index += 4) {
+        float64x2_t first = vld1q_f64(values + index);
+        float64x2_t second = vld1q_f64(values + index + 2);
+        int64x2_t first_integer;
+        int64x2_t second_integer;
+        finite = vandq_u64(finite,
+            vcleq_f64(vabsq_f64(first), finite_limit));
+        finite = vandq_u64(finite,
+            vcleq_f64(vabsq_f64(second), finite_limit));
+        first = vmulq_f64(first, multiplier);
+        second = vmulq_f64(second, multiplier);
+        first = vminq_f64(vmaxq_f64(first, minimum), maximum);
+        second = vminq_f64(vmaxq_f64(second, minimum), maximum);
+        first_integer = vcvtaq_s64_f64(first);
+        second_integer = vcvtaq_s64_f64(second);
+        if (dtype == CWAVEFORM_INT16) {
+            int32x4_t packed32 = vcombine_s32(
+                vmovn_s64(first_integer), vmovn_s64(second_integer));
+            vst1_s16((int16_t *)output + index, vmovn_s32(packed32));
+        } else {
+            vst1q_s32((int32_t *)output + index, vcombine_s32(
+                vmovn_s64(first_integer), vmovn_s64(second_integer)));
+        }
+    }
+    for (; index < count; ++index) {
+        if (!isfinite(values[index])) return -3;
+        if (dtype == CWAVEFORM_INT16)
+            ((int16_t *)output)[index] = wf_quantize16(values[index], full_scale);
+        else
+            ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
+    }
+    return (vgetq_lane_u64(finite, 0) == UINT64_MAX
+            && vgetq_lane_u64(finite, 1) == UINT64_MAX) ? 0 : -3;
+}
+#endif
+
+#if defined(WF_HAVE_X86_SIMD) && !defined(WF_DISABLE_X86_SIMD)
+static int wf_cpu_supports_avx2(void) {
+#if defined(_MSC_VER)
+    int registers[4];
+    unsigned __int64 xcr0;
+    __cpuid(registers, 0);
+    if (registers[0] < 7) return 0;
+    __cpuidex(registers, 1, 0);
+    if ((registers[2] & ((1 << 27) | (1 << 28)))
+            != ((1 << 27) | (1 << 28))) return 0;
+    xcr0 = _xgetbv(0);
+    if ((xcr0 & 0x6) != 0x6) return 0;
+    __cpuidex(registers, 7, 0);
+    return (registers[1] & (1 << 5)) != 0;
+#else
+    return __builtin_cpu_supports("avx2");
+#endif
+}
+
+#if !defined(WF_DISABLE_AVX512) && !defined(_MSC_VER)
+static int wf_cpu_supports_avx512(void) {
+    return __builtin_cpu_supports("avx512f")
+        && __builtin_cpu_supports("avx512dq")
+        && __builtin_cpu_supports("avx512bw")
+        && __builtin_cpu_supports("avx512vl");
+}
+#endif
+
+WF_TARGET_AVX2
+static int wf_quantize_array_avx2(const double *values, size_t count, int dtype,
+                                  double full_scale, void *output) {
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+    const __m256d half = _mm256_set1_pd(0.5);
+    const __m256d finite_limit = _mm256_set1_pd(DBL_MAX);
+    const __m256d multiplier = _mm256_set1_pd(
+        dtype == CWAVEFORM_INT16
+            ? 32768.0 / full_scale : 2147483648.0 / full_scale);
+    const __m256d minimum = _mm256_set1_pd(
+        dtype == CWAVEFORM_INT16 ? -32768.0 : -2147483648.0);
+    const __m256d maximum = _mm256_set1_pd(
+        dtype == CWAVEFORM_INT16 ? 32767.0 : 2147483647.0);
+    int finite = 1;
+    size_t index = 0;
+    for (; index + 4 <= count; index += 4) {
+        __m256d value = _mm256_loadu_pd(values + index);
+        __m256d absolute = _mm256_andnot_pd(sign_mask, value);
+        __m256d adjustment = _mm256_or_pd(
+            half, _mm256_and_pd(sign_mask, value));
+        __m128i integer;
+        finite &= _mm256_movemask_pd(_mm256_cmp_pd(
+            absolute, finite_limit, _CMP_LE_OQ)) == 0xf;
+        value = _mm256_mul_pd(value, multiplier);
+        value = _mm256_min_pd(_mm256_max_pd(value, minimum), maximum);
+        integer = _mm256_cvttpd_epi32(_mm256_add_pd(value, adjustment));
+        if (dtype == CWAVEFORM_INT16) {
+            __m128i packed = _mm_packs_epi32(integer, _mm_setzero_si128());
+            _mm_storel_epi64((__m128i *)((int16_t *)output + index), packed);
+        } else {
+            _mm_storeu_si128((__m128i *)((int32_t *)output + index), integer);
+        }
+    }
+    for (; index < count; ++index) {
+        if (!isfinite(values[index])) return -3;
+        if (dtype == CWAVEFORM_INT16)
+            ((int16_t *)output)[index] = wf_quantize16(values[index], full_scale);
+        else
+            ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
+    }
+    _mm256_zeroupper();
+    return finite ? 0 : -3;
+}
+
+#if !defined(WF_DISABLE_AVX512) && !defined(_MSC_VER)
+WF_TARGET_AVX512
+static int wf_quantize_array_avx512(
+    const double *values, size_t count, int dtype,
+    double full_scale, void *output) {
+    const __m512d sign_mask = _mm512_set1_pd(-0.0);
+    const __m512d half = _mm512_set1_pd(0.5);
+    const __m512d finite_limit = _mm512_set1_pd(DBL_MAX);
+    const __m512d multiplier = _mm512_set1_pd(
+        dtype == CWAVEFORM_INT16
+            ? 32768.0 / full_scale : 2147483648.0 / full_scale);
+    const __m512d minimum = _mm512_set1_pd(
+        dtype == CWAVEFORM_INT16 ? -32768.0 : -2147483648.0);
+    const __m512d maximum = _mm512_set1_pd(
+        dtype == CWAVEFORM_INT16 ? 32767.0 : 2147483647.0);
+    __mmask8 finite = (__mmask8)0xff;
+    size_t index = 0;
+    for (; index + 8 <= count; index += 8) {
+        __m512d value = _mm512_loadu_pd(values + index);
+        __m512d absolute = _mm512_andnot_pd(sign_mask, value);
+        __m512d adjustment = _mm512_or_pd(
+            half, _mm512_and_pd(sign_mask, value));
+        __m512i integer;
+        __m256i packed32;
+        finite &= _mm512_cmp_pd_mask(absolute, finite_limit, _CMP_LE_OQ);
+        value = _mm512_mul_pd(value, multiplier);
+        value = _mm512_min_pd(_mm512_max_pd(value, minimum), maximum);
+        integer = _mm512_cvttpd_epi64(_mm512_add_pd(value, adjustment));
+        packed32 = _mm512_cvtepi64_epi32(integer);
+        if (dtype == CWAVEFORM_INT16) {
+            __m128i packed16 = _mm256_cvtepi32_epi16(packed32);
+            _mm_storeu_si128(
+                (__m128i *)((int16_t *)output + index), packed16);
+        } else {
+            _mm256_storeu_si256(
+                (__m256i *)((int32_t *)output + index), packed32);
+        }
+    }
+    for (; index < count; ++index) {
+        if (!isfinite(values[index])) return -3;
+        if (dtype == CWAVEFORM_INT16)
+            ((int16_t *)output)[index] = wf_quantize16(values[index], full_scale);
+        else
+            ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
+    }
+    return finite == (__mmask8)0xff ? 0 : -3;
+}
+#endif
+#endif
+
+static int wf_quantize_array(const double *values, size_t count, int dtype,
+                             double full_scale, void *output) {
+    size_t index;
+#if defined(WF_HAVE_ARM64_NEON)
+    if (count >= 16)
+        return wf_quantize_array_neon(
+            values, count, dtype, full_scale, output);
+#endif
+#if defined(WF_HAVE_X86_SIMD) && !defined(WF_DISABLE_X86_SIMD)
+    if (count >= 16) {
+#if !defined(WF_DISABLE_AVX512) && !defined(_MSC_VER)
+        if (wf_cpu_supports_avx512())
+            return wf_quantize_array_avx512(
+                values, count, dtype, full_scale, output);
+#endif
+        if (wf_cpu_supports_avx2())
+            return wf_quantize_array_avx2(
+                values, count, dtype, full_scale, output);
+    }
+#endif
+    if (!wf_values_are_finite(values, count)) return -3;
+#if defined(__APPLE__)
+    if (count >= 256) {
+        double *scaled = (double *)malloc(count * sizeof(*scaled));
+        double scale;
+        double minimum;
+        double maximum;
+        if (scaled == NULL) return -2;
+        if (dtype == CWAVEFORM_INT16) {
+            scale = 32768.0 / full_scale;
+            minimum = -32768.0;
+            maximum = 32767.0;
+        } else if (dtype == CWAVEFORM_INT32) {
+            scale = 2147483648.0 / full_scale;
+            minimum = -2147483648.0;
+            maximum = 2147483647.0;
+        } else {
+            free(scaled);
+            return -1;
+        }
+        vDSP_vsmulD(values, 1, &scale, scaled, 1, (vDSP_Length)count);
+        vDSP_vclipD(scaled, 1, &minimum, &maximum, scaled, 1,
+                    (vDSP_Length)count);
+        if (dtype == CWAVEFORM_INT16)
+            vDSP_vfixr16D(scaled, 1, (int16_t *)output, 1,
+                          (vDSP_Length)count);
+        else
+            vDSP_vfixr32D(scaled, 1, (int32_t *)output, 1,
+                          (vDSP_Length)count);
+        free(scaled);
+        return 0;
+    }
+#endif
+    if (dtype == CWAVEFORM_INT16) {
+        for (index = 0; index < count; ++index)
+            ((int16_t *)output)[index] = wf_quantize16(values[index], full_scale);
+    } else if (dtype == CWAVEFORM_INT32) {
+        for (index = 0; index < count; ++index)
+            ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
+    } else {
+        return -1;
+    }
+    return 0;
+}
+
+int cwaveform_quantize(const double *values, size_t count, int dtype,
+                       double full_scale, void *output) {
+    if ((count != 0 && (values == NULL || output == NULL))
+            || (dtype != CWAVEFORM_INT16 && dtype != CWAVEFORM_INT32)
+            || !isfinite(full_scale) || full_scale <= 0.0) return -1;
+    if (count == 0) return 0;
+    return wf_quantize_array(values, count, dtype, full_scale, output);
 }
 
 /* Form the local coordinate before converting to binary64.  Subtracting two
@@ -2729,6 +3263,53 @@ int cwaveform_wave_sample(
             || !isfinite(full_scale) || full_scale <= 0.0) {
         return -1;
     }
+    if (dtype != CWAVEFORM_FLOAT64 && dtype != CWAVEFORM_INT16
+            && dtype != CWAVEFORM_INT32) return -1;
+#if (defined(__APPLE__) || defined(WF_HAVE_X86_SIMD) || defined(_WIN32)) \
+        && !defined(WF_DISABLE_BATCH_EVALUATOR)
+    if (count >= 256) {
+        size_t cursor = 0;
+        size_t capacity = wf_vector_chunk_count(wave, count);
+        size_t item_size = dtype == CWAVEFORM_INT16
+            ? sizeof(int16_t) : dtype == CWAVEFORM_INT32
+                ? sizeof(int32_t) : sizeof(double);
+        double *positions = (double *)malloc(capacity * sizeof(*positions));
+        double *samples = dtype == CWAVEFORM_FLOAT64
+            ? NULL : (double *)malloc(capacity * sizeof(*samples));
+        if (positions != NULL
+                && (dtype == CWAVEFORM_FLOAT64 || samples != NULL)) {
+            int status = 0;
+            while (cursor < count) {
+                size_t batch = count - cursor < capacity
+                    ? count - cursor : capacity;
+                double *chunk_samples = dtype == CWAVEFORM_FLOAT64
+                    ? (double *)output + cursor : samples;
+                for (index = 0; index < batch; ++index)
+                    positions[index] = wf_local_grid_position(
+                        start_tick, cursor + index,
+                        step_numerator, step_denominator, delay_tick);
+                status = wf_evaluate_many_vector(
+                    wave, positions, batch, 0.0, scale,
+                    lower_clip, upper_clip, chunk_samples);
+                if (status != 0) break;
+                if (dtype == CWAVEFORM_FLOAT64)
+                    status = wf_values_are_finite(chunk_samples, batch)
+                        ? 0 : -3;
+                else
+                    status = wf_quantize_array(
+                        chunk_samples, batch, dtype, full_scale,
+                        (uint8_t *)output + cursor * item_size);
+                if (status != 0) break;
+                cursor += batch;
+            }
+            free(positions);
+            free(samples);
+            return status;
+        }
+        free(positions);
+        free(samples);
+    }
+#endif
     values = (double *)malloc((size_t)wave->node_count * sizeof(*values));
     if (values == NULL) return -2;
     for (index = 0; index < count; ++index) {
@@ -2747,9 +3328,6 @@ int cwaveform_wave_sample(
             ((int16_t *)output)[index] = wf_quantize16(value, full_scale);
         } else if (dtype == CWAVEFORM_INT32) {
             ((int32_t *)output)[index] = wf_quantize32(value, full_scale);
-        } else {
-            free(values);
-            return -1;
         }
     }
     free(values);
@@ -3723,16 +4301,13 @@ int cwaveform_sample_plan_sample(
     if (!plan->non_overlapping) {
         double *values = plan->count == 0 ? NULL
             : (double *)malloc(plan->count * sizeof(double));
+        int status;
         if (plan->count != 0 && values == NULL) return -2;
         wf_plan_sample_float(plan, offset, values);
-        for (index = 0; index < plan->count; ++index) {
-            if (dtype == CWAVEFORM_INT16)
-                ((int16_t *)output)[index] = wf_quantize16(values[index], full_scale);
-            else
-                ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
-        }
+        status = wf_quantize_array(
+            values, plan->count, dtype, full_scale, output);
         free(values);
-        return 0;
+        return status;
     }
     if (dtype == CWAVEFORM_INT16) {
         int16_t base = wf_quantize16(offset, full_scale);
@@ -3833,12 +4408,14 @@ int cwaveform_stack_sample(
                     * wf_evaluate_one(wave, position, values);
             }
         }
-        if (dtype == CWAVEFORM_INT16) {
-            for (index = 0; index < count; ++index)
-                ((int16_t *)output)[index] = wf_quantize16(float_output[index], full_scale);
-        } else if (dtype == CWAVEFORM_INT32) {
-            for (index = 0; index < count; ++index)
-                ((int32_t *)output)[index] = wf_quantize32(float_output[index], full_scale);
+        if (dtype == CWAVEFORM_INT16 || dtype == CWAVEFORM_INT32) {
+            int status = wf_quantize_array(
+                float_output, count, dtype, full_scale, output);
+            if (status != 0) {
+                free(float_output);
+                free(values);
+                return status;
+            }
         } else if (dtype != CWAVEFORM_FLOAT64) {
             if (float_output != output) free(float_output);
             free(values);

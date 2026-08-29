@@ -118,6 +118,9 @@ CWAVEFORM_API int cwaveform_wave_sample(
     int64_t step_numerator, int64_t step_denominator, int64_t delay_tick,
     double scale, double lower_clip, double upper_clip, int dtype,
     double full_scale, void *output);
+CWAVEFORM_API int cwaveform_quantize(
+    const double *values, size_t count, int dtype,
+    double full_scale, void *output);
 
 CWAVEFORM_API cwaveform_stack *cwaveform_stack_create(
     cwaveform_wave *const *templates, const uint32_t *template_ids,
