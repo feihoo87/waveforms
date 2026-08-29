@@ -1,0 +1,325 @@
+diff --git a/pyproject.toml b/pyproject.toml
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -37,7 +37,7 @@ dependencies = [
+     "qlisp>=1.2.3",
+     "qlispreg>=0.0.1",
+     "scipy>=1.0.0",
+-    "waveforms>=1.8.9",
++    "waveforms>=3.4.0",
+ ]
+ dynamic = ["version"]
+
+diff --git a/qlispc/base.py b/qlispc/base.py
+--- a/qlispc/base.py
++++ b/qlispc/base.py
+@@ -8,6 +8,6 @@ from typing import Any, NamedTuple, Optional, Sequence, Union
+
+ import numpy as np
+-from waveforms.waveform import Waveform
++from waveforms import Waveform, WaveVStack, tick_to_time
+
+
+ class Signal(Flag):
+@@ -42,6 +42,80 @@ class QLispError(SyntaxError):
+     pass
+
+
++@dataclass(frozen=True, slots=True)
++class WaveformEvent:
++    """One compiler event referencing an immutable waveform template."""
++
++    template: Waveform
++    delay_tick: int = 0
++    scale: float = 1.0
++
++    def materialize(self):
++        return self.scale * self.template >> tick_to_time(self.delay_tick)
++
++
++class WaveformEventList:
++    """Channel-local event stream with a columnar native-stack finalizer."""
++
++    __slots__ = ('_items', )
++
++    def __init__(self):
++        self._items = []
++
++    def append(self, item):
++        if not isinstance(item, (Waveform, WaveformEvent)):
++            raise TypeError('expected Waveform or WaveformEvent')
++        self._items.append(item)
++
++    def __len__(self):
++        return len(self._items)
++
++    def __iter__(self):
++        return iter(self._items)
++
++    @staticmethod
++    def _build_events(events):
++        templates = []
++        template_map = {}
++        template_ids = []
++        delay_ticks = []
++        scales = []
++        for event in events:
++            if event.scale == 0 or event.template.is_zero():
++                continue
++            key = event.template.to_bytes()
++            template_id = template_map.get(key)
++            if template_id is None:
++                template_id = len(templates)
++                template_map[key] = template_id
++                templates.append(event.template)
++            template_ids.append(template_id)
++            delay_ticks.append(event.delay_tick)
++            scales.append(event.scale)
++        return WaveVStack.from_events(
++            templates, template_ids, delay_ticks, scales)
++
++    def build(self):
++        # Preserve accumulation order when optimized events and general
++        # waveform expressions appear on the same physical channel.
++        result = WaveVStack()
++        cursor = 0
++        while cursor < len(self._items):
++            event_batch = isinstance(self._items[cursor], WaveformEvent)
++            stop = cursor + 1
++            while (stop < len(self._items)
++                   and isinstance(self._items[stop], WaveformEvent)
++                   == event_batch):
++                stop += 1
++            batch = self._items[cursor:stop]
++            if event_batch:
++                result += self._build_events(batch)
++            else:
++                result += WaveVStack(batch)
++            cursor = stop
++        return result
++
++
+ class Capture(NamedTuple):
+     qubit: str
+     cbit: tuple[str, int]
+@@ -174,6 +248,6 @@ class Context():
+                float] = field(default_factory=lambda: defaultdict(lambda: 0))
+     addressTable: dict = field(default_factory=dict)
+-    waveforms: dict[str, list[Waveform]] = field(
+-        default_factory=lambda: defaultdict(list))
++    waveforms: dict[str, WaveformEventList] = field(
++        default_factory=lambda: defaultdict(WaveformEventList))
+     measures: dict[str, dict[int, Capture]] = field(
+         default_factory=lambda: defaultdict(dict))
+diff --git a/qlispc/vm.pyx b/qlispc/vm.pyx
+--- a/qlispc/vm.pyx
++++ b/qlispc/vm.pyx
+@@ -1,7 +1,8 @@
+ from numpy import pi
+-from waveforms.waveform import Waveform, cos, sin, step, zero
++from waveforms import Waveform, cos, quantize_time, sin, step
+
+-from .base import AWGChannel, Capture, Context, MultAWGChannel, QLispError
++from .base import (AWGChannel, Capture, Context, MultAWGChannel, QLispError,
++                   WaveformEvent)
+
+
+ def _set_bias(ctx: Context, channel: tuple, bias: float | tuple):
+@@ -26,14 +27,12 @@ def _add_bias(ctx: Context, channel: tuple, bias: float | tuple):
+
+
+ def _set_time(ctx: Context, target: str, time: float):
+-    from waveforms.waveform import NDIGITS
+-    ctx.time[target] = round(time, NDIGITS)
++    ctx.time[target] = quantize_time(time)
+
+
+ def _add_time(ctx: Context, target: str, time: float):
+-    from waveforms.waveform import NDIGITS
+-    ctx.time[target] = round(ctx.time[target] + time, NDIGITS)
++    ctx.time[target] = quantize_time(ctx.time[target] + time)
+
+
+ def _set_phase(ctx: Context, target: str, phase: float):
+     ctx.phases_ext[target][1] = phase + ctx.phases_ext[target][0]
+@@ -50,7 +49,11 @@ def _add_phase_ext(ctx: Context, target: str, level: int, phase: float):
+
+
+-def _play(ctx: Context, channel: tuple, wav: Waveform):
+-    if wav is zero():
++def _play(ctx: Context, channel: tuple,
++          wav: Waveform | WaveformEvent):
++    if isinstance(wav, WaveformEvent):
++        if wav.scale == 0 or wav.template.is_zero():
++            return
++    elif wav.is_zero():
+         return
+     name, *qubits = channel
+     ch = ctx.get_awg_channel(name, qubits)
+@@ -62,5 +65,7 @@ def _play(ctx: Context, channel: tuple, wav: Waveform):
+
+
+ def _mult_channel_play(ctx: Context, wav, ch: MultAWGChannel):
++    if isinstance(wav, WaveformEvent):
++        wav = wav.materialize()
+     lofreq = ch.lo_freq
+     if ch.I is not None:
+diff --git a/qlispc/assembly.pyx b/qlispc/assembly.pyx
+--- a/qlispc/assembly.pyx
++++ b/qlispc/assembly.pyx
+@@ -103,6 +103,6 @@ def assembly_align_left(qlisp, ctx: Context, lib: Library):
+
+     ctx.end = max(ctx.time.values())
+
+-    waveforms = {ch: WaveVStack(waves) for ch, waves in ctx.waveforms.items()}
++    waveforms = {ch: events.build() for ch, events in ctx.waveforms.items()}
+
+     measures = {}
+diff --git a/qlispc/libs/gates.py b/qlispc/libs/gates.py
+--- a/qlispc/libs/gates.py
++++ b/qlispc/libs/gates.py
+@@ -1,7 +1,8 @@
+ import numpy as np
+ from numpy import mod, pi, sign, sum
+ from qlispc import Capture, Library, add_VZ_rule
+-from qlispc.base import Context
+-from waveforms.waveform import (cos, coshPulse, cosPulse, gaussian,
+-                                general_cosine, mixing, pi, sin, square, zero)
++from qlispc.base import Context, WaveformEvent
++from waveforms import (cos, coshPulse, cosPulse, gaussian, general_cosine,
++                       mixing, pi, quantize_time, sin, square, time_to_tick,
++                       zero)
+ from waveforms.waveform_parser import wave_eval
+@@ -63,22 +64,25 @@ def DRAG(t,
+
+     from waveforms import drag, drag_sin, drag_sinx
+
++    start = quantize_time(t - width / 2 - plateau / 2)
++    event_phase = phase - 2 * pi * (0 if freq is None else freq) * start
+     if shape in ['hanning', 'cosPulse', 'CosPulse']:
+-        return amp * drag(freq, width, plateau, delta, block_freq, phase,
+-                          t - width / 2 - plateau / 2)
++        template = drag(freq, width, plateau, delta, block_freq,
++                        event_phase, 0)
++        return WaveformEvent(template, time_to_tick(start), amp)
+     elif shape in ['drag_sin', 'dragSin', 'dragsin', 'DRAGSin']:
+-        # print('\n', amp, freq, width, plateau, delta, block_freq, phase,
+-        #                       t - width / 2 - plateau / 2 )
+-        return amp * drag_sin(freq, width, plateau, delta, block_freq, phase,
+-                              t - width / 2 - plateau / 2)
++        template = drag_sin(freq, width, plateau, delta, block_freq,
++                            event_phase, 0)
++        return WaveformEvent(template, time_to_tick(start), amp)
+     elif shape in ['drag_sinx', 'dragSinX', 'dragsinx', 'DRAGSinX']:
+-        return amp * drag_sinx(freq,
+-                               width,
+-                               plateau,
+-                               delta,
+-                               block_freq,
+-                               phase,
+-                               t - width / 2 - plateau / 2,
+-                               tab=tab)
++        template = drag_sinx(freq,
++                             width,
++                             plateau,
++                             delta,
++                             block_freq,
++                             event_phase,
++                             0,
++                             tab=tab)
++        return WaveformEvent(template, time_to_tick(start), amp)
+     elif shape in ['cos_sq']:
+         pulse = ((1 + cos(2 * pi / width)) / 2)**2
+@@ -521,11 +535,14 @@ def CZ(ctx: Context, qubits):
+         sign = ctx.scopes[0].setdefault(('CZ_sign', target), 1)
+         if amp != 0 and duration > 0:
+-            pulse = sign * amp * coshPulse(width, plateau=plateau,
+-                                           eps=eps) >> (width + plateau) / 2
++            template = coshPulse(width, plateau=plateau, eps=eps)
++            center = quantize_time(
++                t + buffer / 2 + (width + plateau) / 2)
++            yield ('!play', WaveformEvent(
++                template, time_to_tick(center), sign * amp)), target
+             if netzero:
+-                pulse += -sign * amp * coshPulse(
+-                    width, plateau=plateau,
+-                    eps=eps) >> (width + plateau) * 3 / 2
+-            yield ('!play', pulse >> t + buffer / 2), target
++                center = quantize_time(
++                    t + buffer / 2 + (width + plateau) * 3 / 2)
++                yield ('!play', WaveformEvent(
++                    template, time_to_tick(center), -sign * amp)), target
+         if flip:
+             ctx.scopes[0][('CZ_sign', target)] = -1 * sign
+@@ -550,11 +567,12 @@ def iSWAP2(ctx: Context, qubits):
+
+     t += before
+-    pulse = amp1 * (square(duration, edge=edge)) >> duration / 2
+-    yield ('!play', pulse >> t), ('flux', qubits[0])
+-    pulse = amp2 * (square(duration, edge=edge)) >> duration / 2
+-    yield ('!play', pulse >> t), ('flux', qubits[1])
+-
+-    pulse = ampc * (square(duration, edge=edge)) >> duration / 2
+-    yield ('!play', pulse >> t), ('flux', *qubits)
++    template = square(duration, edge=edge) >> duration / 2
++    delay_tick = time_to_tick(quantize_time(t))
++    for amp, target in ((amp1, ('flux', qubits[0])),
++                        (amp2, ('flux', qubits[1])),
++                        (ampc, ('flux', *qubits))):
++        if amp != 0:
++            yield ('!play', WaveformEvent(
++                template, delay_tick, amp)), target
+
+     for qubit in qubits:
+@@ -595,15 +612,14 @@ def iSWAP(ctx: Context, qubits):
+     phi1 = ctx.params.get('phi1', 0)
+     phi2 = ctx.params.get('phi2', 0)
+
+-    pulse = amp1 * coshPulse(width, plateau=plateau,
+-                             eps=eps) >> (width + plateau) / 2
+-    yield ('!play', pulse >> (t + before)), ('flux', qubits[0])
+-    pulse = amp2 * coshPulse(width, plateau=plateau,
+-                             eps=eps) >> (width + plateau) / 2
+-    yield ('!play', pulse >> (t + before)), ('flux', qubits[1])
+-
+-    pulse = ampc * coshPulse(width, plateau=plateau,
+-                             eps=eps) >> (width + plateau) / 2
+-    yield ('!play', pulse >> (t + before)), ('flux', *qubits)
++    template = coshPulse(width, plateau=plateau, eps=eps)
++    center = quantize_time(t + before + (width + plateau) / 2)
++    delay_tick = time_to_tick(center)
++    for amp, target in ((amp1, ('flux', qubits[0])),
++                        (amp2, ('flux', qubits[1])),
++                        (ampc, ('flux', *qubits))):
++        if amp != 0:
++            yield ('!play', WaveformEvent(
++                template, delay_tick, amp)), target
+
+     for qubit in qubits:
+diff --git a/qlispc/arch/QCL002/code.py b/qlispc/arch/QCL002/code.py
+--- a/qlispc/arch/QCL002/code.py
++++ b/qlispc/arch/QCL002/code.py
+@@ -106,19 +106,12 @@ def _getADInfo(measures: dict[int | str, Capture]) -> dict[str, ADTask]:
+
+
+ def _should_be_simplified(key: str, wav: Waveform | str) -> bool:
+-    if isinstance(wav, WaveVStack) and len(wav.wlist) < 50:
+-        return True
+-    return False
++    return isinstance(wav, WaveVStack) and len(wav) < 50
+
+
+ def _simplify(key: str, wav: Waveform | str) -> Waveform:
++    if isinstance(wav, str):
++        wav = wave_eval(wav)
+     if _should_be_simplified(key, wav):
+-        wav = wav.simplify()
+-    if isinstance(wav, WaveVStack):
+-        wav.wlist = [(tuple(np.round(bounds, 18)), seq)
+-                     for bounds, seq in wav.wlist]
+-    elif isinstance(wav, Waveform):
+-        wav.bounds = tuple(np.round(wav.bounds, 18))
+-    elif isinstance(wav, str):
+-        wav = wave_eval(wav)
++        return wav.simplify()
+     return wav

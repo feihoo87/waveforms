@@ -39,18 +39,6 @@ _ONE_EXPR = ((((), ()),), (1.0,))
 _COMPLEX_WAVE_MAGIC = b"CWF1"
 _COMPLEX_STACK_MAGIC = b"CWS1"
 _COMPLEX_HEADER = struct.Struct("<4sII")
-_SUPPORTED_SAMPLE_RATES = frozenset({
-    500_000_000,
-    1_000_000_000,
-    1_200_000_000,
-    2_000_000_000,
-    2_400_000_000,
-    2_500_000_000,
-    4_000_000_000,
-    6_000_000_000,
-    8_000_000_000,
-    10_000_000_000,
-})
 _INF_TICK = np.iinfo(np.int64).max
 _C_CLOCK_ACTIVE = get_time_resolution() == 1 / _CORE_TICKS_PER_SECOND
 _C_CLOCK_LOCKED = False
@@ -206,12 +194,12 @@ def _is_tick_aligned(value, tick):
 
 
 def _sampling_plan(start, stop, sample_rate):
-    """Return an integer/rational tick plan for a supported device rate."""
+    """Return an integer/rational tick plan for an integral-Hz device rate."""
     rate = float(sample_rate)
     if not np.isfinite(rate) or rate <= 0:
         raise ValueError("sample_rate must be a finite positive number")
     integer_rate = int(rate)
-    if rate != integer_rate or integer_rate not in _SUPPORTED_SAMPLE_RATES:
+    if rate != integer_rate:
         return None
     start_tick = time_to_tick(start)
     stop_tick = time_to_tick(stop)
@@ -356,6 +344,10 @@ class Waveform(metaclass=_WaveformMeta):
     stop: float | None
     sample_rate: float | None
     filters: tuple[np.ndarray, float] | None
+
+    def is_zero(self):
+        """Return whether this object has no non-zero waveform support."""
+        return self.begin >= self.end
 
     @classmethod
     def from_bytes(cls, data):
@@ -809,6 +801,17 @@ class WaveVStack(Waveform, metaclass=_WaveVStackMeta):
             return RealWaveVStack.from_bytes(data)
         return RealWaveVStack.from_bytes(data)
 
+    @classmethod
+    def from_events(cls, templates, template_ids, delay_ticks, scales):
+        """Build a real stack from compiler-native event columns.
+
+        ``delay_ticks`` uses the process-wide integer clock.  This entry point
+        avoids constructing one temporary Python waveform per event.
+        """
+        return RealWaveVStack.from_events(
+            templates, template_ids, delay_ticks, scales
+        )
+
 
 class _RealWaveVStackBase(WaveVStack):
     """Common real-stack type; concrete storage is provided by the C core."""
@@ -1160,6 +1163,9 @@ class RealWaveform(_RealWaveformBase):
         return (self._scale == 0.0
                 or self._core.lower_tick >= self._core.upper_tick)
 
+    def is_zero(self):
+        return self._is_zero()
+
     @property
     def bounds(self):
         lower = self.begin
@@ -1468,19 +1474,28 @@ class RealWaveVStack(_RealWaveVStackBase):
             ids = []
             delays = []
             scales = []
+            event_waves = []
             for wave in waves:
                 if not isinstance(wave, RealWaveform):
                     raise TypeError("RealWaveVStack accepts RealWaveform objects")
-                key = id(wave._core)
-                template_id = template_map.get(key)
+                if wave._is_zero():
+                    continue
+                key = wave._core.hash64
+                template_id = None
+                for candidate in template_map.get(key, ()):
+                    if templates[candidate] == wave._core:
+                        template_id = candidate
+                        break
                 if template_id is None:
                     template_id = len(templates)
-                    template_map[key] = template_id
+                    template_map.setdefault(key, []).append(template_id)
                     templates.append(wave._core)
                 ids.append(template_id)
                 delays.append(wave._delay_tick)
                 scales.append(wave._scale)
+                event_waves.append(wave)
             _core = _CWaveformStackCore.from_events(templates, ids, delays, scales)
+            waves = tuple(event_waves)
         self._core = _core
         self.start = None
         self.stop = None
@@ -1493,6 +1508,19 @@ class RealWaveVStack(_RealWaveVStackBase):
         self._sample_plan_cache = None
         self._waves_cache = tuple(waves) if waves else None
         self._eval_core_cache = None
+
+    @classmethod
+    def from_events(cls, templates, template_ids, delay_ticks, scales):
+        _ensure_c_clock_locked()
+        templates = tuple(templates)
+        if not all(isinstance(template, RealWaveform)
+                   for template in templates):
+            raise TypeError("templates must contain RealWaveform objects")
+        cores = [template._materialized_core() for template in templates]
+        core = _CWaveformStackCore.from_events(
+            cores, template_ids, delay_ticks, scales
+        )
+        return cls(_core=core)
 
     @property
     def shift(self):
@@ -1510,19 +1538,28 @@ class RealWaveVStack(_RealWaveVStackBase):
 
     @property
     def begin(self):
-        if self.wlist:
-            value = min((wave >> self.shift).begin for wave in self.wlist)
-        else:
-            value = -inf
+        tick = self._core.lower_tick
+        value = (-inf if tick == np.iinfo(np.int64).min
+                 else _c_tick_to_time(tick + self._shift_tick))
         return value if self.start is None else max(self.start, value)
 
     @property
     def end(self):
-        if self.wlist:
-            value = max((wave >> self.shift).end for wave in self.wlist)
-        else:
-            value = inf
+        tick = self._core.upper_tick
+        value = (inf if tick == np.iinfo(np.int64).max
+                 else _c_tick_to_time(tick + self._shift_tick))
         return value if self.stop is None else min(self.stop, value)
+
+    @property
+    def event_count(self):
+        return self._core.event_count
+
+    @property
+    def template_count(self):
+        return self._core.template_count
+
+    def __len__(self):
+        return self._core.event_count
 
     def __call__(self, x, out=None, accumulate=False, **kwargs):
         scalar = isinstance(x, (int, float, np.number))
@@ -1962,9 +1999,8 @@ def sinh(w):
     return RealWaveform._from_core(_scalar(SINH, w))
 
 
-def coshPulse(width, eps=1.0, plateau=0.0):
-    if width <= 0 and plateau <= 0:
-        return zero()
+@lru_cache(maxsize=1024)
+def _cosh_pulse_core(width, eps, plateau):
     w = eps / width
     amplitude = np.cosh(eps / 2)
     scale = -1 / (amplitude - 1)
@@ -1975,12 +2011,25 @@ def coshPulse(width, eps=1.0, plateau=0.0):
             offset=amplitude / (amplitude - 1),
         )
 
-    if plateau == 0 or quantize_time(-plateau / 2) == quantize_time(plateau / 2):
-        return _piecewise((-width / 2, width / 2, inf), 0, edge(0), 0)
-    return _piecewise(
-        (-width / 2 - plateau / 2, -plateau / 2, plateau / 2,
-         width / 2 + plateau / 2, inf),
-        0, edge(-plateau / 2), 1, edge(plateau / 2), 0,
+    if (plateau == 0
+            or quantize_time(-plateau / 2) == quantize_time(plateau / 2)):
+        waveform = _piecewise(
+            (-width / 2, width / 2, inf), 0, edge(0), 0
+        )
+    else:
+        waveform = _piecewise(
+            (-width / 2 - plateau / 2, -plateau / 2, plateau / 2,
+             width / 2 + plateau / 2, inf),
+            0, edge(-plateau / 2), 1, edge(plateau / 2), 0,
+        )
+    return waveform._materialized_core()
+
+
+def coshPulse(width, eps=1.0, plateau=0.0):
+    if width <= 0 and plateau <= 0:
+        return zero()
+    return RealWaveform._from_core(
+        _cosh_pulse_core(float(width), float(eps), float(plateau))
     )
 
 
@@ -2236,6 +2285,8 @@ __all__ = [
     "gaussian", "general_cosine", "get_time_resolution", "hanning",
     "interp", "mixing", "mollifier", "one", "play", "poly",
     "registerBaseFunc", "registerDerivative", "samplingPoints",
-    "set_time_resolution", "sign", "sin", "sinc", "sinh", "slepian",
+    "sample_clock", "sample_grid", "quantize_time", "time_to_tick",
+    "tick_to_time", "set_time_resolution", "sign", "sin", "sinc",
+    "sinh", "slepian",
     "square", "step", "t", "wave_eval", "zero", "e", "inf", "pi",
 ]

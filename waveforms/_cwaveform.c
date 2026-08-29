@@ -87,6 +87,18 @@ typedef struct wf_node {
     int64_t upper;
 } wf_node;
 
+typedef struct wf_drag_sin_kernel {
+    size_t order;
+    size_t power;
+    size_t basis_count;
+    double angular;
+    double normalization;
+    double *transform;
+    double *derivatives;
+    double *left_polynomial;
+    double *right_polynomial;
+} wf_drag_sin_kernel;
+
 struct cwaveform_wave {
     uint32_t references;
     uint32_t node_count;
@@ -97,6 +109,7 @@ struct cwaveform_wave {
     wf_node *nodes;
     double *parameters;
     size_t parameter_count;
+    wf_drag_sin_kernel **drag_sin_kernels;
 };
 
 struct cwaveform_stack {
@@ -107,6 +120,8 @@ struct cwaveform_stack {
     uint32_t *template_ids;
     int64_t *delays;
     double *scales;
+    int64_t lower_tick;
+    int64_t upper_tick;
     uint64_t hash;
     size_t data_size;
     uint8_t *data;
@@ -147,6 +162,8 @@ struct cwaveform_sample_plan {
 
 static double wf_node_parameter(const cwaveform_wave *wave,
                                 const wf_node *node, size_t index);
+static int wf_wave_prepare_drag_sin_kernels(cwaveform_wave *wave);
+static void wf_wave_clear_drag_sin_kernels(cwaveform_wave *wave);
 
 static double wf_hypot(double x, double y) {
     double high = fabs(x);
@@ -474,6 +491,10 @@ static cwaveform_wave *wf_wave_from_parts(const wf_node *nodes,
                    + (size_t)index * sizeof(double), parameters[index]);
     }
     wave->hash = wf_hash_bytes(wave->data, size);
+    if (wf_wave_prepare_drag_sin_kernels(wave) != 0) {
+        cwaveform_wave_release(wave);
+        return NULL;
+    }
     return wave;
 }
 
@@ -1716,6 +1737,10 @@ cwaveform_wave *cwaveform_wave_from_bytes(const uint8_t *data, size_t size) {
     wave->parameter_count = parameter_count;
     wave->data_size = size;
     wave->hash = wf_hash_bytes(data, size);
+    if (wf_wave_prepare_drag_sin_kernels(wave) != 0) {
+        cwaveform_wave_release(wave);
+        return NULL;
+    }
     return wave;
 }
 
@@ -1957,6 +1982,7 @@ void cwaveform_wave_release(cwaveform_wave *wave) {
     free(wave->data);
     free(wave->nodes);
     free(wave->parameters);
+    wf_wave_clear_drag_sin_kernels(wave);
     free(wave);
 }
 
@@ -2172,14 +2198,189 @@ static double wf_polynomial_derivative_value(const double *coefficients,
     return value;
 }
 
-static double wf_drag_sin_value(const cwaveform_wave *wave,
-                                const wf_node *node, double local,
-                                int sinx) {
+static void wf_drag_sin_kernel_free(wf_drag_sin_kernel *kernel) {
+    if (kernel == NULL) return;
+    free(kernel->transform);
+    free(kernel->derivatives);
+    free(kernel->left_polynomial);
+    free(kernel->right_polynomial);
+    free(kernel);
+}
+
+static wf_drag_sin_kernel *wf_drag_sin_kernel_create(
+    const cwaveform_wave *wave, const wf_node *node, int sinx) {
     size_t total = (size_t)node->parameter_count + 1;
     size_t block_count = total - 7;
     size_t order = block_count + 1;
     size_t power = ((block_count + 2) >> 1) << 1;
     size_t basis_count;
+    double width = wf_node_parameter(wave, node, 2);
+    double delta = wf_node_parameter(wave, node, 3);
+    double tab = wf_node_parameter(wave, node, 6);
+    wf_drag_sin_kernel *kernel;
+    double basis[67];
+    double values[65];
+    size_t index;
+    if (!(width > 0.0) || block_count > 64) return NULL;
+    if (power < 2) power = 2;
+    basis_count = power + 1;
+    kernel = (wf_drag_sin_kernel *)calloc(1, sizeof(*kernel));
+    if (kernel == NULL) return NULL;
+    kernel->order = order;
+    kernel->power = power;
+    kernel->basis_count = basis_count;
+    kernel->angular = 3.14159265358979323846 / width;
+    kernel->normalization = 1.0;
+    kernel->transform = (double *)calloc(order * 4, sizeof(double));
+    kernel->derivatives = (double *)calloc(
+        order * basis_count, sizeof(double));
+    if (sinx) {
+        kernel->left_polynomial = (double *)calloc(
+            2 * order, sizeof(double));
+        kernel->right_polynomial = (double *)calloc(
+            2 * order, sizeof(double));
+    }
+    if (kernel->transform == NULL || kernel->derivatives == NULL
+            || (sinx && (kernel->left_polynomial == NULL
+                         || kernel->right_polynomial == NULL))) {
+        wf_drag_sin_kernel_free(kernel);
+        return NULL;
+    }
+    kernel->transform[0] = 1.0;
+    kernel->transform[3] = 1.0;
+    for (index = 0; index < block_count; ++index) {
+        double block_frequency = wf_node_parameter(wave, node, 7 + index);
+        double coefficient = 1.0 / (2.0 * 3.14159265358979323846
+                                    * (block_frequency - delta));
+        size_t row = index + 1;
+        while (row-- != 0) {
+            double *target = kernel->transform + (row + 1) * 4;
+            const double *source = kernel->transform + row * 4;
+            target[0] += -coefficient * source[1];
+            target[1] += coefficient * source[0];
+            target[2] += -coefficient * source[3];
+            target[3] += coefficient * source[2];
+        }
+    }
+    kernel->derivatives[power] = 1.0;
+    for (index = 1; index < order; ++index) {
+        size_t exponent;
+        if (index & 1) {
+            for (exponent = 0; exponent < power; ++exponent)
+                kernel->derivatives[index * basis_count + exponent] =
+                    kernel->derivatives[
+                        (index - 1) * basis_count + exponent + 1]
+                    * (double)(exponent + 1) * kernel->angular;
+        } else {
+            for (exponent = 0; exponent + 2 <= power; ++exponent)
+                kernel->derivatives[index * basis_count + exponent] =
+                    kernel->derivatives[
+                        (index - 2) * basis_count + exponent + 2]
+                    * (double)(exponent + 1) * (double)(exponent + 2);
+            for (exponent = 0; exponent <= power; ++exponent)
+                kernel->derivatives[index * basis_count + exponent] -=
+                    kernel->derivatives[
+                        (index - 2) * basis_count + exponent]
+                    * (double)(exponent * exponent);
+            for (exponent = 0; exponent <= power; ++exponent)
+                kernel->derivatives[index * basis_count + exponent]
+                    *= kernel->angular * kernel->angular;
+        }
+    }
+
+    if (sinx) {
+        int side;
+        for (side = 0; side < 2; ++side) {
+            double boundary_angle = kernel->angular
+                * ((side == 0 ? (1.0 - tab) : (1.0 + tab))
+                   * width / 2.0);
+            double boundary_sine = sin(boundary_angle);
+            double boundary_cosine = cos(boundary_angle);
+            double edge_x = (side == 0 ? -tab : tab) * width / 2.0;
+            double *polynomial = side == 0
+                ? kernel->left_polynomial : kernel->right_polynomial;
+            double sine_power = 1.0;
+            size_t exponent;
+            memset(values, 0, order * sizeof(double));
+            for (exponent = 0; exponent <= power; ++exponent) {
+                basis[exponent] = sine_power;
+                if (exponent & 1) basis[exponent] *= boundary_cosine;
+                sine_power *= boundary_sine;
+            }
+            for (index = 0; index < order; ++index)
+                for (exponent = 0; exponent <= power; ++exponent)
+                    values[index] += kernel->derivatives[
+                        index * basis_count + exponent] * basis[exponent];
+            if (wf_edge_polynomial(
+                    values, order, edge_x, polynomial) != 0) {
+                wf_drag_sin_kernel_free(kernel);
+                return NULL;
+            }
+        }
+    } else {
+        double components[2] = {0.0, 0.0};
+        size_t exponent;
+        memset(basis, 0, basis_count * sizeof(double));
+        memset(values, 0, order * sizeof(double));
+        for (exponent = 0; exponent <= power; exponent += 2)
+            basis[exponent] = 1.0;
+        for (index = 0; index < order; ++index)
+            for (exponent = 0; exponent <= power; ++exponent)
+                values[index] += kernel->derivatives[
+                    index * basis_count + exponent] * basis[exponent];
+        for (index = 0; index < order; ++index) {
+            components[0] += kernel->transform[index * 4] * values[index];
+            components[1] += kernel->transform[index * 4 + 2]
+                * values[index];
+        }
+        kernel->normalization = wf_hypot(components[0], components[1]);
+    }
+    return kernel;
+}
+
+static int wf_wave_prepare_drag_sin_kernels(cwaveform_wave *wave) {
+    uint32_t index;
+    int needed = 0;
+    for (index = 0; index < wave->node_count; ++index) {
+        uint8_t op = wave->nodes[index].op;
+        if (op == WF_OP_DRAG_SIN || op == WF_OP_DRAG_SINX) {
+            needed = 1;
+            break;
+        }
+    }
+    if (!needed) return 0;
+    wave->drag_sin_kernels = (wf_drag_sin_kernel **)calloc(
+        wave->node_count, sizeof(*wave->drag_sin_kernels));
+    if (wave->drag_sin_kernels == NULL) return -1;
+    for (index = 0; index < wave->node_count; ++index) {
+        const wf_node *node = wave->nodes + index;
+        if (node->op != WF_OP_DRAG_SIN && node->op != WF_OP_DRAG_SINX)
+            continue;
+        wave->drag_sin_kernels[index] = wf_drag_sin_kernel_create(
+            wave, node, node->op == WF_OP_DRAG_SINX);
+        if (wave->drag_sin_kernels[index] == NULL) {
+            wf_wave_clear_drag_sin_kernels(wave);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static void wf_wave_clear_drag_sin_kernels(cwaveform_wave *wave) {
+    uint32_t index;
+    if (wave->drag_sin_kernels == NULL) return;
+    for (index = 0; index < wave->node_count; ++index)
+        wf_drag_sin_kernel_free(wave->drag_sin_kernels[index]);
+    free(wave->drag_sin_kernels);
+    wave->drag_sin_kernels = NULL;
+}
+
+static double wf_drag_sin_value(const cwaveform_wave *wave,
+                                uint32_t node_index,
+                                const wf_node *node, double local,
+                                int sinx) {
+    const wf_drag_sin_kernel *kernel = wave->drag_sin_kernels == NULL
+        ? NULL : wave->drag_sin_kernels[node_index];
     double t0 = wf_node_parameter(wave, node, 0);
     double frequency = wf_node_parameter(wave, node, 1);
     double width = wf_node_parameter(wave, node, 2);
@@ -2187,183 +2388,82 @@ static double wf_drag_sin_value(const cwaveform_wave *wave,
     double phase = wf_node_parameter(wave, node, 4);
     double plateau = wf_node_parameter(wave, node, 5);
     double tab = wf_node_parameter(wave, node, 6);
-    double angular;
-    double *transform;
-    double *derivatives;
-    double *basis;
-    double *values;
+    double basis[67];
+    double values[65];
     double components[2] = {0.0, 0.0};
-    double normalization = 1.0;
+    double midpoint;
+    double plateau_stop;
     size_t index;
-    if (!(width > 0.0) || block_count > 64) return NAN;
-    if (power < 2) power = 2;
-    basis_count = power + 1;
-    angular = 3.14159265358979323846 / width;
-    transform = (double *)calloc(order * 4, sizeof(double));
-    derivatives = (double *)calloc(order * basis_count, sizeof(double));
-    basis = (double *)calloc(basis_count, sizeof(double));
-    values = (double *)calloc(order, sizeof(double));
-    if (transform == NULL || derivatives == NULL || basis == NULL
-            || values == NULL) {
-        free(transform); free(derivatives); free(basis); free(values);
-        return NAN;
-    }
-    transform[0] = 1.0;
-    transform[3] = 1.0;
-    for (index = 0; index < block_count; ++index) {
-        double block_frequency = wf_node_parameter(wave, node, 7 + index);
-        double coefficient = 1.0 / (2.0 * 3.14159265358979323846
-                                    * (block_frequency - delta));
-        size_t row = index + 1;
-        while (row-- != 0) {
-            double *target = transform + (row + 1) * 4;
-            const double *source = transform + row * 4;
-            target[0] += -coefficient * source[1];
-            target[1] += coefficient * source[0];
-            target[2] += -coefficient * source[3];
-            target[3] += coefficient * source[2];
-        }
-    }
-    derivatives[power] = 1.0;
-    for (index = 1; index < order; ++index) {
-        size_t exponent;
-        if (index & 1) {
-            for (exponent = 0; exponent < power; ++exponent)
-                derivatives[index * basis_count + exponent] =
-                    derivatives[(index - 1) * basis_count + exponent + 1]
-                    * (double)(exponent + 1) * angular;
+    if (kernel == NULL) return NAN;
+    midpoint = t0 + width / 2.0;
+    plateau_stop = midpoint + plateau;
+    memset(values, 0, kernel->order * sizeof(double));
+    if (sinx) {
+        int left = local >= midpoint - tab * width / 2.0
+            && local <= midpoint;
+        int right = local >= plateau_stop
+            && local <= plateau_stop + tab * width / 2.0;
+        if (left || right) {
+            double x = left ? local - midpoint : local - plateau_stop;
+            const double *polynomial = left
+                ? kernel->left_polynomial : kernel->right_polynomial;
+            for (index = 0; index < kernel->order; ++index)
+                values[index] = wf_polynomial_derivative_value(
+                    polynomial, 2 * kernel->order, index, x);
         } else {
-            for (exponent = 0; exponent + 2 <= power; ++exponent)
-                derivatives[index * basis_count + exponent] =
-                    derivatives[(index - 2) * basis_count + exponent + 2]
-                    * (double)(exponent + 1) * (double)(exponent + 2);
-            for (exponent = 0; exponent <= power; ++exponent)
-                derivatives[index * basis_count + exponent] -=
-                    derivatives[(index - 2) * basis_count + exponent]
-                    * (double)(exponent * exponent);
-            for (exponent = 0; exponent <= power; ++exponent)
-                derivatives[index * basis_count + exponent]
-                    *= angular * angular;
-        }
-    }
-    {
-        double midpoint = t0 + width / 2.0;
-        double plateau_stop = midpoint + plateau;
-        double adjusted = local >= plateau_stop ? local - plateau : local;
-        double angle = angular * (adjusted - t0);
-        double sine = sin(angle);
-        double cosine = cos(angle);
-        int in_plateau = local > midpoint && local < plateau_stop;
-        size_t exponent;
-        for (exponent = 0; exponent <= power; ++exponent) {
-            basis[exponent] = pow(sine, (double)exponent);
-            if (exponent & 1) basis[exponent] *= cosine;
-            if (in_plateau) basis[exponent] = 0.0;
-        }
-        for (index = 0; index < order; ++index) {
-            for (exponent = 0; exponent <= power; ++exponent)
-                values[index] += derivatives[index * basis_count + exponent]
-                    * basis[exponent];
-        }
-        if (in_plateau) values[0] = 1.0;
-        if (sinx) {
-            int left = local >= midpoint - tab * width / 2.0
-                && local <= midpoint;
-            int right = local >= plateau_stop
-                && local <= plateau_stop + tab * width / 2.0;
-            if (left || right) {
-                double boundary_angle = angular
-                    * ((left ? (1.0 - tab) : (1.0 + tab)) * width / 2.0);
-                double boundary_sine = sin(boundary_angle);
-                double boundary_cosine = cos(boundary_angle);
-                double *boundary_basis = basis;
-                double *edge_values = (double *)calloc(order, sizeof(double));
-                double *polynomial = (double *)calloc(2 * order, sizeof(double));
-                double edge_x = (left ? -tab : tab) * width / 2.0;
-                double x = left ? local - midpoint : local - plateau_stop;
-                if (edge_values == NULL || polynomial == NULL) {
-                    free(edge_values); free(polynomial);
-                    free(transform); free(derivatives); free(basis); free(values);
-                    return NAN;
-                }
-                for (exponent = 0; exponent <= power; ++exponent) {
-                    boundary_basis[exponent] = pow(boundary_sine,
-                                                    (double)exponent);
-                    if (exponent & 1) boundary_basis[exponent]
-                        *= boundary_cosine;
-                }
-                for (index = 0; index < order; ++index)
-                    for (exponent = 0; exponent <= power; ++exponent)
-                        edge_values[index] +=
-                            derivatives[index * basis_count + exponent]
-                            * boundary_basis[exponent];
-                if (wf_edge_polynomial(edge_values, order, edge_x,
-                                       polynomial) != 0) {
-                    free(edge_values); free(polynomial);
-                    free(transform); free(derivatives); free(basis); free(values);
-                    return NAN;
-                }
-                for (index = 0; index < order; ++index)
-                    values[index] = wf_polynomial_derivative_value(
-                        polynomial, 2 * order, index, x);
-                free(edge_values);
-                free(polynomial);
-            }
-        }
-    }
-    if (!sinx) {
-        double peak_components[2] = {0.0, 0.0};
-        size_t exponent;
-        memset(basis, 0, basis_count * sizeof(double));
-        for (exponent = 0; exponent <= power; exponent += 2)
-            basis[exponent] = 1.0;
-        memset(values, 0, order * sizeof(double));
-        for (index = 0; index < order; ++index)
-            for (exponent = 0; exponent <= power; ++exponent)
-                values[index] += derivatives[index * basis_count + exponent]
-                    * basis[exponent];
-        for (index = 0; index < order; ++index) {
-            peak_components[0] += transform[index * 4 + 0] * values[index];
-            peak_components[1] += transform[index * 4 + 2] * values[index];
-        }
-        normalization = wf_hypot(peak_components[0], peak_components[1]);
-        /* Restore the actual derivatives after the peak calculation. */
-        {
-            double midpoint = t0 + width / 2.0;
-            double plateau_stop = midpoint + plateau;
-            double adjusted = local >= plateau_stop ? local - plateau : local;
-            double angle = angular * (adjusted - t0);
-            double sine = sin(angle), cosine = cos(angle);
+            double adjusted = local >= plateau_stop
+                ? local - plateau : local;
+            double angle = kernel->angular * (adjusted - t0);
+            double sine = sin(angle);
+            double cosine = cos(angle);
+            double sine_power = 1.0;
             int in_plateau = local > midpoint && local < plateau_stop;
-            memset(values, 0, order * sizeof(double));
-            for (index = 0; index <= power; ++index) {
-                basis[index] = pow(sine, (double)index);
-                if (index & 1) basis[index] *= cosine;
-                if (in_plateau) basis[index] = 0.0;
+            size_t exponent;
+            for (exponent = 0; exponent <= kernel->power; ++exponent) {
+                basis[exponent] = sine_power;
+                if (exponent & 1) basis[exponent] *= cosine;
+                if (in_plateau) basis[exponent] = 0.0;
+                sine_power *= sine;
             }
-            for (index = 0; index < order; ++index) {
-                size_t exponent;
-                for (exponent = 0; exponent <= power; ++exponent)
-                    values[index] += derivatives[index * basis_count + exponent]
+            for (index = 0; index < kernel->order; ++index)
+                for (exponent = 0; exponent <= kernel->power; ++exponent)
+                    values[index] += kernel->derivatives[
+                        index * kernel->basis_count + exponent]
                         * basis[exponent];
-            }
             if (in_plateau) values[0] = 1.0;
         }
+    } else {
+        double adjusted = local >= plateau_stop ? local - plateau : local;
+        double angle = kernel->angular * (adjusted - t0);
+        double sine = sin(angle);
+        double cosine = cos(angle);
+        double sine_power = 1.0;
+        int in_plateau = local > midpoint && local < plateau_stop;
+        size_t exponent;
+        for (exponent = 0; exponent <= kernel->power; ++exponent) {
+            basis[exponent] = sine_power;
+            if (exponent & 1) basis[exponent] *= cosine;
+            if (in_plateau) basis[exponent] = 0.0;
+            sine_power *= sine;
+        }
+        for (index = 0; index < kernel->order; ++index)
+            for (exponent = 0; exponent <= kernel->power; ++exponent)
+                values[index] += kernel->derivatives[
+                    index * kernel->basis_count + exponent]
+                    * basis[exponent];
+        if (in_plateau) values[0] = 1.0;
     }
-    for (index = 0; index < order; ++index) {
-        components[0] += transform[index * 4 + 0] * values[index];
-        components[1] += transform[index * 4 + 2] * values[index];
+    for (index = 0; index < kernel->order; ++index) {
+        components[0] += kernel->transform[index * 4] * values[index];
+        components[1] += kernel->transform[index * 4 + 2] * values[index];
     }
-    components[0] /= normalization;
-    components[1] /= normalization;
+    components[0] /= kernel->normalization;
+    components[1] /= kernel->normalization;
     {
         double carrier = 2.0 * 3.14159265358979323846
             * (frequency + delta) * local
             - (2.0 * 3.14159265358979323846 * delta * t0 + phase);
-        double result = components[0] * cos(carrier)
-            + components[1] * sin(carrier);
-        free(transform); free(derivatives); free(basis); free(values);
-        return result;
+        return components[0] * cos(carrier) + components[1] * sin(carrier);
     }
 }
 
@@ -2521,11 +2621,13 @@ static double wf_evaluate_one(const cwaveform_wave *wave, double position,
             }
             case WF_OP_DRAG_SIN:
                 local = position - (double)node->shift / ticks;
-                values[index] = wf_drag_sin_value(wave, node, local, 0);
+                values[index] = wf_drag_sin_value(
+                    wave, index, node, local, 0);
                 break;
             case WF_OP_DRAG_SINX:
                 local = position - (double)node->shift / ticks;
-                values[index] = wf_drag_sin_value(wave, node, local, 1);
+                values[index] = wf_drag_sin_value(
+                    wave, index, node, local, 1);
                 break;
             case WF_OP_ADD:
                 values[index] = values[node->left] + values[node->right];
@@ -3405,6 +3507,8 @@ cwaveform_stack *cwaveform_stack_create(
     stack = (cwaveform_stack *)calloc(1, sizeof(*stack));
     if (stack == NULL) return NULL;
     stack->references = 1;
+    stack->lower_tick = INT64_MIN;
+    stack->upper_tick = INT64_MAX;
     stack->template_count = template_count;
     stack->event_count = event_count;
     stack->templates = (cwaveform_wave **)calloc(template_count,
@@ -3434,6 +3538,26 @@ cwaveform_stack *cwaveform_stack_create(
         stack->template_ids[index] = template_ids[index];
         stack->delays[index] = delay_ticks[index];
         stack->scales[index] = scales[index];
+    }
+    if (event_count != 0) {
+        int have_support = 0;
+        int64_t lower_tick = INT64_MAX;
+        int64_t upper_tick = INT64_MIN;
+        for (index = 0; index < event_count; ++index) {
+            cwaveform_wave *wave = stack->templates[stack->template_ids[index]];
+            int64_t lower = wf_add_tick(
+                wave->nodes[wave->root].lower, stack->delays[index]);
+            int64_t upper = wf_add_tick(
+                wave->nodes[wave->root].upper, stack->delays[index]);
+            if (lower >= upper) continue;
+            if (!have_support || lower < lower_tick) lower_tick = lower;
+            if (!have_support || upper > upper_tick) upper_tick = upper;
+            have_support = 1;
+        }
+        if (have_support) {
+            stack->lower_tick = lower_tick;
+            stack->upper_tick = upper_tick;
+        }
     }
     if (wf_stack_encode(stack) != 0) {
         cwaveform_stack_release(stack);
@@ -3725,6 +3849,14 @@ size_t cwaveform_stack_event_count(const cwaveform_stack *stack) {
 
 size_t cwaveform_stack_template_count(const cwaveform_stack *stack) {
     return stack == NULL ? 0 : stack->template_count;
+}
+
+int64_t cwaveform_stack_lower_tick(const cwaveform_stack *stack) {
+    return stack == NULL ? INT64_MIN : stack->lower_tick;
+}
+
+int64_t cwaveform_stack_upper_tick(const cwaveform_stack *stack) {
+    return stack == NULL ? INT64_MAX : stack->upper_tick;
 }
 
 static size_t wf_lower_bound(const double *values, size_t count, double target) {

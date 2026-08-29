@@ -145,6 +145,8 @@ CWAVEFORM_API const uint8_t *cwaveform_stack_bytes(const cwaveform_stack *stack,
 CWAVEFORM_API uint64_t cwaveform_stack_hash(const cwaveform_stack *stack);
 CWAVEFORM_API size_t cwaveform_stack_event_count(const cwaveform_stack *stack);
 CWAVEFORM_API size_t cwaveform_stack_template_count(const cwaveform_stack *stack);
+CWAVEFORM_API int64_t cwaveform_stack_lower_tick(const cwaveform_stack *stack);
+CWAVEFORM_API int64_t cwaveform_stack_upper_tick(const cwaveform_stack *stack);
 CWAVEFORM_API int cwaveform_stack_evaluate(
     const cwaveform_stack *stack, const double *positions, size_t count,
     int64_t global_shift, double offset, double *output);

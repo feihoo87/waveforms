@@ -22,8 +22,9 @@ PUBLIC_NAMES = {
     "exp", "function",
     "gaussian", "general_cosine", "get_time_resolution", "hanning", "interp", "mixing",
     "mollifier", "one", "poly", "registerBaseFunc", "registerDerivative",
-    "samplingPoints", "set_time_resolution", "sign", "sin", "sinc", "sinh", "square", "step",
-    "t", "wave_eval", "zero",
+    "quantize_time", "sample_clock", "sample_grid", "samplingPoints",
+    "set_time_resolution", "sign", "sin", "sinc", "sinh", "square",
+    "step", "t", "tick_to_time", "time_to_tick", "wave_eval", "zero",
 }
 
 
@@ -34,6 +35,9 @@ def test_public_api_and_basic_sampling():
     assert np.allclose(wf.sin(0.7)(x), np.sin(0.7 * x))
     assert np.allclose(wf.poly([1, -0.5, 0.25])(x),
                        1 - 0.5 * x + 0.25 * x**2)
+    assert wf.zero().is_zero()
+    assert (0 * wf.gaussian(1)).is_zero()
+    assert not wf.one().is_zero()
 
 
 def test_binary_roundtrip_is_zero_copy_for_bytes_input():
@@ -461,7 +465,7 @@ def test_device_sample_clocks_and_rational_fallback():
     assert np.all(np.diff(grid) > 0)
 
 
-def test_fixed_width_quantization_supported_sampling_and_fallback():
+def test_fixed_width_quantization_and_rational_sampling():
     values = np.array([-2, -1, -0.5, 0, 0.5, 1, 2.0])
     assert np.array_equal(
         quantize_samples(values, 16),
@@ -498,8 +502,13 @@ def test_fixed_width_quantization_supported_sampling_and_fallback():
     assert np.array_equal(chunks, whole)
 
     odd_rate = 7_000_000_000
-    legacy_grid = np.arange(wav.start, wav.stop, 1 / odd_rate)
-    assert np.array_equal(wav.sample(odd_rate), wav(legacy_grid))
+    rational_samples = wav.sample(odd_rate)
+    numerator, denominator = sample_clock(odd_rate)
+    rational_grid = sample_grid(
+        time_to_tick(wav.start), len(rational_samples),
+        numerator, denominator,
+    )
+    assert np.allclose(rational_samples, wav(rational_grid), rtol=0, atol=1e-15)
 
 
 def test_simd_node_evaluation_matches_scalar_boundaries():

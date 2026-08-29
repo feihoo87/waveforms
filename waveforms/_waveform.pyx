@@ -521,6 +521,8 @@ cdef extern from "_cwaveform.h":
     uint64_t cwaveform_stack_hash(const cwaveform_stack *) noexcept nogil
     size_t cwaveform_stack_event_count(const cwaveform_stack *) noexcept nogil
     size_t cwaveform_stack_template_count(const cwaveform_stack *) noexcept nogil
+    int64_t cwaveform_stack_lower_tick(const cwaveform_stack *) noexcept nogil
+    int64_t cwaveform_stack_upper_tick(const cwaveform_stack *) noexcept nogil
     int cwaveform_stack_evaluate(
         const cwaveform_stack *, const double *, size_t, int64_t, double,
         double *) noexcept nogil
@@ -1039,6 +1041,16 @@ cdef class CWaveformStackCore:
     def template_count(self):
         self._ensure_pointer()
         return cwaveform_stack_template_count(self._pointer)
+
+    @property
+    def lower_tick(self):
+        self._ensure_pointer()
+        return cwaveform_stack_lower_tick(self._pointer)
+
+    @property
+    def upper_tick(self):
+        self._ensure_pointer()
+        return cwaveform_stack_upper_tick(self._pointer)
 
     @property
     def hash64(self):
