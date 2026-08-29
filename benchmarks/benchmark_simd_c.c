@@ -1,4 +1,6 @@
+#if !defined(_WIN32)
 #define _POSIX_C_SOURCE 200809L
+#endif
 
 #include "../waveforms/_cwaveform.h"
 
@@ -7,12 +9,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <time.h>
+#endif
 
 static double now_seconds(void) {
+#if defined(_WIN32)
+    LARGE_INTEGER counter;
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart / (double)frequency.QuadPart;
+#else
     struct timespec value;
     clock_gettime(CLOCK_MONOTONIC, &value);
     return (double)value.tv_sec + 1e-9 * (double)value.tv_nsec;
+#endif
 }
 
 static double best_evaluate(const cwaveform_wave *wave, const double *positions,
