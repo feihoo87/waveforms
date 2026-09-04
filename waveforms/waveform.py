@@ -7,6 +7,7 @@ complex signals are represented as explicit pairs of real C blocks.
 
 from __future__ import annotations
 
+import io
 import struct
 from functools import lru_cache
 from typing import Iterable, cast
@@ -495,7 +496,7 @@ class Waveform(metaclass=_WaveformMeta):
             output_index += size
 
     def _play(self, time_unit, volume):
-        import pyaudio
+        import pyaudio  # pyright: ignore[reportMissingModuleSource]
 
         rate = 48_000
         dynamic_volume = 1.0
@@ -2319,8 +2320,7 @@ def mixing(I, Q=None, *, phase=0.0, freq=0.0, ratioIQ=1.0,
 
 
 def play(data, rate=48_000):
-    import io
-    import pyaudio
+    import pyaudio  # pyright: ignore[reportMissingModuleSource]
 
     data = np.asarray(data)
     maximum = np.max(np.abs(data))
