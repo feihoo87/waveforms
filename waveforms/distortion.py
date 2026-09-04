@@ -5,7 +5,7 @@ from typing import Sequence, cast
 import numpy as np
 from numpy.typing import NDArray
 from scipy.fftpack import fft, fftfreq, ifft, ifftshift
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, linear_sum_assignment
 from scipy.signal import fftconvolve, lfilter, lfiltic, tf2zpk, zpk2sos, zpk2tf
 
 
@@ -99,6 +99,170 @@ def exp_decay_filter_old(amp, tau, sample_rate):
     return b, a
 
 
+def _exp_decay_polynomials(
+    amp: Sequence[float],
+    tau: Sequence[float],
+) -> tuple[np.poly1d, np.poly1d]:
+    """Return the continuous-time numerator and denominator polynomials."""
+    numerator, denominator = np.poly1d([0.0]), np.poly1d([1.0])
+    for t in tau:
+        denominator = denominator * np.poly1d([1, -1 / t])
+    for i, A in enumerate(amp):
+        n = np.poly1d([-A, 0.0])
+        for j, t in enumerate(tau):
+            if j != i:
+                n = n * np.poly1d([1, -1 / t])
+        numerator = numerator + n
+    return numerator + denominator, denominator
+
+
+def exp_decay_filter_to_cascade(
+    amp: Sequence[float],
+    tau: Sequence[float],
+) -> list[list[float]]:
+    """Convert a multiexponential response to real first-order stages.
+
+    ``exp_decay_filter(amp, tau, sample_rate)`` treats the exponential
+    components as a parallel sum. This function factors that transfer
+    function into scalar ``exp_decay_filter(a, t, sample_rate)`` stages whose
+    cascade is equivalent for every sample rate.
+
+    The factorization is not unique because any zero can be paired with any
+    pole. This implementation selects the pairing that minimizes the sum of
+    the absolute stage amplitudes and keeps the time constants in input order.
+
+    Args:
+        amp: Amplitudes of the fitted exponential tails.
+        tau: Positive decay times corresponding to ``amp``.
+
+    Returns:
+        A list ``[[a_1, t_1], [a_2, t_2], ...]``. Passing each pair to
+        ``exp_decay_filter`` and cascading the resulting filters is equivalent
+        to passing the original arrays to ``exp_decay_filter``.
+
+    Raises:
+        ValueError: If inputs are invalid, or if the transfer function has
+            complex zeros and therefore cannot be factored into real
+            first-order stages.
+
+    Notes:
+        With ``r_i = 1 / tau_i``, the original transfer function is
+
+        ``H(s) = 1 - sum(A_i * s / (s + r_i))``.
+
+        If ``-q_j`` is one of its zeros, pairing it with pole ``-r_i`` gives
+        a scalar stage amplitude ``a_i = 1 - r_i / q_j``. A missing finite
+        zero (a zero at infinity) gives ``a_i = 1``.
+    """
+    amp_array = np.asarray(amp, dtype=float)
+    tau_array = np.asarray(tau, dtype=float)
+    if amp_array.ndim != 1 or tau_array.ndim != 1:
+        raise ValueError("amp and tau must be one-dimensional sequences")
+    if len(amp_array) != len(tau_array):
+        raise ValueError("amp and tau must have the same length")
+    if not np.all(np.isfinite(amp_array)):
+        raise ValueError("amp must contain only finite values")
+    if not np.all(np.isfinite(tau_array)) or np.any(tau_array <= 0):
+        raise ValueError("tau must contain only finite positive values")
+    if len(amp_array) == 0:
+        return []
+
+    # Root finding is better conditioned after removing the common time scale.
+    log_rates = -np.log(tau_array)
+    scaled_rates = np.exp(log_rates - np.mean(log_rates))
+    scaled_tau = 1 / scaled_rates
+    numerator, _ = _exp_decay_polynomials(amp_array, scaled_tau)
+    zeros = np.asarray(numerator.roots, dtype=complex)
+
+    root_scale = np.maximum(1.0, np.abs(zeros.real))
+    if np.any(np.abs(zeros.imag) > 1e-9 * root_scale):
+        raise ValueError(
+            "the response has complex zeros and cannot be represented by "
+            "a cascade of real first-order exp_decay_filter stages"
+        )
+    real_zeros = zeros.real
+
+    # A real zero cannot be exactly zero because H(0) == 1. Guard against a
+    # numerically singular root before forming r_i / q_j.
+    if np.any(np.abs(real_zeros) <= np.finfo(float).eps):
+        raise ValueError("the response has a numerically singular zero")
+
+    stage_amp = np.ones(len(tau_array), dtype=float)
+    if len(real_zeros):
+        costs = np.abs(1 - scaled_rates[:, None] / real_zeros[None, :])
+        pole_indices, zero_indices = linear_sum_assignment(costs)
+        stage_amp[pole_indices] = (
+            1 - scaled_rates[pole_indices] / real_zeros[zero_indices]
+        )
+
+    return [[float(a), float(t)] for a, t in zip(stage_amp, tau_array)]
+
+
+def exp_decay_filter_from_cascade(
+    cascade: Sequence[Sequence[float]],
+) -> tuple[list[float], list[float]]:
+    """Convert real first-order stages back to multiexponential parameters.
+
+    This is the inverse of :func:`exp_decay_filter_to_cascade` when all
+    non-identity stages have distinct time constants.
+
+    Args:
+        cascade: First-order stages ``[[a_1, t_1], [a_2, t_2], ...]``.
+            Each pair represents ``exp_decay_filter(a_i, t_i, sample_rate)``.
+
+    Returns:
+        A tuple ``([A_1, A_2, ...], [tau_1, tau_2, ...])`` suitable for
+        ``exp_decay_filter(amp, tau, sample_rate)``. Identity stages with
+        ``a_i == 0`` are retained as zero-amplitude terms.
+
+    Raises:
+        ValueError: If the input is invalid, or if two non-identity stages
+            have the same time constant. Such a cascade has a repeated pole
+            and generally contains terms such as ``t * exp(-t / tau)``, so it
+            cannot be represented as a sum of simple exponential tails.
+
+    Notes:
+        Write ``r_i = 1 / t_i``. The residue of the cascade at ``s = -r_i``
+        gives the parallel amplitude directly:
+
+        ``A_i = a_i * product((r_j - (1 - a_j) * r_i) / (r_j - r_i))``
+
+        where the product is over all other non-identity stages.
+    """
+    cascade_array = np.asarray(cascade, dtype=float)
+    if cascade_array.size == 0:
+        return [], []
+    if cascade_array.ndim != 2 or cascade_array.shape[1] != 2:
+        raise ValueError("cascade must have shape (n, 2)")
+    if not np.all(np.isfinite(cascade_array)):
+        raise ValueError("cascade must contain only finite values")
+
+    stage_amp = cascade_array[:, 0]
+    tau_array = cascade_array[:, 1]
+    if np.any(tau_array <= 0):
+        raise ValueError("cascade time constants must be positive")
+
+    active = np.flatnonzero(stage_amp != 0)
+    if len(np.unique(tau_array[active])) != len(active):
+        raise ValueError(
+            "non-identity cascade stages must have distinct time constants"
+        )
+
+    # Only rate ratios occur in the residue formula. Removing the common time
+    # scale improves numerical conditioning without changing the result.
+    log_rates = -np.log(tau_array)
+    rates = np.exp(log_rates - np.mean(log_rates))
+    amp_array = np.zeros(len(cascade_array), dtype=float)
+    for i in active:
+        others = active[active != i]
+        factors = (
+            rates[others] - (1 - stage_amp[others]) * rates[i]
+        ) / (rates[others] - rates[i])
+        amp_array[i] = stage_amp[i] * np.prod(factors)
+
+    return amp_array.tolist(), tau_array.tolist()
+
+
 def exp_decay_filter(
     amp: float | Sequence[float],
     tau: float | Sequence[float],
@@ -154,15 +318,7 @@ def exp_decay_filter(
         tau = [cast(float, tau)]
     amp = cast(Sequence[float], amp)
     tau = cast(Sequence[float], tau)
-    numerator, denominator = np.poly1d([0.0]), np.poly1d([1.0])
-    for i, (A, t) in enumerate(zip(amp, tau)):
-        denominator = denominator * np.poly1d([1, -1 / t])
-        n = np.poly1d([-A, 0.0])
-        for j, t_ in enumerate(tau):
-            if j != i:
-                n = n * np.poly1d([1, -1 / t_])
-        numerator = numerator + n
-    numerator = numerator + denominator
+    numerator, denominator = _exp_decay_polynomials(amp, tau)
 
     z = cast(NDArray[np.float64], np.exp(-numerator.roots / sample_rate))
     # p = cast(NDArray[np.float64], np.exp(-denominator.roots / sample_rate))
