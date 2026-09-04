@@ -109,6 +109,39 @@ Real waveforms and stacks therefore avoid complex storage and arithmetic for
 the common real-valued case. `ComplexWaveform.real` and `.imag` expose the two
 real channel waveforms.
 
+### Post-sampling nonlinear calibration
+
+`NonlinearMap` compiles one monotone branch of calibration samples to a compact
+native lookup table.  A centered map is useful when a waveform describes a
+frequency excursion around an idle point:
+
+```python
+frequency = np.array([4.0e9, 4.5e9, 5.0e9, 5.5e9, 6.0e9])
+flux = np.array([0.31, 0.22, 0.08, -0.06, -0.16])
+
+frequency_to_flux = wf.NonlinearMap.from_samples(
+    frequency,
+    flux,
+    method="monotone_cubic",  # PCHIP compiled to uniform cubic segments
+    reference=5.0e9,          # map(0) == 0 around the idle frequency
+    dtype=np.float32,
+    extrapolate="error",
+)
+
+trajectory.start = 0
+trajectory.stop = 200e-9
+trajectory.sample_rate = 2_400_000_000
+trajectory.nonlinear = frequency_to_flux
+flux_samples = trajectory.sample(dtype=np.int16)
+```
+
+The sampling order is waveform accumulation, nonlinear mapping, optional SOS
+filtering/predistortion, and finally integer quantization. This is important for
+`WaveVStack`: the map is applied to the accumulated trajectory rather than to
+each pulse event independently. `method="linear"` selects the smaller and
+fastest two-point interpolation path. Maps serialize independently through
+`to_bytes()`/`from_bytes()` using the language-neutral `NLM1` format.
+
 ## Reporting Issues
 Please report all issues [on github](https://github.com/feihoo87/waveforms/issues).
 

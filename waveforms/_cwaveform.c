@@ -40,6 +40,7 @@
 #define WF_WAVE_HEADER_SIZE 24u
 #define WF_NODE_SIZE 28u
 #define WF_STACK_HEADER_SIZE 16u
+#define WF_NONLINEAR_HEADER_SIZE 48u
 #define WF_VERSION 2u
 
 static uint64_t wf_ticks_per_second = WF_DEFAULT_TICKS_PER_SECOND;
@@ -160,6 +161,24 @@ struct cwaveform_sample_plan {
     int non_overlapping;
 };
 
+struct cwaveform_nonlinear_map {
+    uint32_t references;
+    uint8_t method;
+    uint8_t storage;
+    uint8_t extrapolation;
+    size_t point_count;
+    size_t coefficient_count;
+    double x_min;
+    double x_max;
+    double input_offset;
+    double output_offset;
+    double coordinate_scale;
+    double *coefficients;
+    uint64_t hash;
+    size_t data_size;
+    uint8_t *data;
+};
+
 static double wf_node_parameter(const cwaveform_wave *wave,
                                 const wf_node *node, size_t index);
 static int wf_wave_prepare_drag_sin_kernels(cwaveform_wave *wave);
@@ -210,6 +229,12 @@ static void wf_put_f64(uint8_t *p, double value) {
     wf_put_u64(p, bits);
 }
 
+static void wf_put_f32(uint8_t *p, float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    wf_put_u32(p, bits);
+}
+
 static uint16_t wf_get_u16(const uint8_t *p) {
     return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
@@ -235,6 +260,13 @@ static int64_t wf_get_i64(const uint8_t *p) {
 static double wf_get_f64(const uint8_t *p) {
     uint64_t bits = wf_get_u64(p);
     double value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static float wf_get_f32(const uint8_t *p) {
+    uint32_t bits = wf_get_u32(p);
+    float value;
     memcpy(&value, &bits, sizeof(value));
     return value;
 }
@@ -3337,6 +3369,762 @@ int cwaveform_quantize(const double *values, size_t count, int dtype,
     return wf_quantize_array(values, count, dtype, full_scale, output);
 }
 
+static int wf_nonlinear_layout(int method, int storage, size_t point_count,
+                               size_t *coefficient_count,
+                               size_t *item_size, size_t *data_size) {
+    size_t coefficients;
+    size_t item;
+    if (point_count < 2 || point_count > UINT32_MAX) return -1;
+    if (method == CWAVEFORM_NONLINEAR_LINEAR) {
+        coefficients = point_count;
+    } else if (method == CWAVEFORM_NONLINEAR_CUBIC) {
+        if (point_count - 1 > SIZE_MAX / 4) return -1;
+        coefficients = 4 * (point_count - 1);
+    } else {
+        return -1;
+    }
+    if (storage == CWAVEFORM_NONLINEAR_FLOAT32) {
+        item = sizeof(float);
+    } else if (storage == CWAVEFORM_NONLINEAR_FLOAT64) {
+        item = sizeof(double);
+    } else {
+        return -1;
+    }
+    if (coefficients > (SIZE_MAX - WF_NONLINEAR_HEADER_SIZE) / item) {
+        return -1;
+    }
+    *coefficient_count = coefficients;
+    *item_size = item;
+    *data_size = WF_NONLINEAR_HEADER_SIZE + coefficients * item;
+    return 0;
+}
+
+static cwaveform_nonlinear_map *wf_nonlinear_allocate(
+        int method, int storage, int extrapolation,
+        double x_min, double x_max, double input_offset,
+        double output_offset, size_t point_count) {
+    cwaveform_nonlinear_map *map;
+    size_t coefficient_count;
+    size_t item_size;
+    size_t data_size;
+    if ((extrapolation != CWAVEFORM_NONLINEAR_ERROR
+            && extrapolation != CWAVEFORM_NONLINEAR_CLIP)
+            || !isfinite(x_min) || !isfinite(x_max) || x_min >= x_max
+            || !isfinite(input_offset) || !isfinite(output_offset)
+            || wf_nonlinear_layout(method, storage, point_count,
+                                   &coefficient_count, &item_size,
+                                   &data_size) != 0) {
+        return NULL;
+    }
+    map = (cwaveform_nonlinear_map *)calloc(1, sizeof(*map));
+    if (map == NULL) return NULL;
+    map->coefficients = (double *)malloc(
+        coefficient_count * sizeof(*map->coefficients));
+    map->data = (uint8_t *)calloc(1, data_size);
+    if (map->coefficients == NULL || map->data == NULL) {
+        cwaveform_nonlinear_map_release(map);
+        return NULL;
+    }
+    map->references = 1;
+    map->method = (uint8_t)method;
+    map->storage = (uint8_t)storage;
+    map->extrapolation = (uint8_t)extrapolation;
+    map->point_count = point_count;
+    map->coefficient_count = coefficient_count;
+    map->x_min = x_min;
+    map->x_max = x_max;
+    map->input_offset = input_offset;
+    map->output_offset = output_offset;
+    map->coordinate_scale = (double)(point_count - 1) / (x_max - x_min);
+    map->data_size = data_size;
+    if (!isfinite(map->coordinate_scale) || map->coordinate_scale <= 0.0) {
+        cwaveform_nonlinear_map_release(map);
+        return NULL;
+    }
+    (void)item_size;
+    return map;
+}
+
+cwaveform_nonlinear_map *cwaveform_nonlinear_map_create(
+        int method, int storage, int extrapolation,
+        double x_min, double x_max, double input_offset, double output_offset,
+        const double *coefficients, size_t point_count) {
+    cwaveform_nonlinear_map *map = wf_nonlinear_allocate(
+        method, storage, extrapolation, x_min, x_max,
+        input_offset, output_offset, point_count);
+    size_t index;
+    size_t item_size;
+    size_t ignored_size;
+    size_t ignored_count;
+    if (map == NULL || coefficients == NULL) {
+        cwaveform_nonlinear_map_release(map);
+        return NULL;
+    }
+    wf_nonlinear_layout(method, storage, point_count, &ignored_count,
+                        &item_size, &ignored_size);
+    memcpy(map->data, "NLM1", 4);
+    wf_put_u16(map->data + 4, 1);
+    map->data[6] = (uint8_t)method;
+    map->data[7] = (uint8_t)storage;
+    map->data[8] = (uint8_t)extrapolation;
+    wf_put_u32(map->data + 12, (uint32_t)point_count);
+    wf_put_f64(map->data + 16, x_min);
+    wf_put_f64(map->data + 24, x_max);
+    wf_put_f64(map->data + 32, input_offset);
+    wf_put_f64(map->data + 40, output_offset);
+    for (index = 0; index < map->coefficient_count; ++index) {
+        double value = coefficients[index];
+        uint8_t *target = map->data + WF_NONLINEAR_HEADER_SIZE
+            + index * item_size;
+        if (!isfinite(value)) {
+            cwaveform_nonlinear_map_release(map);
+            return NULL;
+        }
+        if (storage == CWAVEFORM_NONLINEAR_FLOAT32) {
+            float compact = (float)value;
+            if (!isfinite(compact)) {
+                cwaveform_nonlinear_map_release(map);
+                return NULL;
+            }
+            wf_put_f32(target, compact);
+            map->coefficients[index] = (double)compact;
+        } else {
+            wf_put_f64(target, value);
+            map->coefficients[index] = value;
+        }
+    }
+    map->hash = wf_hash_bytes(map->data, map->data_size);
+    return map;
+}
+
+cwaveform_nonlinear_map *cwaveform_nonlinear_map_from_bytes(
+        const uint8_t *data, size_t size) {
+    cwaveform_nonlinear_map *map;
+    int method;
+    int storage;
+    int extrapolation;
+    size_t point_count;
+    size_t coefficient_count;
+    size_t item_size;
+    size_t expected_size;
+    size_t index;
+    double x_min;
+    double x_max;
+    double input_offset;
+    double output_offset;
+    if (data == NULL || size < WF_NONLINEAR_HEADER_SIZE
+            || memcmp(data, "NLM1", 4) != 0
+            || wf_get_u16(data + 4) != 1
+            || data[9] != 0 || data[10] != 0 || data[11] != 0) {
+        return NULL;
+    }
+    method = data[6];
+    storage = data[7];
+    extrapolation = data[8];
+    point_count = wf_get_u32(data + 12);
+    x_min = wf_get_f64(data + 16);
+    x_max = wf_get_f64(data + 24);
+    input_offset = wf_get_f64(data + 32);
+    output_offset = wf_get_f64(data + 40);
+    if (wf_nonlinear_layout(method, storage, point_count,
+                            &coefficient_count, &item_size,
+                            &expected_size) != 0
+            || size != expected_size) {
+        return NULL;
+    }
+    map = wf_nonlinear_allocate(
+        method, storage, extrapolation, x_min, x_max,
+        input_offset, output_offset, point_count);
+    if (map == NULL) return NULL;
+    memcpy(map->data, data, size);
+    for (index = 0; index < coefficient_count; ++index) {
+        const uint8_t *source = data + WF_NONLINEAR_HEADER_SIZE
+            + index * item_size;
+        double value = storage == CWAVEFORM_NONLINEAR_FLOAT32
+            ? (double)wf_get_f32(source) : wf_get_f64(source);
+        if (!isfinite(value)) {
+            cwaveform_nonlinear_map_release(map);
+            return NULL;
+        }
+        map->coefficients[index] = value;
+    }
+    map->hash = wf_hash_bytes(data, size);
+    return map;
+}
+
+void cwaveform_nonlinear_map_retain(cwaveform_nonlinear_map *map) {
+    if (map != NULL) ++map->references;
+}
+
+void cwaveform_nonlinear_map_release(cwaveform_nonlinear_map *map) {
+    if (map == NULL) return;
+    if (map->references > 1) {
+        --map->references;
+        return;
+    }
+    free(map->coefficients);
+    free(map->data);
+    free(map);
+}
+
+const uint8_t *cwaveform_nonlinear_map_bytes(
+        const cwaveform_nonlinear_map *map, size_t *size) {
+    if (map == NULL) return NULL;
+    if (size != NULL) *size = map->data_size;
+    return map->data;
+}
+
+uint64_t cwaveform_nonlinear_map_hash(
+        const cwaveform_nonlinear_map *map) {
+    return map == NULL ? 0 : map->hash;
+}
+
+int cwaveform_nonlinear_map_equal(const cwaveform_nonlinear_map *left,
+                                  const cwaveform_nonlinear_map *right) {
+    return left != NULL && right != NULL && left->hash == right->hash
+        && left->data_size == right->data_size
+        && memcmp(left->data, right->data, left->data_size) == 0;
+}
+
+int cwaveform_nonlinear_map_method(const cwaveform_nonlinear_map *map) {
+    return map == NULL ? 0 : map->method;
+}
+
+int cwaveform_nonlinear_map_storage(const cwaveform_nonlinear_map *map) {
+    return map == NULL ? 0 : map->storage;
+}
+
+int cwaveform_nonlinear_map_extrapolation(
+        const cwaveform_nonlinear_map *map) {
+    return map == NULL ? -1 : map->extrapolation;
+}
+
+size_t cwaveform_nonlinear_map_point_count(
+        const cwaveform_nonlinear_map *map) {
+    return map == NULL ? 0 : map->point_count;
+}
+
+double cwaveform_nonlinear_map_x_min(const cwaveform_nonlinear_map *map) {
+    return map == NULL ? NAN : map->x_min;
+}
+
+double cwaveform_nonlinear_map_x_max(const cwaveform_nonlinear_map *map) {
+    return map == NULL ? NAN : map->x_max;
+}
+
+double cwaveform_nonlinear_map_input_offset(
+        const cwaveform_nonlinear_map *map) {
+    return map == NULL ? NAN : map->input_offset;
+}
+
+double cwaveform_nonlinear_map_output_offset(
+        const cwaveform_nonlinear_map *map) {
+    return map == NULL ? NAN : map->output_offset;
+}
+
+static int wf_nonlinear_value(const cwaveform_nonlinear_map *map,
+                              double input, double *output) {
+    double absolute;
+    double coordinate;
+    double fraction;
+    double value;
+    size_t interval_count = map->point_count - 1;
+    size_t interval;
+    if (!isfinite(input)) return -3;
+    absolute = input + map->input_offset;
+    if (!isfinite(absolute)) return -3;
+    if (absolute < map->x_min) {
+        if (map->extrapolation == CWAVEFORM_NONLINEAR_ERROR) return -3;
+        coordinate = 0.0;
+    } else if (absolute > map->x_max) {
+        if (map->extrapolation == CWAVEFORM_NONLINEAR_ERROR) return -3;
+        coordinate = (double)interval_count;
+    } else if (absolute == map->x_max) {
+        coordinate = (double)interval_count;
+    } else {
+        coordinate = (absolute - map->x_min) * map->coordinate_scale;
+        if (coordinate < 0.0) coordinate = 0.0;
+        if (coordinate > (double)interval_count)
+            coordinate = (double)interval_count;
+    }
+    interval = (size_t)coordinate;
+    if (interval >= interval_count) {
+        interval = interval_count - 1;
+        fraction = 1.0;
+    } else {
+        fraction = coordinate - (double)interval;
+    }
+    if (map->method == CWAVEFORM_NONLINEAR_LINEAR) {
+        double left = map->coefficients[interval];
+        value = left + fraction
+            * (map->coefficients[interval + 1] - left);
+    } else {
+        const double *coefficient = map->coefficients + 4 * interval;
+        value = coefficient[0] + fraction * (coefficient[1]
+            + fraction * (coefficient[2] + fraction * coefficient[3]));
+    }
+    value -= map->output_offset;
+    if (!isfinite(value)) return -3;
+    *output = value;
+    return 0;
+}
+
+static int wf_nonlinear_apply_scalar(
+        const cwaveform_nonlinear_map *map, const double *input, size_t count,
+        int dtype, double full_scale, void *output) {
+    size_t index;
+    for (index = 0; index < count; ++index) {
+        double value;
+        int status = wf_nonlinear_value(map, input[index], &value);
+        if (status != 0) return status;
+        if (dtype == CWAVEFORM_FLOAT64)
+            ((double *)output)[index] = value;
+        else if (dtype == CWAVEFORM_INT16)
+            ((int16_t *)output)[index] = wf_quantize16(value, full_scale);
+        else
+            ((int32_t *)output)[index] = wf_quantize32(value, full_scale);
+    }
+    return 0;
+}
+
+#if defined(WF_HAVE_ARM64_NEON) && !defined(WF_DISABLE_NONLINEAR_SIMD)
+static int wf_nonlinear_apply_neon(
+        const cwaveform_nonlinear_map *map, const double *input, size_t count,
+        int dtype, double full_scale, void *output) {
+    const size_t interval_count = map->point_count - 1;
+    const float64x2_t input_offset = vdupq_n_f64(map->input_offset);
+    const float64x2_t output_offset = vdupq_n_f64(map->output_offset);
+    const float64x2_t x_min = vdupq_n_f64(map->x_min);
+    const float64x2_t x_max = vdupq_n_f64(map->x_max);
+    const float64x2_t coordinate_scale =
+        vdupq_n_f64(map->coordinate_scale);
+    const float64x2_t zero = vdupq_n_f64(0.0);
+    const float64x2_t one = vdupq_n_f64(1.0);
+    const float64x2_t last_coordinate =
+        vdupq_n_f64((double)interval_count);
+    const float64x2_t finite_limit = vdupq_n_f64(DBL_MAX);
+    size_t index = 0;
+    for (; index + 2 <= count; index += 2) {
+        float64x2_t absolute = vaddq_f64(
+            vld1q_f64(input + index), input_offset);
+        uint64x2_t finite = vcleq_f64(vabsq_f64(absolute), finite_limit);
+        uint64x2_t endpoint;
+        uint64x2_t raw_indices;
+        uint64x2_t indices;
+        float64x2_t coordinate;
+        float64x2_t fraction;
+        float64x2_t value;
+        uint64_t first;
+        uint64_t second;
+        double coefficient0[2];
+        double coefficient1[2];
+        if (vgetq_lane_u64(finite, 0) == 0
+                || vgetq_lane_u64(finite, 1) == 0) return -3;
+        if (map->extrapolation == CWAVEFORM_NONLINEAR_ERROR) {
+            uint64x2_t outside = vorrq_u64(
+                vcltq_f64(absolute, x_min), vcgtq_f64(absolute, x_max));
+            if (vgetq_lane_u64(outside, 0) != 0
+                    || vgetq_lane_u64(outside, 1) != 0) return -3;
+        } else {
+            absolute = vmaxq_f64(x_min, vminq_f64(absolute, x_max));
+        }
+        coordinate = vmulq_f64(
+            vsubq_f64(absolute, x_min), coordinate_scale);
+        coordinate = vmaxq_f64(
+            zero, vminq_f64(coordinate, last_coordinate));
+        endpoint = vorrq_u64(
+            vcgeq_f64(coordinate, last_coordinate),
+            vceqq_f64(absolute, x_max));
+        raw_indices = vcvtq_u64_f64(coordinate);
+        indices = vbslq_u64(
+            endpoint, vdupq_n_u64((uint64_t)(interval_count - 1)),
+            raw_indices);
+        fraction = vsubq_f64(coordinate, vcvtq_f64_u64(raw_indices));
+        fraction = vbslq_f64(endpoint, one, fraction);
+        first = vgetq_lane_u64(indices, 0);
+        second = vgetq_lane_u64(indices, 1);
+        if (map->method == CWAVEFORM_NONLINEAR_LINEAR) {
+            float64x2_t left;
+            float64x2_t right;
+            coefficient0[0] = map->coefficients[first];
+            coefficient0[1] = map->coefficients[second];
+            coefficient1[0] = map->coefficients[first + 1];
+            coefficient1[1] = map->coefficients[second + 1];
+            left = vld1q_f64(coefficient0);
+            right = vld1q_f64(coefficient1);
+            value = vfmaq_f64(left, fraction, vsubq_f64(right, left));
+        } else {
+            double coefficient2[2];
+            double coefficient3[2];
+            float64x2_t inner;
+            first *= 4;
+            second *= 4;
+            coefficient0[0] = map->coefficients[first];
+            coefficient0[1] = map->coefficients[second];
+            coefficient1[0] = map->coefficients[first + 1];
+            coefficient1[1] = map->coefficients[second + 1];
+            coefficient2[0] = map->coefficients[first + 2];
+            coefficient2[1] = map->coefficients[second + 2];
+            coefficient3[0] = map->coefficients[first + 3];
+            coefficient3[1] = map->coefficients[second + 3];
+            inner = vfmaq_f64(
+                vld1q_f64(coefficient2), fraction,
+                vld1q_f64(coefficient3));
+            inner = vfmaq_f64(
+                vld1q_f64(coefficient1), fraction, inner);
+            value = vfmaq_f64(
+                vld1q_f64(coefficient0), fraction, inner);
+        }
+        value = vsubq_f64(value, output_offset);
+        finite = vcleq_f64(vabsq_f64(value), finite_limit);
+        if (vgetq_lane_u64(finite, 0) == 0
+                || vgetq_lane_u64(finite, 1) == 0) return -3;
+        if (dtype == CWAVEFORM_FLOAT64) {
+            vst1q_f64((double *)output + index, value);
+        } else {
+            double values[2];
+            vst1q_f64(values, value);
+            if (dtype == CWAVEFORM_INT16) {
+                ((int16_t *)output)[index] =
+                    wf_quantize16(values[0], full_scale);
+                ((int16_t *)output)[index + 1] =
+                    wf_quantize16(values[1], full_scale);
+            } else {
+                ((int32_t *)output)[index] =
+                    wf_quantize32(values[0], full_scale);
+                ((int32_t *)output)[index + 1] =
+                    wf_quantize32(values[1], full_scale);
+            }
+        }
+    }
+    if (index != count) {
+        size_t item_size = dtype == CWAVEFORM_FLOAT64 ? sizeof(double)
+            : dtype == CWAVEFORM_INT16 ? sizeof(int16_t) : sizeof(int32_t);
+        return wf_nonlinear_apply_scalar(
+            map, input + index, count - index, dtype, full_scale,
+            (uint8_t *)output + index * item_size);
+    }
+    return 0;
+}
+#endif
+
+#if defined(WF_HAVE_X86_SIMD) && !defined(WF_DISABLE_X86_SIMD) \
+        && !defined(WF_DISABLE_NONLINEAR_SIMD)
+WF_TARGET_AVX2
+static int wf_nonlinear_apply_avx2(
+        const cwaveform_nonlinear_map *map, const double *input, size_t count,
+        int dtype, double full_scale, void *output) {
+    const size_t interval_count = map->point_count - 1;
+    const __m256d input_offset = _mm256_set1_pd(map->input_offset);
+    const __m256d output_offset = _mm256_set1_pd(map->output_offset);
+    const __m256d x_min = _mm256_set1_pd(map->x_min);
+    const __m256d x_max = _mm256_set1_pd(map->x_max);
+    const __m256d coordinate_scale = _mm256_set1_pd(map->coordinate_scale);
+    const __m256d zero = _mm256_setzero_pd();
+    const __m256d one = _mm256_set1_pd(1.0);
+    const __m256d last_coordinate =
+        _mm256_set1_pd((double)interval_count);
+    const __m256d finite_limit = _mm256_set1_pd(DBL_MAX);
+    const __m256d sign_mask = _mm256_set1_pd(-0.0);
+    size_t index = 0;
+    for (; index + 4 <= count; index += 4) {
+        __m256d absolute = _mm256_add_pd(
+            _mm256_loadu_pd(input + index), input_offset);
+        __m256d absolute_magnitude =
+            _mm256_andnot_pd(sign_mask, absolute);
+        __m256d coordinate;
+        __m256d endpoint;
+        __m128i raw_indices;
+        __m128i indices;
+        __m256d fraction;
+        __m256d value;
+        int32_t index_values[4];
+        if (_mm256_movemask_pd(_mm256_cmp_pd(
+                absolute_magnitude, finite_limit, _CMP_LE_OQ)) != 0x0f) {
+            _mm256_zeroupper();
+            return -3;
+        }
+        if (map->extrapolation == CWAVEFORM_NONLINEAR_ERROR) {
+            __m256d outside = _mm256_or_pd(
+                _mm256_cmp_pd(absolute, x_min, _CMP_LT_OQ),
+                _mm256_cmp_pd(absolute, x_max, _CMP_GT_OQ));
+            if (_mm256_movemask_pd(outside) != 0) {
+                _mm256_zeroupper();
+                return -3;
+            }
+        } else {
+            absolute = _mm256_max_pd(x_min, _mm256_min_pd(absolute, x_max));
+        }
+        coordinate = _mm256_mul_pd(
+            _mm256_sub_pd(absolute, x_min), coordinate_scale);
+        coordinate = _mm256_max_pd(
+            zero, _mm256_min_pd(coordinate, last_coordinate));
+        endpoint = _mm256_or_pd(
+            _mm256_cmp_pd(coordinate, last_coordinate, _CMP_GE_OQ),
+            _mm256_cmp_pd(absolute, x_max, _CMP_EQ_OQ));
+        raw_indices = _mm256_cvttpd_epi32(coordinate);
+        _mm_storeu_si128((__m128i *)index_values, raw_indices);
+        if (_mm256_movemask_pd(endpoint) != 0) {
+            int lane;
+            int endpoint_mask = _mm256_movemask_pd(endpoint);
+            for (lane = 0; lane < 4; ++lane)
+                if ((endpoint_mask & (1 << lane)) != 0)
+                    index_values[lane] = (int32_t)(interval_count - 1);
+        }
+        indices = _mm_loadu_si128((const __m128i *)index_values);
+        fraction = _mm256_sub_pd(
+            coordinate, _mm256_cvtepi32_pd(raw_indices));
+        fraction = _mm256_blendv_pd(fraction, one, endpoint);
+        if (map->method == CWAVEFORM_NONLINEAR_LINEAR) {
+            __m256d left = _mm256_i32gather_pd(
+                map->coefficients, indices, 8);
+            __m256d right = _mm256_i32gather_pd(
+                map->coefficients + 1, indices, 8);
+            value = _mm256_add_pd(
+                left, _mm256_mul_pd(fraction, _mm256_sub_pd(right, left)));
+        } else {
+            __m128i coefficient_indices = _mm_slli_epi32(indices, 2);
+            __m256d coefficient0 = _mm256_i32gather_pd(
+                map->coefficients, coefficient_indices, 8);
+            __m256d coefficient1 = _mm256_i32gather_pd(
+                map->coefficients + 1, coefficient_indices, 8);
+            __m256d coefficient2 = _mm256_i32gather_pd(
+                map->coefficients + 2, coefficient_indices, 8);
+            __m256d coefficient3 = _mm256_i32gather_pd(
+                map->coefficients + 3, coefficient_indices, 8);
+            value = _mm256_add_pd(
+                coefficient2, _mm256_mul_pd(fraction, coefficient3));
+            value = _mm256_add_pd(
+                coefficient1, _mm256_mul_pd(fraction, value));
+            value = _mm256_add_pd(
+                coefficient0, _mm256_mul_pd(fraction, value));
+        }
+        value = _mm256_sub_pd(value, output_offset);
+        absolute_magnitude = _mm256_andnot_pd(sign_mask, value);
+        if (_mm256_movemask_pd(_mm256_cmp_pd(
+                absolute_magnitude, finite_limit, _CMP_LE_OQ)) != 0x0f) {
+            _mm256_zeroupper();
+            return -3;
+        }
+        if (dtype == CWAVEFORM_FLOAT64) {
+            _mm256_storeu_pd((double *)output + index, value);
+        } else {
+            double values[4];
+            int lane;
+            _mm256_storeu_pd(values, value);
+            if (dtype == CWAVEFORM_INT16)
+                for (lane = 0; lane < 4; ++lane)
+                    ((int16_t *)output)[index + (size_t)lane] =
+                        wf_quantize16(values[lane], full_scale);
+            else
+                for (lane = 0; lane < 4; ++lane)
+                    ((int32_t *)output)[index + (size_t)lane] =
+                        wf_quantize32(values[lane], full_scale);
+        }
+    }
+    _mm256_zeroupper();
+    if (index != count) {
+        size_t item_size = dtype == CWAVEFORM_FLOAT64 ? sizeof(double)
+            : dtype == CWAVEFORM_INT16 ? sizeof(int16_t) : sizeof(int32_t);
+        return wf_nonlinear_apply_scalar(
+            map, input + index, count - index, dtype, full_scale,
+            (uint8_t *)output + index * item_size);
+    }
+    return 0;
+}
+
+#if !defined(WF_DISABLE_AVX512) && !defined(_MSC_VER)
+WF_TARGET_AVX512
+static int wf_nonlinear_apply_avx512(
+        const cwaveform_nonlinear_map *map, const double *input, size_t count,
+        int dtype, double full_scale, void *output) {
+    const size_t interval_count = map->point_count - 1;
+    const __m512d input_offset = _mm512_set1_pd(map->input_offset);
+    const __m512d output_offset = _mm512_set1_pd(map->output_offset);
+    const __m512d x_min = _mm512_set1_pd(map->x_min);
+    const __m512d x_max = _mm512_set1_pd(map->x_max);
+    const __m512d coordinate_scale = _mm512_set1_pd(map->coordinate_scale);
+    const __m512d zero = _mm512_setzero_pd();
+    const __m512d one = _mm512_set1_pd(1.0);
+    const __m512d last_coordinate =
+        _mm512_set1_pd((double)interval_count);
+    const __m512d finite_limit = _mm512_set1_pd(DBL_MAX);
+    const __m512i absolute_mask =
+        _mm512_set1_epi64((long long)UINT64_C(0x7fffffffffffffff));
+    size_t index = 0;
+    for (; index + 8 <= count; index += 8) {
+        __m512d absolute = _mm512_add_pd(
+            _mm512_loadu_pd(input + index), input_offset);
+        __m512d absolute_magnitude = _mm512_castsi512_pd(
+            _mm512_and_si512(_mm512_castpd_si512(absolute), absolute_mask));
+        __m512d coordinate;
+        __mmask8 endpoint;
+        __m512i raw_indices;
+        __m512i indices;
+        __m512d fraction;
+        __m512d value;
+        if (_mm512_cmp_pd_mask(
+                absolute_magnitude, finite_limit, _CMP_LE_OQ) != 0xff) {
+            _mm256_zeroupper();
+            return -3;
+        }
+        if (map->extrapolation == CWAVEFORM_NONLINEAR_ERROR) {
+            __mmask8 outside = _mm512_cmp_pd_mask(
+                absolute, x_min, _CMP_LT_OQ)
+                | _mm512_cmp_pd_mask(absolute, x_max, _CMP_GT_OQ);
+            if (outside != 0) {
+                _mm256_zeroupper();
+                return -3;
+            }
+        } else {
+            absolute = _mm512_max_pd(x_min, _mm512_min_pd(absolute, x_max));
+        }
+        coordinate = _mm512_mul_pd(
+            _mm512_sub_pd(absolute, x_min), coordinate_scale);
+        coordinate = _mm512_max_pd(
+            zero, _mm512_min_pd(coordinate, last_coordinate));
+        endpoint = _mm512_cmp_pd_mask(
+            coordinate, last_coordinate, _CMP_GE_OQ)
+            | _mm512_cmp_pd_mask(absolute, x_max, _CMP_EQ_OQ);
+        raw_indices = _mm512_cvttpd_epi64(coordinate);
+        indices = _mm512_mask_mov_epi64(
+            raw_indices, endpoint,
+            _mm512_set1_epi64((long long)(interval_count - 1)));
+        fraction = _mm512_sub_pd(
+            coordinate, _mm512_cvtepi64_pd(raw_indices));
+        fraction = _mm512_mask_mov_pd(fraction, endpoint, one);
+        if (map->method == CWAVEFORM_NONLINEAR_LINEAR) {
+            __m512d left = _mm512_i64gather_pd(
+                indices, map->coefficients, 8);
+            __m512d right = _mm512_i64gather_pd(
+                indices, map->coefficients + 1, 8);
+            value = _mm512_add_pd(
+                left, _mm512_mul_pd(fraction, _mm512_sub_pd(right, left)));
+        } else {
+            __m512i coefficient_indices = _mm512_slli_epi64(indices, 2);
+            __m512d coefficient0 = _mm512_i64gather_pd(
+                coefficient_indices, map->coefficients, 8);
+            __m512d coefficient1 = _mm512_i64gather_pd(
+                coefficient_indices, map->coefficients + 1, 8);
+            __m512d coefficient2 = _mm512_i64gather_pd(
+                coefficient_indices, map->coefficients + 2, 8);
+            __m512d coefficient3 = _mm512_i64gather_pd(
+                coefficient_indices, map->coefficients + 3, 8);
+            value = _mm512_add_pd(
+                coefficient2, _mm512_mul_pd(fraction, coefficient3));
+            value = _mm512_add_pd(
+                coefficient1, _mm512_mul_pd(fraction, value));
+            value = _mm512_add_pd(
+                coefficient0, _mm512_mul_pd(fraction, value));
+        }
+        value = _mm512_sub_pd(value, output_offset);
+        absolute_magnitude = _mm512_castsi512_pd(
+            _mm512_and_si512(_mm512_castpd_si512(value), absolute_mask));
+        if (_mm512_cmp_pd_mask(
+                absolute_magnitude, finite_limit, _CMP_LE_OQ) != 0xff) {
+            _mm256_zeroupper();
+            return -3;
+        }
+        if (dtype == CWAVEFORM_FLOAT64) {
+            _mm512_storeu_pd((double *)output + index, value);
+        } else {
+            double values[8];
+            int lane;
+            _mm512_storeu_pd(values, value);
+            if (dtype == CWAVEFORM_INT16)
+                for (lane = 0; lane < 8; ++lane)
+                    ((int16_t *)output)[index + (size_t)lane] =
+                        wf_quantize16(values[lane], full_scale);
+            else
+                for (lane = 0; lane < 8; ++lane)
+                    ((int32_t *)output)[index + (size_t)lane] =
+                        wf_quantize32(values[lane], full_scale);
+        }
+    }
+    _mm256_zeroupper();
+    if (index != count) {
+        size_t item_size = dtype == CWAVEFORM_FLOAT64 ? sizeof(double)
+            : dtype == CWAVEFORM_INT16 ? sizeof(int16_t) : sizeof(int32_t);
+        return wf_nonlinear_apply_scalar(
+            map, input + index, count - index, dtype, full_scale,
+            (uint8_t *)output + index * item_size);
+    }
+    return 0;
+}
+#endif
+#endif
+
+static int wf_nonlinear_apply_dispatch(
+        const cwaveform_nonlinear_map *map, const double *input, size_t count,
+        int dtype, double full_scale, void *output) {
+#if defined(WF_HAVE_ARM64_NEON) && !defined(WF_DISABLE_NONLINEAR_SIMD)
+    if (count >= 8)
+        return wf_nonlinear_apply_neon(
+            map, input, count, dtype, full_scale, output);
+#endif
+#if defined(WF_HAVE_X86_SIMD) && !defined(WF_DISABLE_X86_SIMD) \
+        && !defined(WF_DISABLE_NONLINEAR_SIMD)
+    if (count >= 16) {
+#if !defined(WF_DISABLE_AVX512) && !defined(_MSC_VER)
+        if (wf_cpu_supports_avx512())
+            return wf_nonlinear_apply_avx512(
+                map, input, count, dtype, full_scale, output);
+#endif
+        if (map->point_count <= (size_t)INT32_MAX
+                && (map->method == CWAVEFORM_NONLINEAR_LINEAR
+                    || map->point_count - 1 <= (size_t)INT32_MAX / 4)
+                && wf_cpu_supports_avx2())
+            return wf_nonlinear_apply_avx2(
+                map, input, count, dtype, full_scale, output);
+    }
+#endif
+    return wf_nonlinear_apply_scalar(
+        map, input, count, dtype, full_scale, output);
+}
+
+int cwaveform_nonlinear_map_apply(
+        const cwaveform_nonlinear_map *map, const double *input, size_t count,
+        int dtype, double full_scale, void *output) {
+    if (map == NULL || (count != 0 && (input == NULL || output == NULL))
+            || (dtype != CWAVEFORM_FLOAT64 && dtype != CWAVEFORM_INT16
+                && dtype != CWAVEFORM_INT32)
+            || !isfinite(full_scale) || full_scale <= 0.0) {
+        return -1;
+    }
+    if (count == 0) return 0;
+    if (dtype != CWAVEFORM_FLOAT64 && count >= 64) {
+        const size_t scratch_capacity = count < 4096 ? count : 4096;
+        const size_t item_size = dtype == CWAVEFORM_INT16
+            ? sizeof(int16_t) : sizeof(int32_t);
+        double *scratch = (double *)malloc(
+            scratch_capacity * sizeof(*scratch));
+        size_t offset = 0;
+        if (scratch != NULL) {
+            while (offset < count) {
+                size_t batch = count - offset;
+                int status;
+                if (batch > scratch_capacity) batch = scratch_capacity;
+                status = wf_nonlinear_apply_dispatch(
+                    map, input + offset, batch, CWAVEFORM_FLOAT64,
+                    full_scale, scratch);
+                if (status == 0)
+                    status = wf_quantize_array(
+                        scratch, batch, dtype, full_scale,
+                        (uint8_t *)output + offset * item_size);
+                if (status != 0) {
+                    free(scratch);
+                    return status;
+                }
+                offset += batch;
+            }
+            free(scratch);
+            return 0;
+        }
+    }
+    return wf_nonlinear_apply_dispatch(
+        map, input, count, dtype, full_scale, output);
+}
+
 /* Form the local coordinate before converting to binary64.  Subtracting two
  * already-rounded seconds values loses enough precision to move an exact
  * pulse boundary outside its half-open support. */
@@ -4691,5 +5479,5 @@ cwaveform_wave *cwaveform_stack_simplify(const cwaveform_stack *stack,
 }
 
 const char *cwaveform_format_description(void) {
-    return "WNF4/WNS4 little-endian immutable waveform blocks; global integer ticks; ABI 2";
+    return "WNF4/WNS4 waveform and NLM1 nonlinear-map little-endian immutable blocks; global integer ticks; ABI 2";
 }

@@ -1,6 +1,7 @@
 from numpy import e, pi
 
 from .version import __version__
+from .nonlinear import NonlinearMap
 from .waveform import (
     ComplexWaveform,
     ComplexWaveVStack,
@@ -51,7 +52,7 @@ from .waveform import (
 )
 
 __all__ = [
-    "ComplexWaveform", "ComplexWaveVStack", "D", "RealWaveform",
+    "ComplexWaveform", "ComplexWaveVStack", "D", "NonlinearMap", "RealWaveform",
     "RealWaveVStack", "Waveform", "WaveVStack",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",

@@ -1,4 +1,4 @@
-# WNF4 / WNS4 cross-language waveform format
+# WNF4 / WNS4 / NLM1 cross-language waveform format
 
 WNF4 and WNS4 are immutable, little-endian binary blocks. They can be read by
 C, Rust, Python, or device-side tooling without rebuilding a Python expression
@@ -83,3 +83,37 @@ construction, algebra, derivative, filtering, simplification, stack operations,
 sampling plans, evaluation, quantization, and serialization all operate on this
 single C representation. Complex Python objects contain two independent real C
 blocks.
+
+## NLM1 nonlinear-map block (ABI 1)
+
+NLM1 represents a scalar, memoryless nonlinear map on a uniform input grid.
+Runtime evaluation dispatches to ARM64 NEON, x86 AVX2, or x86 AVX-512
+batch kernels when available, with a portable scalar fallback. The serialized
+format is independent of the selected kernel and produces the same boundary,
+clipping, and quantization semantics on macOS, Linux, and Windows.
+It is applied after waveform/event accumulation and before linear filtering or
+integer quantization. The header is followed by either one ordinate per grid
+point or four normalized cubic coefficients per interval.
+
+| Offset | Type | Meaning |
+| ---: | --- | --- |
+| 0 | `char[4]` | `NLM1` |
+| 4 | `u16` | ABI version, currently 1 |
+| 6 | `u8` | method: 1 linear, 2 monotone cubic |
+| 7 | `u8` | payload precision: 32 or 64 bits |
+| 8 | `u8` | out-of-domain policy: 0 error, 1 clip |
+| 9 | `u8[3]` | reserved, currently 0 |
+| 12 | `u32` | uniform-grid point count |
+| 16 | `f64` | absolute input-domain minimum |
+| 24 | `f64` | absolute input-domain maximum |
+| 32 | `f64` | input/reference offset |
+| 40 | `f64` | output/reference offset |
+| 48 | `f32[]` or `f64[]` | method payload |
+
+For a centered map, an input `v` first becomes `x = v + input_offset`; the
+result is then reduced by `output_offset`. Linear payloads store
+`point_count` values. Cubic payloads store `(a, b, c, d)` for each of
+`point_count - 1` intervals and evaluate
+`a + r * (b + r * (c + r * d))`, where `r` is the normalized position in the
+interval. This avoids per-sample root finding, knot searches, and Python
+callbacks.

@@ -15,7 +15,7 @@ from waveforms._waveform import (
 
 
 PUBLIC_NAMES = {
-    "ComplexWaveform", "ComplexWaveVStack", "D", "RealWaveform",
+    "ComplexWaveform", "ComplexWaveVStack", "D", "NonlinearMap", "RealWaveform",
     "RealWaveVStack", "Waveform", "WaveVStack",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",

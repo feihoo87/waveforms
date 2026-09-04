@@ -52,6 +52,7 @@ jobs:
       if: ${{ matrix.python-version == '3.12' }}
       run: |
         python benchmarks/benchmark_simd.py --count 1000000 --repeats 7
+        python benchmarks/benchmark_nonlinear.py --count 1000000 --repeats 7
     - name: Coveralls
       if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12' }}
       continue-on-error: true

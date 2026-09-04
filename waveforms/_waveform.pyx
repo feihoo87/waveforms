@@ -34,6 +34,13 @@ D_GAUSSIAN = 15
 DRAG_SIN = 16
 DRAG_SINX = 17
 
+NONLINEAR_LINEAR = 1
+NONLINEAR_CUBIC = 2
+NONLINEAR_FLOAT32 = 32
+NONLINEAR_FLOAT64 = 64
+NONLINEAR_ERROR = 0
+NONLINEAR_CLIP = 1
+
 # The process-wide time quantum is exact even though the public API exposes
 # seconds as floats. A 120 GHz clock covers common instrument rates with
 # integer sample steps while ``sample_clock`` retains a rational fallback.
@@ -453,6 +460,8 @@ cdef extern from "_cwaveform.h":
         pass
     ctypedef struct cwaveform_sample_plan:
         pass
+    ctypedef struct cwaveform_nonlinear_map:
+        pass
 
     uint64_t cwaveform_ticks_per_second() noexcept nogil
     int cwaveform_set_ticks_per_second(uint64_t) noexcept nogil
@@ -498,6 +507,41 @@ cdef extern from "_cwaveform.h":
         double, double, double, int, double, void *) noexcept nogil
     int cwaveform_quantize(
         const double *, size_t, int, double, void *) noexcept nogil
+    cwaveform_nonlinear_map *cwaveform_nonlinear_map_create(
+        int, int, int, double, double, double, double,
+        const double *, size_t) noexcept nogil
+    cwaveform_nonlinear_map *cwaveform_nonlinear_map_from_bytes(
+        const uint8_t *, size_t) noexcept nogil
+    void cwaveform_nonlinear_map_retain(
+        cwaveform_nonlinear_map *) noexcept nogil
+    void cwaveform_nonlinear_map_release(
+        cwaveform_nonlinear_map *) noexcept nogil
+    const uint8_t *cwaveform_nonlinear_map_bytes(
+        const cwaveform_nonlinear_map *, size_t *) noexcept nogil
+    uint64_t cwaveform_nonlinear_map_hash(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    int cwaveform_nonlinear_map_equal(
+        const cwaveform_nonlinear_map *,
+        const cwaveform_nonlinear_map *) noexcept nogil
+    int cwaveform_nonlinear_map_method(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    int cwaveform_nonlinear_map_storage(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    int cwaveform_nonlinear_map_extrapolation(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    size_t cwaveform_nonlinear_map_point_count(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    double cwaveform_nonlinear_map_x_min(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    double cwaveform_nonlinear_map_x_max(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    double cwaveform_nonlinear_map_input_offset(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    double cwaveform_nonlinear_map_output_offset(
+        const cwaveform_nonlinear_map *) noexcept nogil
+    int cwaveform_nonlinear_map_apply(
+        const cwaveform_nonlinear_map *, const double *, size_t,
+        int, double, void *) noexcept nogil
 
     cwaveform_stack *cwaveform_stack_create(
         cwaveform_wave *const *, const uint32_t *, const int64_t *,
@@ -572,6 +616,169 @@ cdef CWaveformSamplePlan _wrap_plan(cwaveform_sample_plan *pointer):
     cdef CWaveformSamplePlan result = CWaveformSamplePlan.__new__(CWaveformSamplePlan)
     result._pointer = pointer
     return result
+
+
+cdef CNonlinearMapCore _wrap_nonlinear_map(
+        cwaveform_nonlinear_map *pointer):
+    if pointer == NULL:
+        raise MemoryError("C nonlinear-map construction failed")
+    cdef CNonlinearMapCore result = CNonlinearMapCore.__new__(
+        CNonlinearMapCore)
+    result._pointer = pointer
+    result._serialized = None
+    return result
+
+
+cdef class CNonlinearMapCore:
+    """Native owner for a compact NLM1 uniform-grid nonlinear map."""
+
+    cdef cwaveform_nonlinear_map *_pointer
+    cdef object _serialized
+
+    def __cinit__(self):
+        self._pointer = NULL
+        self._serialized = None
+
+    def __dealloc__(self):
+        if self._pointer != NULL:
+            cwaveform_nonlinear_map_release(self._pointer)
+
+    @classmethod
+    def create(cls, int method, int storage, int extrapolation,
+               double x_min, double x_max, double input_offset,
+               double output_offset, coefficients, Py_ssize_t point_count):
+        cdef object array = np.ascontiguousarray(
+            coefficients, dtype=np.float64).reshape(-1)
+        cdef double[::1] view = array
+        cdef size_t coefficient_count = view.shape[0]
+        cdef size_t expected_count
+        cdef cwaveform_nonlinear_map *pointer
+        if point_count < 2:
+            raise ValueError("point_count must be at least two")
+        if method == NONLINEAR_LINEAR:
+            expected_count = point_count
+        elif method == NONLINEAR_CUBIC:
+            expected_count = 4 * (point_count - 1)
+        else:
+            raise ValueError("unknown nonlinear-map method")
+        if coefficient_count != expected_count:
+            raise ValueError("coefficient count does not match point_count")
+        with nogil:
+            pointer = cwaveform_nonlinear_map_create(
+                method, storage, extrapolation,
+                x_min, x_max, input_offset, output_offset,
+                NULL if coefficient_count == 0 else &view[0], point_count,
+            )
+        if pointer == NULL:
+            raise ValueError("invalid nonlinear-map parameters")
+        return _wrap_nonlinear_map(pointer)
+
+    @classmethod
+    def from_bytes(cls, data):
+        cdef bytes block = bytes(data)
+        cdef size_t size = len(block)
+        cdef const uint8_t *source = <const uint8_t *>PyBytes_AS_STRING(block)
+        cdef cwaveform_nonlinear_map *pointer
+        cdef CNonlinearMapCore result
+        with nogil:
+            pointer = cwaveform_nonlinear_map_from_bytes(source, size)
+        if pointer == NULL:
+            raise ValueError("invalid NLM1 nonlinear-map block")
+        result = _wrap_nonlinear_map(pointer)
+        result._serialized = block
+        return result
+
+    def to_bytes(self):
+        cdef size_t size = 0
+        cdef const uint8_t *data
+        if self._serialized is None:
+            data = cwaveform_nonlinear_map_bytes(self._pointer, &size)
+            self._serialized = PyBytes_FromStringAndSize(
+                <const char *>data, size)
+        return self._serialized
+
+    def apply(self, values, int bits=0, double full_scale=1.0, out=None):
+        cdef object source = np.ascontiguousarray(values, dtype=np.float64)
+        cdef object target
+        cdef double[::1] source_view = source.reshape(-1)
+        cdef size_t count = source_view.shape[0]
+        cdef void *target_pointer
+        cdef int status
+        dtype = np.float64 if bits == 0 else (
+            np.int16 if bits == 16 else np.int32 if bits == 32 else None
+        )
+        if dtype is None:
+            raise ValueError("bits must be 0, 16, or 32")
+        if out is None:
+            target = np.empty(source.shape, dtype=dtype)
+        else:
+            target = np.asarray(out)
+            if target.shape != source.shape or target.dtype != np.dtype(dtype):
+                raise ValueError("out has the wrong shape or dtype")
+            if not target.flags.c_contiguous or not target.flags.writeable:
+                raise ValueError("out must be writable and C-contiguous")
+        if count == 0:
+            return target
+        target_pointer = <void *><size_t>target.ctypes.data
+        with nogil:
+            status = cwaveform_nonlinear_map_apply(
+                self._pointer, &source_view[0], count, bits,
+                full_scale, target_pointer,
+            )
+        if status == -3:
+            raise ValueError(
+                "nonlinear-map input is non-finite or outside its domain")
+        if status != 0:
+            raise RuntimeError(
+                f"C nonlinear-map evaluation failed with status {status}")
+        return target
+
+    @property
+    def method(self):
+        return cwaveform_nonlinear_map_method(self._pointer)
+
+    @property
+    def storage(self):
+        return cwaveform_nonlinear_map_storage(self._pointer)
+
+    @property
+    def extrapolation(self):
+        return cwaveform_nonlinear_map_extrapolation(self._pointer)
+
+    @property
+    def point_count(self):
+        return cwaveform_nonlinear_map_point_count(self._pointer)
+
+    @property
+    def x_min(self):
+        return cwaveform_nonlinear_map_x_min(self._pointer)
+
+    @property
+    def x_max(self):
+        return cwaveform_nonlinear_map_x_max(self._pointer)
+
+    @property
+    def input_offset(self):
+        return cwaveform_nonlinear_map_input_offset(self._pointer)
+
+    @property
+    def output_offset(self):
+        return cwaveform_nonlinear_map_output_offset(self._pointer)
+
+    @property
+    def hash64(self):
+        return cwaveform_nonlinear_map_hash(self._pointer)
+
+    def __eq__(self, other):
+        return (isinstance(other, CNonlinearMapCore)
+                and cwaveform_nonlinear_map_equal(
+                    self._pointer, (<CNonlinearMapCore>other)._pointer))
+
+    def __hash__(self):
+        return hash(self.to_bytes())
+
+    def __reduce__(self):
+        return (type(self).from_bytes, (self.to_bytes(),))
 
 
 cdef class CWaveformCore:

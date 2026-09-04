@@ -15,6 +15,8 @@ import numpy as np
 from numpy import e, inf, pi
 from scipy.signal import sosfilt
 
+from .nonlinear import NonlinearMap
+
 from ._waveform import (
     COS, COSH, D_GAUSSIAN, DRAG, DRAG_SIN, DRAG_SINX, ERF, EXP,
     EXPONENTIALCHIRP, GAUSSIAN,
@@ -98,6 +100,7 @@ def _copy_sampling_metadata(source, target):
     target.stop = source.stop
     target.sample_rate = source.sample_rate
     target.filters = source.filters
+    target.nonlinear = source.nonlinear
     target.label = source.label
     return target
 
@@ -293,9 +296,41 @@ def _filter_samples(sig, filters, zi=None):
     return filtered, zi
 
 
+def _apply_nonlinear(sig, nonlinear):
+    if nonlinear is None:
+        return sig
+    values = np.asarray(sig)
+    if np.iscomplexobj(values):
+        if (not isinstance(nonlinear, (tuple, list))
+                or len(nonlinear) != 2):
+            raise TypeError(
+                "complex waveforms require nonlinear=(real_map, imag_map)"
+            )
+        real_map, imag_map = nonlinear
+        if real_map is not None and not isinstance(real_map, NonlinearMap):
+            raise TypeError("real nonlinear component must be NonlinearMap or None")
+        if imag_map is not None and not isinstance(imag_map, NonlinearMap):
+            raise TypeError("imag nonlinear component must be NonlinearMap or None")
+        real = values.real if real_map is None else real_map(values.real)
+        imag = values.imag if imag_map is None else imag_map(values.imag)
+        return np.asarray(real) + 1j * np.asarray(imag)
+    if not isinstance(nonlinear, NonlinearMap):
+        raise TypeError("nonlinear must be a NonlinearMap for real waveforms")
+    if (values.dtype == np.dtype(np.float64) and values.flags.c_contiguous
+            and values.flags.writeable):
+        return nonlinear(values, out=values)
+    return nonlinear(values)
+
+
+def _nonlinear_component(nonlinear, index):
+    if isinstance(nonlinear, (tuple, list)) and len(nonlinear) == 2:
+        return nonlinear[index]
+    return None
+
+
 def _sample_iq(owner, sample_rate=None, out=None, chunk_size=None,
                function_lib=None, filters=None, dtype=np.int16,
-               full_scale=1.0):
+               full_scale=1.0, nonlinear=None):
     """Sample a complex wrapper as separate real I/Q buffers."""
     if out is None:
         out_i = out_q = None
@@ -305,7 +340,7 @@ def _sample_iq(owner, sample_rate=None, out=None, chunk_size=None,
         out_i, out_q = out
     values = owner.sample(
         sample_rate=sample_rate, chunk_size=chunk_size,
-        function_lib=function_lib, filters=filters,
+        function_lib=function_lib, filters=filters, nonlinear=nonlinear,
     )
     if chunk_size is None:
         return (
@@ -344,6 +379,7 @@ class Waveform(metaclass=_WaveformMeta):
     stop: float | None
     sample_rate: float | None
     filters: tuple[np.ndarray, float] | None
+    nonlinear: NonlinearMap | tuple[NonlinearMap | None, NonlinearMap | None] | None
 
     def is_zero(self):
         """Return whether this object has no non-zero waveform support."""
@@ -366,7 +402,7 @@ class Waveform(metaclass=_WaveformMeta):
     def sample(self, sample_rate=None, out: np.ndarray | None = None,
                chunk_size=None, function_lib=None,
                filters: tuple[np.ndarray, float] | None = None,
-               dtype=None, full_scale=1.0):
+               dtype=None, full_scale=1.0, nonlinear=None):
         if function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         if sample_rate is None:
@@ -378,9 +414,13 @@ class Waveform(metaclass=_WaveformMeta):
             )
         if filters is None:
             filters = self.filters
+        if nonlinear is None:
+            nonlinear = self.nonlinear
+        dtype, bits = _quantization_bits(dtype, out)
         if chunk_size is not None:
             return self._sample_iter(
-                sample_rate, int(chunk_size), out, filters, dtype, full_scale
+                sample_rate, int(chunk_size), out, filters, dtype, full_scale,
+                nonlinear,
             )
 
         plan = _sampling_plan(self.start, self.stop, sample_rate)
@@ -388,8 +428,7 @@ class Waveform(metaclass=_WaveformMeta):
             x = np.arange(self.start, self.stop, 1 / float(sample_rate))
             sig = cast(np.ndarray, self(x))
         else:
-            _, bits = _quantization_bits(dtype, out)
-            if bits is not None and filters is None:
+            if bits is not None and filters is None and nonlinear is None:
                 specialized = getattr(
                     self, "_sample_supported_quantized", None
                 )
@@ -400,6 +439,7 @@ class Waveform(metaclass=_WaveformMeta):
                     if result is not NotImplemented:
                         return cast(np.ndarray, result)
             sig = self._sample_supported(*plan)
+        sig = _apply_nonlinear(sig, nonlinear)
         sig, _ = _filter_samples(sig, filters)
         return cast(np.ndarray, _finish_samples(sig, dtype, full_scale, out))
 
@@ -410,7 +450,7 @@ class Waveform(metaclass=_WaveformMeta):
         return cast(np.ndarray, self(x))
 
     def _sample_iter(self, sample_rate, chunk_size, out, filters, dtype,
-                     full_scale):
+                     full_scale, nonlinear):
         start = cast(float, self.start)
         stop = cast(float, self.stop)
         output_index = 0
@@ -447,9 +487,10 @@ class Waveform(metaclass=_WaveformMeta):
                     start_tick, size, step_numerator, step_denominator,
                     output_index,
                 )
-            sig, zi = _filter_samples(sig, filters, zi)
             target = (None if output is None
                       else output[output_index:output_index + size])
+            sig = _apply_nonlinear(sig, nonlinear)
+            sig, zi = _filter_samples(sig, filters, zi)
             yield _finish_samples(sig, dtype, full_scale, target)
             output_index += size
 
@@ -490,7 +531,7 @@ class _RealWaveformBase(Waveform):
 
     __slots__ = (
         "_core", "max", "min", "start", "stop", "sample_rate",
-        "filters", "label",
+        "filters", "nonlinear", "label",
     )
 
 
@@ -499,7 +540,7 @@ class ComplexWaveform(Waveform):
 
     __slots__ = (
         "_real", "_imag", "max", "min", "start", "stop", "sample_rate",
-        "filters", "label",
+        "filters", "nonlinear", "label",
     )
 
     def __init__(self, real=0.0, imag=0.0):
@@ -534,6 +575,7 @@ class ComplexWaveform(Waveform):
         self.stop = None
         self.sample_rate = None
         self.filters = None
+        self.nonlinear = None
         self.label = None
 
     @classmethod
@@ -565,10 +607,10 @@ class ComplexWaveform(Waveform):
 
     def sample_iq(self, sample_rate=None, out=None, chunk_size=None,
                   function_lib=None, filters=None, dtype=np.int16,
-                  full_scale=1.0):
+                  full_scale=1.0, nonlinear=None):
         return _sample_iq(
             self, sample_rate, out, chunk_size, function_lib, filters,
-            dtype, full_scale,
+            dtype, full_scale, nonlinear,
         )
 
     @classmethod
@@ -770,11 +812,16 @@ class ComplexWaveform(Waveform):
 
     def __getstate__(self):
         return (self.to_bytes(), self.max, self.min, self.start, self.stop,
-                self.sample_rate, self.filters, self.label)
+                self.sample_rate, self.filters, self.nonlinear, self.label)
 
     def __setstate__(self, state):
-        (data, self.max, self.min, self.start, self.stop, self.sample_rate,
-         self.filters, self.label) = state
+        if len(state) == 8:
+            (data, self.max, self.min, self.start, self.stop, self.sample_rate,
+             self.filters, self.label) = state
+            self.nonlinear = None
+        else:
+            (data, self.max, self.min, self.start, self.stop, self.sample_rate,
+             self.filters, self.nonlinear, self.label) = state
         restored = type(self).from_bytes(data)
         self._real = restored._real
         self._imag = restored._imag
@@ -817,7 +864,7 @@ class _RealWaveVStackBase(WaveVStack):
     """Common real-stack type; concrete storage is provided by the C core."""
 
     __slots__ = (
-        "start", "stop", "sample_rate", "offset", "filters", "label",
+        "start", "stop", "sample_rate", "offset", "filters", "nonlinear", "label",
         "function_lib", "_sample_plan_cache",
     )
 
@@ -827,7 +874,7 @@ class ComplexWaveVStack(WaveVStack):
 
     __slots__ = (
         "_real_stack", "_imag_stack", "start", "stop", "sample_rate",
-        "offset", "shift", "filters", "label", "function_lib",
+        "offset", "shift", "filters", "nonlinear", "label", "function_lib",
     )
 
     def __init__(self, wlist=(), imag=None):
@@ -871,6 +918,7 @@ class ComplexWaveVStack(WaveVStack):
         self.stop = None
         self.sample_rate = None
         self.filters = None
+        self.nonlinear = None
         self.label = None
         self.function_lib = None
 
@@ -894,14 +942,18 @@ class ComplexWaveVStack(WaveVStack):
         result = self._real_stack + self.offset.real
         if self.shift:
             result = result >> self.shift
-        return _copy_sampling_metadata(self, result)
+        _copy_sampling_metadata(self, result)
+        result.nonlinear = _nonlinear_component(self.nonlinear, 0)
+        return result
 
     @property
     def imag(self):
         result = self._imag_stack + self.offset.imag
         if self.shift:
             result = result >> self.shift
-        return _copy_sampling_metadata(self, result)
+        _copy_sampling_metadata(self, result)
+        result.nonlinear = _nonlinear_component(self.nonlinear, 1)
+        return result
 
     @property
     def wlist(self):
@@ -954,10 +1006,10 @@ class ComplexWaveVStack(WaveVStack):
 
     def sample_iq(self, sample_rate=None, out=None, chunk_size=None,
                   function_lib=None, filters=None, dtype=np.int16,
-                  full_scale=1.0):
+                  full_scale=1.0, nonlinear=None):
         return _sample_iq(
             self, sample_rate, out, chunk_size, function_lib, filters,
-            dtype, full_scale,
+            dtype, full_scale, nonlinear,
         )
 
     @classmethod
@@ -1081,11 +1133,16 @@ class ComplexWaveVStack(WaveVStack):
 
     def __getstate__(self):
         return (self.to_bytes(), self.start, self.stop, self.sample_rate,
-                self.filters, self.label)
+                self.filters, self.nonlinear, self.label)
 
     def __setstate__(self, state):
-        (data, self.start, self.stop, self.sample_rate,
-         self.filters, self.label) = state
+        if len(state) == 6:
+            (data, self.start, self.stop, self.sample_rate,
+             self.filters, self.label) = state
+            self.nonlinear = None
+        else:
+            (data, self.start, self.stop, self.sample_rate,
+             self.filters, self.nonlinear, self.label) = state
         restored = type(self).from_bytes(data)
         self._real_stack = restored._real_stack
         self._imag_stack = restored._imag_stack
@@ -1143,6 +1200,7 @@ class RealWaveform(_RealWaveformBase):
         self.stop = None
         self.sample_rate = None
         self.filters = None
+        self.nonlinear = None
         self.label = None
 
     @classmethod
@@ -1234,11 +1292,12 @@ class RealWaveform(_RealWaveformBase):
         return values[0] if scalar else values
 
     def sample(self, sample_rate=None, out=None, chunk_size=None,
-               function_lib=None, filters=None, dtype=None, full_scale=1.0):
+               function_lib=None, filters=None, dtype=None, full_scale=1.0,
+               nonlinear=None):
         if chunk_size is not None:
             return Waveform.sample(
                 self, sample_rate, out, chunk_size, function_lib, filters,
-                dtype, full_scale,
+                dtype, full_scale, nonlinear,
             )
         if function_lib is not None:
             raise NotImplementedError("custom C-core functions are unsupported")
@@ -1248,6 +1307,8 @@ class RealWaveform(_RealWaveformBase):
             raise ValueError("RealWaveform sampling metadata is incomplete")
         if filters is None:
             filters = self.filters
+        if nonlinear is None:
+            nonlinear = self.nonlinear
         plan = _sampling_plan(self.start, self.stop, sample_rate)
         dtype, bits = _quantization_bits(dtype, out)
         core_clock = get_time_resolution() == 1 / _CORE_TICKS_PER_SECOND
@@ -1256,7 +1317,7 @@ class RealWaveform(_RealWaveformBase):
             values = self(positions)
         else:
             start_tick, count, step_numerator, step_denominator = plan
-            if bits is not None and filters is None:
+            if bits is not None and filters is None and nonlinear is None:
                 return self._core.sample(
                     start_tick, count, step_numerator, step_denominator,
                     self._delay_tick, self._scale, self.min, self.max,
@@ -1266,6 +1327,7 @@ class RealWaveform(_RealWaveformBase):
                 start_tick, count, step_numerator, step_denominator,
                 self._delay_tick, self._scale, self.min, self.max,
             )
+        values = _apply_nonlinear(values, nonlinear)
         values, _ = _filter_samples(values, filters)
         return _finish_samples(values, dtype, full_scale, out)
 
@@ -1417,12 +1479,17 @@ class RealWaveform(_RealWaveformBase):
 
     def __getstate__(self):
         return (self.to_bytes(), self.max, self.min, self.start, self.stop,
-                self.sample_rate, self.filters, self.label)
+                self.sample_rate, self.filters, self.nonlinear, self.label)
 
     def __setstate__(self, state):
         _ensure_c_clock_locked()
-        (data, self.max, self.min, self.start, self.stop, self.sample_rate,
-         self.filters, self.label) = state
+        if len(state) == 8:
+            (data, self.max, self.min, self.start, self.stop, self.sample_rate,
+             self.filters, self.label) = state
+            self.nonlinear = None
+        else:
+            (data, self.max, self.min, self.start, self.stop, self.sample_rate,
+             self.filters, self.nonlinear, self.label) = state
         self._core = _CWaveformCore.from_bytes(data)
         self._delay_tick = 0
         self._scale = 1.0
@@ -1503,6 +1570,7 @@ class RealWaveVStack(_RealWaveVStackBase):
         self.offset = 0.0
         self._shift_tick = 0
         self.filters = None
+        self.nonlinear = None
         self.label = None
         self.function_lib = None
         self._sample_plan_cache = None
@@ -1600,11 +1668,12 @@ class RealWaveVStack(_RealWaveVStackBase):
         return values[0] if scalar else values
 
     def sample(self, sample_rate=None, out=None, chunk_size=None,
-               filters=None, dtype=None, full_scale=1.0, **kwargs):
+               filters=None, dtype=None, full_scale=1.0, nonlinear=None,
+               **kwargs):
         if chunk_size is not None:
             return Waveform.sample(
                 self, sample_rate, out, chunk_size, filters=filters,
-                dtype=dtype, full_scale=full_scale,
+                dtype=dtype, full_scale=full_scale, nonlinear=nonlinear,
             )
         if sample_rate is None:
             sample_rate = self.sample_rate
@@ -1612,6 +1681,8 @@ class RealWaveVStack(_RealWaveVStackBase):
             raise ValueError("RealWaveVStack sampling metadata is incomplete")
         if filters is None:
             filters = self.filters
+        if nonlinear is None:
+            nonlinear = self.nonlinear
         plan = _sampling_plan(self.start, self.stop, sample_rate)
         dtype, bits = _quantization_bits(dtype, out)
         if plan is None or get_time_resolution() != 1 / _CORE_TICKS_PER_SECOND:
@@ -1633,13 +1704,15 @@ class RealWaveVStack(_RealWaveVStackBase):
                 )
                 self._sample_plan_cache = cache_key, sample_plan
             if sample_plan is not None:
-                if bits is not None and filters is None:
+                if (bits is not None and filters is None
+                        and nonlinear is None):
                     return sample_plan.sample(
                         self.offset, bits, full_scale, out,
                     )
                 values = sample_plan.sample(self.offset)
             else:
-                if bits is not None and filters is None:
+                if (bits is not None and filters is None
+                        and nonlinear is None):
                     return self._core.sample(
                         start_tick, count, step_numerator, step_denominator,
                         self._shift_tick, self.offset, bits, full_scale, out,
@@ -1648,6 +1721,7 @@ class RealWaveVStack(_RealWaveVStackBase):
                     start_tick, count, step_numerator, step_denominator,
                     self._shift_tick, self.offset,
                 )
+        values = _apply_nonlinear(values, nonlinear)
         values, _ = _filter_samples(values, filters)
         return _finish_samples(values, dtype, full_scale, out)
 
@@ -1789,12 +1863,17 @@ class RealWaveVStack(_RealWaveVStackBase):
     def __getstate__(self):
         return (self._core.to_bytes(), self.start, self.stop,
                 self.sample_rate, self.offset, self._shift_tick,
-                self.filters, self.label)
+                self.filters, self.nonlinear, self.label)
 
     def __setstate__(self, state):
         _ensure_c_clock_locked()
-        (data, self.start, self.stop, self.sample_rate, self.offset,
-         self._shift_tick, self.filters, self.label) = state
+        if len(state) == 8:
+            (data, self.start, self.stop, self.sample_rate, self.offset,
+             self._shift_tick, self.filters, self.label) = state
+            self.nonlinear = None
+        else:
+            (data, self.start, self.stop, self.sample_rate, self.offset,
+             self._shift_tick, self.filters, self.nonlinear, self.label) = state
         self._core = _CWaveformStackCore.from_bytes(data)
         self.function_lib = None
         self._sample_plan_cache = None
@@ -2277,7 +2356,7 @@ def wave_eval(expr: str) -> Waveform | ComplexWaveform:
 
 
 __all__ = [
-    "D", "ComplexWaveform", "ComplexWaveVStack", "RealWaveform",
+    "D", "ComplexWaveform", "ComplexWaveVStack", "NonlinearMap", "RealWaveform",
     "RealWaveVStack", "Waveform", "WaveVStack",
     "chirp", "const", "cos", "cosh",
     "coshPulse", "cosPulse", "cut", "drag", "drag_sin", "drag_sinx",

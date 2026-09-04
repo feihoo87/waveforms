@@ -21,7 +21,7 @@ extern "C" {
 #endif
 
 /*
- * Stable C ABI for the WNF4/WNS4 cross-language waveform format.
+ * Stable C ABI for the WNF4/WNS4 waveform and NLM1 nonlinear-map formats.
  *
  * Serialized integers and floating-point values are little-endian. Runtime
  * handles own an immutable serialized block plus decoded sidecar data; the
@@ -31,6 +31,7 @@ extern "C" {
 typedef struct cwaveform_wave cwaveform_wave;
 typedef struct cwaveform_stack cwaveform_stack;
 typedef struct cwaveform_sample_plan cwaveform_sample_plan;
+typedef struct cwaveform_nonlinear_map cwaveform_nonlinear_map;
 
 /* Stable language-neutral builtin identifiers.  These intentionally match
  * the historic Python/Cython opcode values so other language bindings can
@@ -59,6 +60,21 @@ enum cwaveform_dtype {
     CWAVEFORM_FLOAT64 = 0,
     CWAVEFORM_INT16 = 16,
     CWAVEFORM_INT32 = 32
+};
+
+enum cwaveform_nonlinear_method {
+    CWAVEFORM_NONLINEAR_LINEAR = 1,
+    CWAVEFORM_NONLINEAR_CUBIC = 2
+};
+
+enum cwaveform_nonlinear_storage {
+    CWAVEFORM_NONLINEAR_FLOAT32 = 32,
+    CWAVEFORM_NONLINEAR_FLOAT64 = 64
+};
+
+enum cwaveform_nonlinear_extrapolation {
+    CWAVEFORM_NONLINEAR_ERROR = 0,
+    CWAVEFORM_NONLINEAR_CLIP = 1
 };
 
 CWAVEFORM_API uint64_t cwaveform_ticks_per_second(void);
@@ -121,6 +137,47 @@ CWAVEFORM_API int cwaveform_wave_sample(
 CWAVEFORM_API int cwaveform_quantize(
     const double *values, size_t count, int dtype,
     double full_scale, void *output);
+
+/* NLM1 is a compact, language-neutral, uniform-grid nonlinear map.  Linear
+ * maps store one ordinate per point.  Cubic maps store normalized
+ * coefficients (a, b, c, d) per interval and evaluate
+ * a + r * (b + r * (c + r * d)), 0 <= r <= 1. */
+CWAVEFORM_API cwaveform_nonlinear_map *cwaveform_nonlinear_map_create(
+    int method, int storage, int extrapolation,
+    double x_min, double x_max, double input_offset, double output_offset,
+    const double *coefficients, size_t point_count);
+CWAVEFORM_API cwaveform_nonlinear_map *cwaveform_nonlinear_map_from_bytes(
+    const uint8_t *data, size_t size);
+CWAVEFORM_API void cwaveform_nonlinear_map_retain(
+    cwaveform_nonlinear_map *map);
+CWAVEFORM_API void cwaveform_nonlinear_map_release(
+    cwaveform_nonlinear_map *map);
+CWAVEFORM_API const uint8_t *cwaveform_nonlinear_map_bytes(
+    const cwaveform_nonlinear_map *map, size_t *size);
+CWAVEFORM_API uint64_t cwaveform_nonlinear_map_hash(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API int cwaveform_nonlinear_map_equal(
+    const cwaveform_nonlinear_map *left,
+    const cwaveform_nonlinear_map *right);
+CWAVEFORM_API int cwaveform_nonlinear_map_method(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API int cwaveform_nonlinear_map_storage(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API int cwaveform_nonlinear_map_extrapolation(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API size_t cwaveform_nonlinear_map_point_count(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API double cwaveform_nonlinear_map_x_min(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API double cwaveform_nonlinear_map_x_max(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API double cwaveform_nonlinear_map_input_offset(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API double cwaveform_nonlinear_map_output_offset(
+    const cwaveform_nonlinear_map *map);
+CWAVEFORM_API int cwaveform_nonlinear_map_apply(
+    const cwaveform_nonlinear_map *map, const double *input, size_t count,
+    int dtype, double full_scale, void *output);
 
 CWAVEFORM_API cwaveform_stack *cwaveform_stack_create(
     cwaveform_wave *const *templates, const uint32_t *template_ids,

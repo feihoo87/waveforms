@@ -19,6 +19,12 @@ MOLLIFIER: int
 D_GAUSSIAN: int
 DRAG_SIN: int
 DRAG_SINX: int
+NONLINEAR_LINEAR: int
+NONLINEAR_CUBIC: int
+NONLINEAR_FLOAT32: int
+NONLINEAR_FLOAT64: int
+NONLINEAR_ERROR: int
+NONLINEAR_CLIP: int
 
 
 def set_time_resolution(value: float) -> None: ...
@@ -88,6 +94,27 @@ class CWaveformCore:
     lower_tick: int
     upper_tick: int
     node_count: int
+    hash64: int
+
+class CNonlinearMapCore:
+    @classmethod
+    def create(cls, method: int, storage: int, extrapolation: int,
+               x_min: float, x_max: float, input_offset: float,
+               output_offset: float, coefficients,
+               point_count: int) -> CNonlinearMapCore: ...
+    @classmethod
+    def from_bytes(cls, data: bytes | bytearray | memoryview) -> CNonlinearMapCore: ...
+    def to_bytes(self) -> bytes: ...
+    def apply(self, values, bits: int = ..., full_scale: float = ...,
+              out: np.ndarray | None = ...) -> np.ndarray: ...
+    method: int
+    storage: int
+    extrapolation: int
+    point_count: int
+    x_min: float
+    x_max: float
+    input_offset: float
+    output_offset: float
     hash64: int
 
 class CWaveformStackCore:
