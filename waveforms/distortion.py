@@ -548,7 +548,7 @@ def phase_curve(t, params, df_dphi, pulse_width, start, wav, sample_rate):
 
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
 
     from waveforms import square
 
