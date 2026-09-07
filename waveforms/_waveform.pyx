@@ -187,6 +187,102 @@ def quantize_samples(values, bits, full_scale=1.0, out=None):
     return target
 
 
+def sosfilt_samples(values, sos, initial=0.0, zi=None, int bits=0,
+                    double full_scale=1.0, double lower=-np.inf,
+                    double upper=np.inf, out=None):
+    """Filter a 1-D float64/complex128 signal, then limit and optionally quantize.
+
+    Real SOS coefficients use transposed direct form II. Return (output, zf)
+    without modifying zi; clipping and baseline restoration do not affect zf.
+    Float output may alias values exactly. Other overlaps are copied first.
+    """
+    cdef object source, coeff, state, target
+    cdef const double *source_pointer
+    cdef const double *coeff_pointer
+    cdef double *state_pointer
+    cdef void *target_pointer
+    cdef size_t count, sections, stride
+    cdef int status
+    cdef double initial_real, initial_imag
+    if bits not in (0, 16, 32):
+        raise ValueError("bits must be 0, 16 or 32")
+    if bits and (not np.isfinite(full_scale) or full_scale <= 0):
+        raise ValueError("full_scale must be a finite positive number")
+    if not lower <= upper or lower == np.inf or upper == -np.inf:
+        raise ValueError("min and max must bound finite amplitudes, without NaN")
+    if np.iscomplexobj(sos):
+        raise TypeError("native SOS filtering requires real coefficients")
+    coeff = np.ascontiguousarray(np.atleast_2d(sos), dtype=np.float64)
+    if coeff.ndim != 2 or coeff.shape[1] != 6:
+        raise ValueError("sos must have shape (n_sections, 6)")
+    if not np.all(coeff[:, 3] == 1):
+        raise ValueError("sos[:, 3] must be all ones")
+    if not coeff.flags.aligned:
+        coeff = coeff.copy()
+    is_complex = (np.iscomplexobj(values) or np.iscomplexobj(initial)
+                  or (zi is not None and np.iscomplexobj(zi)))
+    if bits and is_complex:
+        raise TypeError("integer quantization requires a real signal")
+    value_dtype = np.dtype(np.complex128 if is_complex else np.float64)
+    source = np.ascontiguousarray(values, dtype=value_dtype)
+    if source.ndim != 1:
+        raise ValueError("values must be one-dimensional")
+    if not source.flags.aligned:
+        source = source.copy()
+    sections = coeff.shape[0]
+    if zi is None:
+        state = np.zeros((sections, 2), dtype=value_dtype)
+    else:
+        state = np.array(zi, dtype=value_dtype, order='C', copy=True)
+        if state.shape != (sections, 2):
+            raise ValueError("zi must have shape (n_sections, 2)")
+    target_dtype = (np.dtype(np.int16 if bits == 16 else np.int32)
+                    if bits else value_dtype)
+    if out is None:
+        target = np.empty(source.shape, dtype=target_dtype)
+    else:
+        target = np.asarray(out)
+        if target.shape != source.shape:
+            raise ValueError("out has the wrong shape")
+        if target.dtype != target_dtype:
+            raise TypeError(f"out must have dtype {target_dtype}")
+        if (not target.flags.c_contiguous or not target.flags.writeable
+                or not target.flags.aligned):
+            raise ValueError("out must be a writable, aligned C-contiguous array")
+        if (np.shares_memory(target, source)
+                and (bits or target.ctypes.data != source.ctypes.data)):
+            source = source.copy()
+        if np.shares_memory(target, coeff):
+            coeff = coeff.copy()
+    count = source.size
+    if count == 0:
+        return target, state
+    stride = 2 if is_complex else 1
+    initial_real = complex(initial).real
+    initial_imag = complex(initial).imag
+    source_pointer = <const double *><size_t>source.ctypes.data
+    coeff_pointer = <const double *><size_t>coeff.ctypes.data
+    state_pointer = <double *><size_t>state.ctypes.data
+    target_pointer = <void *><size_t>target.ctypes.data
+    with nogil:
+        status = cwaveform_sos_filter(
+            coeff_pointer, sections, source_pointer, count, stride,
+            state_pointer, stride, initial_real, lower, upper, bits,
+            full_scale, target_pointer, stride)
+        if status == 0 and stride == 2:
+            status = cwaveform_sos_filter(
+                coeff_pointer, sections, source_pointer + 1, count, stride,
+                state_pointer + 1, stride, initial_imag, lower, upper, 0,
+                full_scale, <double *>target_pointer + 1, stride)
+    if status == -3:
+        raise ValueError("cannot quantize non-finite samples")
+    if status == -2:
+        raise MemoryError("C SOS output conversion allocation failed")
+    if status != 0:
+        raise RuntimeError(f"C SOS filtering failed with status {status}")
+    return target, state
+
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 def place_template_quantized(out, template, destinations, scales,
@@ -507,6 +603,10 @@ cdef extern from "_cwaveform.h":
         double, double, double, int, double, void *) noexcept nogil
     int cwaveform_quantize(
         const double *, size_t, int, double, void *) noexcept nogil
+    int cwaveform_sos_filter(
+        const double *, size_t, const double *, size_t, size_t,
+        double *, size_t, double, double, double, int, double,
+        void *, size_t) noexcept nogil
     cwaveform_nonlinear_map *cwaveform_nonlinear_map_create(
         int, int, int, double, double, double, double,
         const double *, size_t) noexcept nogil
@@ -587,6 +687,9 @@ cdef extern from "_cwaveform.h":
     int cwaveform_sample_plan_sample(
         const cwaveform_sample_plan *, double, int, double,
         void *) noexcept nogil
+    int cwaveform_sample_plan_sample_clipped(
+        const cwaveform_sample_plan *, double, int, double, void *,
+        double, double) noexcept nogil
     cwaveform_wave *cwaveform_stack_simplify(
         const cwaveform_stack *, int64_t, double) noexcept nogil
     const char *cwaveform_format_description() noexcept nogil
@@ -1282,7 +1385,8 @@ cdef class CWaveformSamplePlan:
             cwaveform_sample_plan_release(self._pointer)
 
     def sample(self, double offset=0.0, int bits=0,
-               double full_scale=1.0, out=None):
+               double full_scale=1.0, out=None,
+               double lower=-np.inf, double upper=np.inf):
         cdef object target
         cdef void *target_pointer
         cdef int status
@@ -1304,8 +1408,9 @@ cdef class CWaveformSamplePlan:
             return target
         target_pointer = <void *><size_t>target.ctypes.data
         with nogil:
-            status = cwaveform_sample_plan_sample(
+            status = cwaveform_sample_plan_sample_clipped(
                 self._pointer, offset, bits, full_scale, target_pointer,
+                lower, upper,
             )
         if status != 0:
             raise RuntimeError(

@@ -39,6 +39,12 @@ def sample_grid(start_tick: int, count: int, step_numerator: int,
                 index_offset: int = ...) -> np.ndarray: ...
 def quantize_samples(values: np.ndarray, bits: int, full_scale: float = ...,
                      out: np.ndarray | None = ...) -> np.ndarray: ...
+def sosfilt_samples(values: np.ndarray, sos: np.ndarray,
+                    initial: float | complex = ..., zi: np.ndarray | None = ...,
+                    bits: int = ..., full_scale: float = ...,
+                    lower: float = ..., upper: float = ...,
+                    out: np.ndarray | None = ...
+                    ) -> tuple[np.ndarray, np.ndarray]: ...
 def place_template_quantized(out: np.ndarray, template: np.ndarray,
                              destinations: np.ndarray, scales: np.ndarray,
                              offset: float = ...,
@@ -150,7 +156,8 @@ class CWaveformStackCore:
 class CWaveformSamplePlan:
     def sample(self, offset: float = ..., bits: int = ...,
                full_scale: float = ...,
-               out: np.ndarray | None = ...) -> np.ndarray: ...
+               out: np.ndarray | None = ..., lower: float = ...,
+               upper: float = ...) -> np.ndarray: ...
     count: int
     group_count: int
     non_overlapping: bool

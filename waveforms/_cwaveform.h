@@ -137,6 +137,18 @@ CWAVEFORM_API int cwaveform_wave_sample(
 CWAVEFORM_API int cwaveform_quantize(
     const double *values, size_t count, int dtype,
     double full_scale, void *output);
+/* Real-coefficient SOS cascade, in transposed direct form II. Coefficients
+ * have shape (section_count, 6), with a0 == 1. State holds two delays per
+ * section and is updated before output limiting. Strides count elements;
+ * float strides can address real/imaginary components of complex buffers.
+ * Integer output requires output_stride == 1. Exact input/output aliasing
+ * is supported for float output. The caller owns coefficients and state. */
+CWAVEFORM_API int cwaveform_sos_filter(
+    const double *sos, size_t section_count,
+    const double *input, size_t count, size_t input_stride,
+    double *state, size_t state_stride, double initial,
+    double lower_clip, double upper_clip, int dtype, double full_scale,
+    void *output, size_t output_stride);
 
 /* NLM1 is a compact, language-neutral, uniform-grid nonlinear map.  Linear
  * maps store one ordinate per point.  Cubic maps store normalized
@@ -226,6 +238,12 @@ CWAVEFORM_API int cwaveform_sample_plan_non_overlapping(
 CWAVEFORM_API int cwaveform_sample_plan_sample(
     const cwaveform_sample_plan *plan, double offset, int dtype,
     double full_scale, void *output);
+/* Output limits follow complete event accumulation and precede quantization.
+ * Non-overlapping templates are limited once per scale before placement.
+ * The original entry point is equivalent to limits (-infinity, +infinity). */
+CWAVEFORM_API int cwaveform_sample_plan_sample_clipped(
+    const cwaveform_sample_plan *plan, double offset, int dtype,
+    double full_scale, void *output, double lower_clip, double upper_clip);
 CWAVEFORM_API cwaveform_wave *cwaveform_stack_simplify(
     const cwaveform_stack *stack, int64_t global_shift, double offset);
 

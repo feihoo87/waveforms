@@ -5076,19 +5076,112 @@ int cwaveform_sample_plan_non_overlapping(
     return plan != NULL && plan->non_overlapping;
 }
 
+static double wf_clip_amplitude(double value, double lower, double upper) {
+    if (value < lower) value = lower;
+    if (value > upper) value = upper;
+    return value;
+}
+
+int cwaveform_sos_filter(
+    const double *sos, size_t section_count,
+    const double *input, size_t count, size_t input_stride,
+    double *state, size_t state_stride, double initial,
+    double lower, double upper, int dtype, double full_scale,
+    void *output, size_t output_stride) {
+    double values[256];
+    size_t section;
+    size_t cursor;
+    size_t item_size;
+    if ((count != 0 && (input == NULL || output == NULL))
+            || (section_count != 0 && (sos == NULL || state == NULL))
+            || input_stride == 0 || state_stride == 0 || output_stride == 0
+            || !(lower <= upper) || lower == HUGE_VAL || upper == -HUGE_VAL)
+        return -1;
+    if (dtype == CWAVEFORM_FLOAT64) {
+        item_size = sizeof(double);
+    } else if (dtype == CWAVEFORM_INT16 || dtype == CWAVEFORM_INT32) {
+        if (output_stride != 1 || !isfinite(full_scale) || full_scale <= 0.0)
+            return -1;
+        item_size = dtype == CWAVEFORM_INT16 ? sizeof(int16_t) : sizeof(int32_t);
+    } else return -1;
+    for (section = 0; section < section_count; ++section)
+        if (sos[6 * section + 3] != 1.0) return -1;
+
+    for (cursor = 0; cursor < count; ) {
+        size_t size = count - cursor;
+        size_t index;
+        if (size > 256) size = 256;
+        for (index = 0; index < size; ++index)
+            values[index] = input[(cursor + index) * input_stride] - initial;
+        /* A single section keeps all coefficients and delays in registers.
+         * Cascades advance sample first, allowing the processor to overlap
+         * delay updates in successive sections. */
+        if (section_count == 1) {
+            const double *coeff = sos;
+            double b0 = coeff[0], b1 = coeff[1], b2 = coeff[2];
+            double a1 = coeff[4], a2 = coeff[5];
+            double z0 = state[0];
+            double z1 = state[state_stride];
+            for (index = 0; index < size; ++index) {
+                double x = values[index];
+                double y = b0 * x + z0;
+                z0 = b1 * x - a1 * y + z1;
+                z1 = b2 * x - a2 * y;
+                values[index] = y;
+            }
+            state[0] = z0;
+            state[state_stride] = z1;
+        } else {
+            for (index = 0; index < size; ++index) {
+                double x = values[index];
+                for (section = 0; section < section_count; ++section) {
+                    const double *coeff = sos + 6 * section;
+                    double *delay = state + 2 * section * state_stride;
+                    double y = coeff[0] * x + delay[0];
+                    delay[0] = coeff[1] * x - coeff[4] * y
+                             + delay[state_stride];
+                    delay[state_stride] = coeff[2] * x - coeff[5] * y;
+                    x = y;
+                }
+                values[index] = x;
+            }
+        }
+        if (dtype == CWAVEFORM_FLOAT64) {
+            for (index = 0; index < size; ++index)
+                ((double *)output)[(cursor + index) * output_stride]
+                    = wf_clip_amplitude(values[index] + initial, lower, upper);
+        } else {
+            int status;
+            for (index = 0; index < size; ++index)
+                values[index] = wf_clip_amplitude(
+                    values[index] + initial, lower, upper);
+            status = wf_quantize_array(values, size, dtype, full_scale,
+                (uint8_t *)output + cursor * item_size);
+            if (status != 0) return status;
+        }
+        cursor += size;
+    }
+    return 0;
+}
+
 static void wf_plan_sample_float(const cwaveform_sample_plan *plan,
-                                 double offset, double *output) {
+                                 double offset, double *output,
+                                 double lower, double upper) {
     size_t group_index;
     size_t index;
-    for (index = 0; index < plan->count; ++index) output[index] = offset;
+    int limited = lower != -HUGE_VAL || upper != HUGE_VAL;
+    double base = plan->non_overlapping
+        ? wf_clip_amplitude(offset, lower, upper) : offset;
+    for (index = 0; index < plan->count; ++index) output[index] = base;
     for (group_index = 0; group_index < plan->group_count; ++group_index) {
         const wf_plan_group *group = plan->groups + group_index;
         if (group->grouped_scales && plan->non_overlapping) {
             size_t scale_index;
-            double *transformed = (offset == 0.0 || group->sample_count == 0)
+            int transform = offset != 0.0 || limited;
+            double *transformed = (!transform || group->sample_count == 0)
                 ? NULL
                 : (double *)malloc(group->sample_count * sizeof(double));
-            if (offset != 0.0 && group->sample_count != 0
+            if (transform && group->sample_count != 0
                     && transformed == NULL) goto generic;
             for (scale_index = 0;
                     scale_index < group->scale_group_count; ++scale_index) {
@@ -5096,10 +5189,10 @@ static void wf_plan_sample_float(const cwaveform_sample_plan *plan,
                     = group->scale_groups + scale_index;
                 const double *source_values = scale_group->samples;
                 size_t destination_index;
-                if (offset != 0.0) {
+                if (transform) {
                     for (index = 0; index < group->sample_count; ++index)
-                        transformed[index] = offset
-                            + scale_group->samples[index];
+                        transformed[index] = wf_clip_amplitude(
+                            offset + scale_group->samples[index], lower, upper);
                     source_values = transformed;
                 }
                 for (destination_index = 0;
@@ -5157,10 +5250,17 @@ generic:
                     plan->count, &source_start, &output_start, &copy_count))
                 continue;
             if (plan->non_overlapping) {
-                for (sample_index = 0; sample_index < copy_count; ++sample_index)
-                    output[output_start + sample_index] = offset
-                        + group->scales[index]
-                        * group->samples[source_start + sample_index];
+                if (limited) {
+                    for (sample_index = 0; sample_index < copy_count; ++sample_index)
+                        output[output_start + sample_index] = wf_clip_amplitude(
+                            offset + group->scales[index]
+                            * group->samples[source_start + sample_index], lower, upper);
+                } else {
+                    for (sample_index = 0; sample_index < copy_count; ++sample_index)
+                        output[output_start + sample_index] = offset
+                            + group->scales[index]
+                            * group->samples[source_start + sample_index];
+                }
             } else {
                 for (sample_index = 0; sample_index < copy_count; ++sample_index)
                     output[output_start + sample_index] += group->scales[index]
@@ -5168,11 +5268,17 @@ generic:
             }
         }
     }
+    /* Overlapping events must be accumulated before any amplitude limit. */
+    if (limited && !plan->non_overlapping) {
+        for (index = 0; index < plan->count; ++index)
+            output[index] = wf_clip_amplitude(output[index], lower, upper);
+    }
 }
 
 static int wf_plan_sample_integer_grouped(
     const cwaveform_sample_plan *plan, const wf_plan_group *group,
-    double offset, int dtype, double full_scale, void *output) {
+    double offset, int dtype, double full_scale, void *output,
+    double lower, double upper) {
     size_t scale_index;
     size_t item_size = dtype == CWAVEFORM_INT16
         ? sizeof(int16_t) : sizeof(int32_t);
@@ -5185,7 +5291,12 @@ static int wf_plan_sample_integer_grouped(
             = group->scale_groups + scale_index;
         size_t index;
         for (index = 0; index < group->sample_count; ++index) {
-            double value = offset + scale_group->samples[index];
+            double value = wf_clip_amplitude(
+                offset + scale_group->samples[index], lower, upper);
+            if (!isfinite(value)) {
+                free(quantized);
+                return -3;
+            }
             if (dtype == CWAVEFORM_INT16)
                 ((int16_t *)quantized)[index] = wf_quantize16(value, full_scale);
             else
@@ -5207,14 +5318,60 @@ static int wf_plan_sample_integer_grouped(
     return 0;
 }
 
+static int wf_plan_sample_integer_limited_scales(
+    const cwaveform_sample_plan *plan, const wf_plan_group *group,
+    double offset, int dtype, double full_scale, void *output,
+    double lower, double upper) {
+    /* Many distinct scales cannot reuse prequantized templates. Small scratch
+     * blocks still allow SIMD clipping/conversion without a full float output. */
+    double values[256];
+    size_t item_size = dtype == CWAVEFORM_INT16
+        ? sizeof(int16_t) : sizeof(int32_t);
+    size_t placement_index;
+    for (placement_index = 0; placement_index < group->placement_count;
+            ++placement_index) {
+        size_t source_start;
+        size_t output_start;
+        size_t copy_count;
+        size_t cursor;
+        double scale = group->scales[placement_index];
+        if (!wf_plan_placement_bounds(
+                group->destinations[placement_index], group->sample_count,
+                plan->count, &source_start, &output_start, &copy_count)) continue;
+        for (cursor = 0; cursor < copy_count; ) {
+            size_t count = copy_count - cursor;
+            size_t index;
+            int status;
+            if (count > 256) count = 256;
+            for (index = 0; index < count; ++index)
+                values[index] = wf_clip_amplitude(offset + scale
+                    * group->samples[source_start + cursor + index], lower, upper);
+            status = wf_quantize_array(values, count, dtype, full_scale,
+                (uint8_t *)output + (output_start + cursor) * item_size);
+            if (status != 0) return status;
+            cursor += count;
+        }
+    }
+    return 0;
+}
+
 int cwaveform_sample_plan_sample(
     const cwaveform_sample_plan *plan, double offset, int dtype,
     double full_scale, void *output) {
+    return cwaveform_sample_plan_sample_clipped(
+        plan, offset, dtype, full_scale, output, -HUGE_VAL, HUGE_VAL);
+}
+
+int cwaveform_sample_plan_sample_clipped(
+    const cwaveform_sample_plan *plan, double offset, int dtype,
+    double full_scale, void *output, double lower, double upper) {
     size_t index;
+    int limited = lower != -HUGE_VAL || upper != HUGE_VAL;
     if (plan == NULL || output == NULL || !isfinite(offset)
+            || !(lower <= upper) || lower == HUGE_VAL || upper == -HUGE_VAL
             || !isfinite(full_scale) || full_scale <= 0.0) return -1;
     if (dtype == CWAVEFORM_FLOAT64) {
-        wf_plan_sample_float(plan, offset, (double *)output);
+        wf_plan_sample_float(plan, offset, (double *)output, lower, upper);
         return 0;
     }
     if (dtype != CWAVEFORM_INT16 && dtype != CWAVEFORM_INT32) return -1;
@@ -5223,18 +5380,20 @@ int cwaveform_sample_plan_sample(
             : (double *)malloc(plan->count * sizeof(double));
         int status;
         if (plan->count != 0 && values == NULL) return -2;
-        wf_plan_sample_float(plan, offset, values);
+        wf_plan_sample_float(plan, offset, values, lower, upper);
         status = wf_quantize_array(
             values, plan->count, dtype, full_scale, output);
         free(values);
         return status;
     }
     if (dtype == CWAVEFORM_INT16) {
-        int16_t base = wf_quantize16(offset, full_scale);
+        int16_t base = wf_quantize16(
+            wf_clip_amplitude(offset, lower, upper), full_scale);
         for (index = 0; index < plan->count; ++index)
             ((int16_t *)output)[index] = base;
     } else {
-        int32_t base = wf_quantize32(offset, full_scale);
+        int32_t base = wf_quantize32(
+            wf_clip_amplitude(offset, lower, upper), full_scale);
         for (index = 0; index < plan->count; ++index)
             ((int32_t *)output)[index] = base;
     }
@@ -5242,7 +5401,11 @@ int cwaveform_sample_plan_sample(
         const wf_plan_group *group = plan->groups + index;
         if (group->grouped_scales) {
             int status = wf_plan_sample_integer_grouped(
-                plan, group, offset, dtype, full_scale, output);
+                plan, group, offset, dtype, full_scale, output, lower, upper);
+            if (status != 0) return status;
+        } else if (limited) {
+            int status = wf_plan_sample_integer_limited_scales(
+                plan, group, offset, dtype, full_scale, output, lower, upper);
             if (status != 0) return status;
         } else {
             size_t placement_index;

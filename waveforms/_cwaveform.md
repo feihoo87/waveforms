@@ -84,6 +84,44 @@ sampling plans, evaluation, quantization, and serialization all operate on this
 single C representation. Complex Python objects contain two independent real C
 blocks.
 
+The additive `cwaveform_sample_plan_sample_clipped()` API accepts final
+amplitude bounds without changing the serialized formats or the original
+`cwaveform_sample_plan_sample()` ABI. Limits are applied after all event
+accumulation, before quantization. Non-overlapping templates are limited once
+per amplitude group and copied to their destinations; overlapping events are
+accumulated before limiting. Bounds are execution parameters and do not alter
+the immutable plan. The Python sampling pipeline invokes these bounds in the
+plan only when no nonlinear mapping or filtering follows; otherwise it limits
+the final processed samples.
+
+## SOS filtering
+
+The additive `cwaveform_sos_filter()` API processes a real-coefficient SOS
+cascade using transposed direct form II, with the same `(sections, 6)`
+coefficient layout as SciPy and `a0 == 1`. Coefficients are read-only; the caller
+supplies two mutable delays per section. Delays capture the unclipped cascade
+output and can be carried across calls. `initial` is a baseline subtracted
+before the cascade and restored afterward, not an initializer for the delays.
+
+Input, state and float output strides count doubles; strides of two support
+the real and imaginary components of complex128 buffers. Integer output must
+be contiguous. Float output supports exact input/output aliasing; other
+overlaps and overlap with coefficients or state must be avoided by C callers.
+The Python wrapper copies overlapping inputs when necessary and returns a
+new state array without modifying the supplied `zi`.
+
+Processing uses a fixed 256-double scratch buffer. One-section filters retain
+coefficients and delays in registers; cascades process all sections for each
+sample so delay updates can overlap. Each block restores the baseline, applies
+limits, and writes float output or invokes the existing SIMD DAC quantizer.
+This removes full-array baseline, clip and quantization passes and the full
+filtered float intermediate for real integer output. Raw waveform evaluation
+and nonlinear mapping still precede this stage. The SOS recurrence allocates
+no heap memory; conversion uses the quantizer's existing platform dispatch.
+The API returns 0 on success, -1 for invalid arguments or SOS normalization,
+-2 if conversion allocation fails, and -3 if integer conversion encounters a
+non-finite sample after clipping.
+
 ## NLM1 nonlinear-map block (ABI 1)
 
 NLM1 represents a scalar, memoryless nonlinear map on a uniform input grid.

@@ -136,11 +136,43 @@ flux_samples = trajectory.sample(dtype=np.int16)
 ```
 
 The sampling order is waveform accumulation, nonlinear mapping, optional SOS
-filtering/predistortion, and finally integer quantization. This is important for
+filtering/predistortion, output amplitude limits (`min`/`max`), and finally
+integer quantization or floating-point output. This is important for
 `WaveVStack`: the map is applied to the accumulated trajectory rather than to
 each pulse event independently. `method="linear"` selects the smaller and
 fastest two-point interpolation path. Maps serialize independently through
 `to_bytes()`/`from_bytes()` using the language-neutral `NLM1` format.
+
+Every waveform and stack has output limits, defaulting to `min=-np.inf` and
+`max=np.inf`. A stack ignores its child waveforms' limits and uses only its own:
+
+```python
+stack.min = -0.2
+stack.max = 0.3
+samples = stack.sample()  # limit after the complete calibration/filter chain
+```
+
+Limits apply to whole and chunked sampling, including `out=` buffers and
+integer output. Complex signals limit I and Q independently; `sample_iq()`
+uses the same final limits. The filter state continues from the unclipped
+filtered signal across chunks. DAC `full_scale` controls integer conversion
+and saturation separately from these amplitude limits.
+
+Real-coefficient SOS filters (`filters=(sos, initial)`) run in the C core for
+float64 and complex128 signals. This stage subtracts the baseline `initial`,
+applies the cascade, restores the baseline, and applies the final limits.
+Real int16/int32 output is quantized in the same stage, without allocating a
+full filtered floating-point buffer. Float output can reuse the sampled
+buffer. A small fixed scratch buffer keeps filtering and conversion local;
+waveform evaluation and nonlinear mapping still precede this stage. Complex
+coefficients and extended precision retain the SciPy implementation.
+`sample_iq()` still converts the filtered complex result into separate I/Q
+output arrays. See [the SOS benchmark](benchmarks/sos_filter.md).
+
+Calling `waveform(t)` directly evaluates with amplitude limits but without
+nonlinear calibration or filtering. Sampling evaluates the underlying signal
+without limits before applying its processing chain. Limits are sampling
+metadata preserved by pickle, not part of the raw WNF4/WNS4 binary blocks.
 
 ## Reporting Issues
 Please report all issues [on github](https://github.com/feihoo87/waveforms/issues).

@@ -25,7 +25,7 @@ from ._waveform import (
     accumulate_template, get_time_resolution,
     lock_time_resolution,
     place_quantized_template, place_template_quantized,
-    quantize_samples, quantize_time, registerBaseFunc,
+    quantize_samples, quantize_time, registerBaseFunc, sosfilt_samples,
     registerDerivative, sample_clock, sample_grid,
     set_time_resolution as _set_time_resolution,
     tick_to_time, time_to_tick,
@@ -97,6 +97,8 @@ def _unpack_complex(data, magic):
 
 
 def _copy_sampling_metadata(source, target):
+    target.min = source.min
+    target.max = source.max
     target.start = source.start
     target.stop = source.stop
     target.sample_rate = source.sample_rate
@@ -264,7 +266,43 @@ def _integer_output(count, bits, out=None, fill=0):
     return output
 
 
-def _finish_samples(sig, dtype, full_scale, out):
+def _amplitude_limits(owner):
+    minimum, maximum = float(owner.min), float(owner.max)
+    if not minimum <= maximum or minimum == inf or maximum == -inf:
+        raise ValueError("min and max must bound finite amplitudes, without NaN")
+    return minimum, maximum
+
+
+def _clip_samples(sig, minimum=-inf, maximum=inf):
+    """Limit final amplitudes in place, independently for I and Q."""
+    if minimum == -inf and maximum == inf:
+        return sig
+    values = np.asarray(sig)
+    if not values.flags.writeable:
+        values = values.copy()
+    if np.iscomplexobj(values):
+        np.clip(values.real, minimum, maximum, out=values.real)
+        np.clip(values.imag, minimum, maximum, out=values.imag)
+    else:
+        np.clip(values, minimum, maximum, out=values)
+    return values
+
+
+def _clip_quantized(sig, bits, full_scale, minimum, maximum):
+    """Q(clip(x)) == clip(Q(x), Q(min), Q(max)) for monotone DAC rounding.
+
+    Keep the direct integer fallback for grids without a native sample plan.
+    Only the two bounds need floating-point storage.
+    """
+    if minimum != -inf or maximum != inf:
+        bounds = np.clip([minimum, maximum], -full_scale, full_scale)
+        lower, upper = quantize_samples(bounds, bits, full_scale)
+        np.clip(sig, lower, upper, out=sig)
+    return sig
+
+
+def _finish_samples(sig, dtype, full_scale, out, minimum=-inf, maximum=inf):
+    sig = _clip_samples(sig, minimum, maximum)
     dtype, bits = _quantization_bits(dtype, out)
     if bits is not None:
         return quantize_samples(sig, bits, full_scale, out)
@@ -289,12 +327,54 @@ def _filter_samples(sig, filters, zi=None):
         sos = sos.copy()
     values = sig - initial if initial else sig
     if zi is None:
-        filtered = sosfilt(sos, values)
-    else:
-        filtered, zi = sosfilt(sos, values, zi=zi)
+        zi = np.zeros((np.atleast_2d(sos).shape[0], 2),
+                      dtype=np.result_type(sos, values))
+    filtered, zi = sosfilt(sos, values, zi=zi)
     if initial:
         filtered = filtered + initial
     return filtered, zi
+
+
+def _filter_and_finish(sig, filters, dtype, full_scale, out,
+                       minimum, maximum, zi=None):
+    if filters is None:
+        return _finish_samples(
+            sig, dtype, full_scale, out, minimum, maximum), zi
+    sos, initial = filters
+    sos = np.asarray(sos)
+    initial = initial if initial else 0.0
+    values_dtype = np.result_type(sig, np.asarray(initial), sos,
+                                  zi if zi is not None else np.float64)
+    # Preserve SciPy's complex-coefficient and extended-precision behavior.
+    if (sos.dtype.kind not in 'biuf' or sos.dtype.itemsize > 8
+            or values_dtype not in (np.dtype(np.float64), np.dtype(np.complex128))):
+        sig, zi = _filter_samples(sig, filters, zi)
+        return _finish_samples(
+            sig, dtype, full_scale, out, minimum, maximum), zi
+    dtype, bits = _quantization_bits(dtype, out)
+    native_dtype = (np.dtype(np.int16 if bits == 16 else np.int32)
+                    if bits is not None else values_dtype)
+    if bits is not None:
+        # Integer output validation and conversion belong to the native call.
+        direct, target = True, out
+    elif out is not None:
+        output = np.asarray(out)
+        direct = ((dtype is None or dtype == native_dtype)
+                  and output.dtype == native_dtype
+                  and output.flags.c_contiguous and output.flags.aligned)
+        target = output if direct else None
+    else:
+        direct = dtype is None or dtype == native_dtype
+        # Sampling owns this buffer; float filtering can safely reuse it.
+        target = (sig if (bits is None and sig.dtype == native_dtype
+                          and sig.flags.c_contiguous and sig.flags.writeable
+                          and sig.flags.aligned) else None)
+    sig, zi = sosfilt_samples(
+        sig, sos, initial, zi, bits or 0, full_scale,
+        minimum, maximum, target)
+    if direct:
+        return sig, zi
+    return _finish_samples(sig, dtype, full_scale, out), zi
 
 
 def _apply_nonlinear(sig, nonlinear):
@@ -381,6 +461,12 @@ class Waveform(metaclass=_WaveformMeta):
     sample_rate: float | None
     filters: tuple[np.ndarray, float] | None
     nonlinear: NonlinearMap | tuple[NonlinearMap | None, NonlinearMap | None] | None
+    min: float
+    max: float
+
+    def _evaluate_raw(self, x):
+        """Evaluate before output limits, nonlinear calibration or filtering."""
+        return self(x, _clip=False)
 
     def is_zero(self):
         """Return whether this object has no non-zero waveform support."""
@@ -404,6 +490,7 @@ class Waveform(metaclass=_WaveformMeta):
                chunk_size=None, function_lib=None,
                filters: tuple[np.ndarray, float] | None = None,
                dtype=None, full_scale=1.0, nonlinear=None):
+        minimum, maximum = _amplitude_limits(self)
         if function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         if sample_rate is None:
@@ -427,7 +514,7 @@ class Waveform(metaclass=_WaveformMeta):
         plan = _sampling_plan(self.start, self.stop, sample_rate)
         if plan is None:
             x = np.arange(self.start, self.stop, 1 / float(sample_rate))
-            sig = cast(np.ndarray, self(x))
+            sig = cast(np.ndarray, self._evaluate_raw(x))
         else:
             if bits is not None and filters is None and nonlinear is None:
                 specialized = getattr(
@@ -441,17 +528,19 @@ class Waveform(metaclass=_WaveformMeta):
                         return cast(np.ndarray, result)
             sig = self._sample_supported(*plan)
         sig = _apply_nonlinear(sig, nonlinear)
-        sig, _ = _filter_samples(sig, filters)
-        return cast(np.ndarray, _finish_samples(sig, dtype, full_scale, out))
+        result, _ = _filter_and_finish(
+            sig, filters, dtype, full_scale, out, minimum, maximum)
+        return cast(np.ndarray, result)
 
     def _sample_supported(self, start_tick, count, step_numerator,
                           step_denominator, index_offset=0):
         x = sample_grid(start_tick, count, step_numerator, step_denominator,
                         index_offset)
-        return cast(np.ndarray, self(x))
+        return cast(np.ndarray, self._evaluate_raw(x))
 
     def _sample_iter(self, sample_rate, chunk_size, out, filters, dtype,
                      full_scale, nonlinear):
+        minimum, maximum = _amplitude_limits(self)
         start = cast(float, self.start)
         stop = cast(float, self.stop)
         output_index = 0
@@ -466,10 +555,6 @@ class Waveform(metaclass=_WaveformMeta):
             total = max(0, int(np.ceil((stop - start) * rate)))
         else:
             start_tick, total, step_numerator, step_denominator = plan
-        if filters is not None:
-            sos, _ = filters
-            sos = np.asarray(sos)
-            zi = np.zeros((sos.shape[0], 2))
         if out is not None:
             output = np.asarray(out)
             if output.ndim != 1 or len(output) != total:
@@ -482,7 +567,7 @@ class Waveform(metaclass=_WaveformMeta):
             if plan is None:
                 indices = output_index + np.arange(size, dtype=np.float64)
                 x = start + indices / rate
-                sig = cast(np.ndarray, self(x))
+                sig = cast(np.ndarray, self._evaluate_raw(x))
             else:
                 sig = self._sample_supported(
                     start_tick, size, step_numerator, step_denominator,
@@ -491,8 +576,9 @@ class Waveform(metaclass=_WaveformMeta):
             target = (None if output is None
                       else output[output_index:output_index + size])
             sig = _apply_nonlinear(sig, nonlinear)
-            sig, zi = _filter_samples(sig, filters, zi)
-            yield _finish_samples(sig, dtype, full_scale, target)
+            sig, zi = _filter_and_finish(
+                sig, filters, dtype, full_scale, target, minimum, maximum, zi)
+            yield sig
             output_index += size
 
     def _play(self, time_unit, volume):
@@ -729,13 +815,13 @@ class ComplexWaveform(Waveform):
         return self & other
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None):
+                 function_lib=None, *, _clip=True):
         if function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         scalar = isinstance(x, (int, float, np.number))
         values = np.asarray([x]) if scalar else np.asarray(x)
         if frag:
-            result = self(values)
+            result = self(values, _clip=_clip)
             parts = [] if not np.any(result) else [(0, len(values), result)]
             if out is None:
                 return parts
@@ -751,7 +837,7 @@ class ComplexWaveform(Waveform):
         elif not accumulate:
             out[...] = 0
 
-        should_clip = self.min != -inf or self.max != inf
+        should_clip = _clip and (self.min != -inf or self.max != inf)
         if should_clip:
             real = np.clip(self._real(values), self.min, self.max)
             imag = np.clip(self._imag(values), self.min, self.max)
@@ -765,11 +851,13 @@ class ComplexWaveform(Waveform):
               and isinstance(self._imag, RealWaveform)):
             real = self._real._core.evaluate(
                 values, self._real._delay_tick, self._real._scale,
-                self._real.min, self._real.max,
+                self._real.min if _clip else -inf,
+                self._real.max if _clip else inf,
             )
             imag = self._imag._core.evaluate(
                 values, self._imag._delay_tick, self._imag._scale,
-                self._imag.min, self._imag.max,
+                self._imag.min if _clip else -inf,
+                self._imag.max if _clip else inf,
             )
             if accumulate:
                 out.real[...] += real
@@ -778,8 +866,8 @@ class ComplexWaveform(Waveform):
                 out.real[...] = real
                 out.imag[...] = imag
         else:
-            self._real(values, out=out.real, accumulate=True)
-            self._imag(values, out=out.imag, accumulate=True)
+            self._real(values, out=out.real, accumulate=True, _clip=_clip)
+            self._imag(values, out=out.imag, accumulate=True, _clip=_clip)
         return out[0] if scalar else out
 
     def __eq__(self, other):
@@ -866,7 +954,7 @@ class _RealWaveVStackBase(WaveVStack):
 
     __slots__ = (
         "start", "stop", "sample_rate", "offset", "filters", "nonlinear", "label",
-        "function_lib", "_sample_plan_cache",
+        "function_lib", "_sample_plan_cache", "min", "max",
     )
 
 
@@ -876,6 +964,7 @@ class ComplexWaveVStack(WaveVStack):
     __slots__ = (
         "_real_stack", "_imag_stack", "start", "stop", "sample_rate",
         "offset", "shift", "filters", "nonlinear", "label", "function_lib",
+        "min", "max",
     )
 
     def __init__(self, wlist=(), imag=None):
@@ -915,6 +1004,8 @@ class ComplexWaveVStack(WaveVStack):
             self._imag_stack = WaveVStack(imag_waves)
             self.offset = 0j
             self.shift = 0.0
+        self.min = -inf
+        self.max = inf
         self.start = None
         self.stop = None
         self.sample_rate = None
@@ -983,21 +1074,28 @@ class ComplexWaveVStack(WaveVStack):
         return value if self.stop is None else min(self.stop, value)
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None):
+                 function_lib=None, *, _clip=True):
         if frag:
             raise AssertionError("ComplexWaveVStack does not support frag mode")
         if function_lib is not None or self.function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         scalar = isinstance(x, (int, float, np.number))
         values = np.asarray([x]) if scalar else np.asarray(x)
-        if out is None:
-            out = np.zeros(values.shape, dtype=np.complex128)
-        elif not np.iscomplexobj(out):
+        minimum, maximum = _amplitude_limits(self) if _clip else (-inf, inf)
+        limited = minimum != -inf or maximum != inf
+        target = out
+        if out is not None and not np.iscomplexobj(out):
             raise TypeError("complex waveform output must have a complex dtype")
+        if out is None or (limited and accumulate):
+            out = np.zeros(values.shape, dtype=np.complex128)
         elif not accumulate:
             out[...] = 0
-        self.real(values, out=out.real, accumulate=True)
-        self.imag(values, out=out.imag, accumulate=True)
+        self.real(values, out=out.real, accumulate=True, _clip=False)
+        self.imag(values, out=out.imag, accumulate=True, _clip=False)
+        _clip_samples(out, minimum, maximum)
+        if target is not None and target is not out:
+            target[...] += out
+            out = target
         return out[0] if scalar else out
 
     def to_bytes(self):
@@ -1134,9 +1232,11 @@ class ComplexWaveVStack(WaveVStack):
 
     def __getstate__(self):
         return (self.to_bytes(), self.start, self.stop, self.sample_rate,
-                self.filters, self.nonlinear, self.label)
+                self.filters, self.nonlinear, self.label, self.min, self.max)
 
     def __setstate__(self, state):
+        self.min, self.max = state[7:] if len(state) == 9 else (-inf, inf)
+        state = state[:7]
         if len(state) == 6:
             (data, self.start, self.stop, self.sample_rate,
              self.filters, self.label) = state
@@ -1263,9 +1363,9 @@ class RealWaveform(_RealWaveformBase):
         return value if self.stop is None else min(self.stop, value)
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None):
+                 function_lib=None, *, _clip=True):
         if frag:
-            values = self(x, frag=False)
+            values = self(x, frag=False, _clip=_clip)
             values = np.asarray([values]) if np.isscalar(values) else values
             parts = [] if not np.any(values) else [(0, len(values), values)]
             if out is None:
@@ -1282,7 +1382,8 @@ class RealWaveform(_RealWaveformBase):
             raise TypeError("waveform positions must be real")
         positions = np.asarray(raw_positions, dtype=np.float64)
         values = self._core.evaluate(
-            positions, self._delay_tick, self._scale, self.min, self.max
+            positions, self._delay_tick, self._scale,
+            self.min if _clip else -inf, self.max if _clip else inf,
         )
         if out is not None:
             if accumulate:
@@ -1295,6 +1396,7 @@ class RealWaveform(_RealWaveformBase):
     def sample(self, sample_rate=None, out=None, chunk_size=None,
                function_lib=None, filters=None, dtype=None, full_scale=1.0,
                nonlinear=None):
+        minimum, maximum = _amplitude_limits(self)
         if chunk_size is not None:
             return Waveform.sample(
                 self, sample_rate, out, chunk_size, function_lib, filters,
@@ -1315,22 +1417,25 @@ class RealWaveform(_RealWaveformBase):
         core_clock = get_time_resolution() == 1 / _CORE_TICKS_PER_SECOND
         if plan is None or not core_clock:
             positions = np.arange(self.start, self.stop, 1 / float(sample_rate))
-            values = self(positions)
+            values = self._evaluate_raw(positions)
         else:
             start_tick, count, step_numerator, step_denominator = plan
-            if bits is not None and filters is None and nonlinear is None:
-                return self._core.sample(
+            if filters is None and nonlinear is None:
+                values = self._core.sample(
                     start_tick, count, step_numerator, step_denominator,
-                    self._delay_tick, self._scale, self.min, self.max,
-                    bits, full_scale, out,
+                    self._delay_tick, self._scale, minimum, maximum,
+                    bits or 0, full_scale, out if bits is not None else None,
                 )
+                return (values if bits is not None else
+                        _finish_samples(values, dtype, full_scale, out))
             values = self._core.sample(
                 start_tick, count, step_numerator, step_denominator,
-                self._delay_tick, self._scale, self.min, self.max,
+                self._delay_tick, self._scale,
             )
         values = _apply_nonlinear(values, nonlinear)
-        values, _ = _filter_samples(values, filters)
-        return _finish_samples(values, dtype, full_scale, out)
+        result, _ = _filter_and_finish(
+            values, filters, dtype, full_scale, out, minimum, maximum)
+        return result
 
     def to_bytes(self):
         return self._materialized_core().to_bytes()
@@ -1565,6 +1670,8 @@ class RealWaveVStack(_RealWaveVStackBase):
             _core = _CWaveformStackCore.from_events(templates, ids, delays, scales)
             waves = tuple(event_waves)
         self._core = _core
+        self.min = -inf
+        self.max = inf
         self.start = None
         self.stop = None
         self.sample_rate = None
@@ -1630,7 +1737,7 @@ class RealWaveVStack(_RealWaveVStackBase):
     def __len__(self):
         return self._core.event_count
 
-    def __call__(self, x, out=None, accumulate=False, **kwargs):
+    def __call__(self, x, out=None, accumulate=False, *, _clip=True, **kwargs):
         scalar = isinstance(x, (int, float, np.number))
         raw_positions = np.asarray([x] if scalar else x)
         if np.iscomplexobj(raw_positions):
@@ -1660,6 +1767,8 @@ class RealWaveVStack(_RealWaveVStackBase):
                     self._shift_tick, self.offset
                 )
             values = self._eval_core_cache.evaluate(positions)
+        if _clip:
+            values = _clip_samples(values, *_amplitude_limits(self))
         if out is not None:
             if accumulate:
                 out[...] += values
@@ -1671,6 +1780,7 @@ class RealWaveVStack(_RealWaveVStackBase):
     def sample(self, sample_rate=None, out=None, chunk_size=None,
                filters=None, dtype=None, full_scale=1.0, nonlinear=None,
                **kwargs):
+        minimum, maximum = _amplitude_limits(self)
         if chunk_size is not None:
             return Waveform.sample(
                 self, sample_rate, out, chunk_size, filters=filters,
@@ -1688,7 +1798,7 @@ class RealWaveVStack(_RealWaveVStackBase):
         dtype, bits = _quantization_bits(dtype, out)
         if plan is None or get_time_resolution() != 1 / _CORE_TICKS_PER_SECOND:
             positions = np.arange(self.start, self.stop, 1 / float(sample_rate))
-            values = self(positions)
+            values = self._evaluate_raw(positions)
         else:
             start_tick, count, step_numerator, step_denominator = plan
             cache_key = (
@@ -1705,26 +1815,31 @@ class RealWaveVStack(_RealWaveVStackBase):
                 )
                 self._sample_plan_cache = cache_key, sample_plan
             if sample_plan is not None:
-                if (bits is not None and filters is None
-                        and nonlinear is None):
-                    return sample_plan.sample(
-                        self.offset, bits, full_scale, out,
+                if filters is None and nonlinear is None:
+                    values = sample_plan.sample(
+                        self.offset, bits or 0, full_scale,
+                        out if bits is not None else None, minimum, maximum,
                     )
+                    return (values if bits is not None else
+                            _finish_samples(values, dtype, full_scale, out))
                 values = sample_plan.sample(self.offset)
             else:
                 if (bits is not None and filters is None
                         and nonlinear is None):
-                    return self._core.sample(
+                    values = self._core.sample(
                         start_tick, count, step_numerator, step_denominator,
                         self._shift_tick, self.offset, bits, full_scale, out,
                     )
+                    return _clip_quantized(
+                        values, bits, full_scale, minimum, maximum)
                 values = self._core.sample(
                     start_tick, count, step_numerator, step_denominator,
                     self._shift_tick, self.offset,
                 )
         values = _apply_nonlinear(values, nonlinear)
-        values, _ = _filter_samples(values, filters)
-        return _finish_samples(values, dtype, full_scale, out)
+        result, _ = _filter_and_finish(
+            values, filters, dtype, full_scale, out, minimum, maximum)
+        return result
 
     def simplify(self, eps=1e-15):
         return RealWaveform._from_core(
@@ -1864,10 +1979,12 @@ class RealWaveVStack(_RealWaveVStackBase):
     def __getstate__(self):
         return (self._core.to_bytes(), self.start, self.stop,
                 self.sample_rate, self.offset, self._shift_tick,
-                self.filters, self.nonlinear, self.label)
+                self.filters, self.nonlinear, self.label, self.min, self.max)
 
     def __setstate__(self, state):
         _ensure_c_clock_locked()
+        self.min, self.max = state[9:] if len(state) == 11 else (-inf, inf)
+        state = state[:9]
         if len(state) == 8:
             (data, self.start, self.stop, self.sample_rate, self.offset,
              self._shift_tick, self.filters, self.label) = state
