@@ -50,8 +50,10 @@ from .waveform import (
     wave_eval,
     zero,
 )
+from .distortion import drag_fir, exp_decay_filter, exp_decay_filter_from_cascade, exp_decay_filter_to_cascade
 
 __all__ = [
+    "drag_fir", "exp_decay_filter", "exp_decay_filter_from_cascade", "exp_decay_filter_to_cascade",
     "ComplexWaveform", "ComplexWaveVStack", "D", "NonlinearMap", "RealWaveform",
     "RealWaveVStack", "Waveform", "WaveVStack",
     "chirp", "const", "cos", "cosh",

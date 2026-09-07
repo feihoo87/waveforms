@@ -39,6 +39,31 @@ def shift(signal: np.ndarray, delay: float, dt: float) -> np.ndarray:
     return ret
 
 
+def drag_fir(deltas, Ts, *, method="notch"):
+    """deltas: rad/s；Ts: s；返回按 h[0], h[1], ... 排列的复数抽头。"""
+    d = np.atleast_1d(np.asarray(deltas, dtype=float))
+
+    if d.ndim != 1 or not np.isfinite(Ts) or Ts <= 0:
+        raise ValueError("deltas 必须是一维，Ts 必须为有限正数")
+    if np.any(~np.isfinite(d)) or np.any(d == 0):
+        raise ValueError("Delta 必须有限且非零")
+
+    theta = d * Ts
+    if method == "central":
+        a = 0.5 / theta
+    elif method == "notch":
+        if np.any(np.abs(theta) >= np.pi):
+            raise ValueError("目标陷波必须严格位于 Nyquist 范围内")
+        a = 0.5 / np.sin(theta)
+    else:
+        raise ValueError("method 必须为 'central' 或 'notch'")
+
+    h = np.array([1.0 + 0j])
+    for ai in a:
+        h = np.convolve(h, [-1j * ai, 1.0, 1j * ai])
+    return h
+
+
 def extractKernel(sig_in, sig_out, sample_rate, bw=None, skip=0):
     corr = fft(sig_in) / fft(sig_out)
     ker = np.real(ifftshift(ifft(corr)))
