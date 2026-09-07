@@ -169,10 +169,17 @@ coefficients and extended precision retain the SciPy implementation.
 `sample_iq()` still converts the filtered complex result into separate I/Q
 output arrays. See [the SOS benchmark](benchmarks/sos_filter.md).
 
-Calling `waveform(t)` directly evaluates with amplitude limits but without
-nonlinear calibration or filtering. Sampling evaluates the underlying signal
-without limits before applying its processing chain. Limits are sampling
-metadata preserved by pickle, not part of the raw WNF4/WNS4 binary blocks.
+Calling `waveform(t)` applies waveform/event accumulation, the object's
+nonlinear mapping, and then its own amplitude limits. It does not apply SOS
+filters or DAC quantization. Stacks and complex wrappers use raw child values;
+child maps and limits do not affect the parent's processing chain. Thus direct
+evaluation and unfiltered floating-point sampling have the same processing
+semantics on the same time grid, subject to floating-point rounding. With
+`out=` and `accumulate=True`, the processed contribution is added to the
+existing buffer without mapping or limiting its previous contents. Sampling
+starts from raw values so mapping and limits are each applied only once, with
+SOS filtering between them when configured. Maps and limits are metadata
+preserved by pickle, not part of the raw WNF4/WNS4 binary blocks.
 
 ## Reporting Issues
 Please report all issues [on github](https://github.com/feihoo87/waveforms/issues).
