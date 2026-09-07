@@ -377,21 +377,27 @@ def _filter_and_finish(sig, filters, dtype, full_scale, out,
     return _finish_samples(sig, dtype, full_scale, out), zi
 
 
+def _complex_nonlinear_maps(nonlinear):
+    if nonlinear is None:
+        return None, None
+    if not isinstance(nonlinear, (tuple, list)) or len(nonlinear) != 2:
+        raise TypeError(
+            "complex waveforms require nonlinear=(real_map, imag_map)"
+        )
+    real_map, imag_map = nonlinear
+    if real_map is not None and not isinstance(real_map, NonlinearMap):
+        raise TypeError("real nonlinear component must be NonlinearMap or None")
+    if imag_map is not None and not isinstance(imag_map, NonlinearMap):
+        raise TypeError("imag nonlinear component must be NonlinearMap or None")
+    return real_map, imag_map
+
+
 def _apply_nonlinear(sig, nonlinear):
     if nonlinear is None:
         return sig
     values = np.asarray(sig)
     if np.iscomplexobj(values):
-        if (not isinstance(nonlinear, (tuple, list))
-                or len(nonlinear) != 2):
-            raise TypeError(
-                "complex waveforms require nonlinear=(real_map, imag_map)"
-            )
-        real_map, imag_map = nonlinear
-        if real_map is not None and not isinstance(real_map, NonlinearMap):
-            raise TypeError("real nonlinear component must be NonlinearMap or None")
-        if imag_map is not None and not isinstance(imag_map, NonlinearMap):
-            raise TypeError("imag nonlinear component must be NonlinearMap or None")
+        real_map, imag_map = _complex_nonlinear_maps(nonlinear)
         real = values.real if real_map is None else real_map(values.real)
         imag = values.imag if imag_map is None else imag_map(values.imag)
         return np.asarray(real) + 1j * np.asarray(imag)
@@ -466,7 +472,7 @@ class Waveform(metaclass=_WaveformMeta):
 
     def _evaluate_raw(self, x):
         """Evaluate before output limits, nonlinear calibration or filtering."""
-        return self(x, _clip=False)
+        return self(x, _raw=True)
 
     def is_zero(self):
         """Return whether this object has no non-zero waveform support."""
@@ -815,13 +821,13 @@ class ComplexWaveform(Waveform):
         return self & other
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None, *, _clip=True):
+                 function_lib=None, *, _raw=False):
         if function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         scalar = isinstance(x, (int, float, np.number))
         values = np.asarray([x]) if scalar else np.asarray(x)
         if frag:
-            result = self(values, _clip=_clip)
+            result = self(values, _raw=_raw)
             parts = [] if not np.any(result) else [(0, len(values), result)]
             if out is None:
                 return parts
@@ -830,44 +836,36 @@ class ComplexWaveform(Waveform):
             out.extend(parts)
             return out
 
-        if out is None:
-            out = np.zeros(values.shape, dtype=np.complex128)
-        elif not np.iscomplexobj(out):
+        if out is not None and not np.iscomplexobj(out):
             raise TypeError("complex waveform output must have a complex dtype")
-        elif not accumulate:
-            out[...] = 0
-
-        should_clip = _clip and (self.min != -inf or self.max != inf)
-        if should_clip:
-            real = np.clip(self._real(values), self.min, self.max)
-            imag = np.clip(self._imag(values), self.min, self.max)
-            if accumulate:
-                out.real[...] += real
-                out.imag[...] += imag
-            else:
-                out.real[...] = real
-                out.imag[...] = imag
-        elif (isinstance(self._real, RealWaveform)
-              and isinstance(self._imag, RealWaveform)):
-            real = self._real._core.evaluate(
-                values, self._real._delay_tick, self._real._scale,
-                self._real.min if _clip else -inf,
-                self._real.max if _clip else inf,
-            )
-            imag = self._imag._core.evaluate(
-                values, self._imag._delay_tick, self._imag._scale,
-                self._imag.min if _clip else -inf,
-                self._imag.max if _clip else inf,
-            )
-            if accumulate:
-                out.real[...] += real
-                out.imag[...] += imag
-            else:
-                out.real[...] = real
-                out.imag[...] = imag
+        minimum, maximum = (-inf, inf) if _raw else _amplitude_limits(self)
+        real_map, imag_map = _complex_nonlinear_maps(
+            None if _raw else self.nonlinear)
+        # Components provide raw values. Only the wrapper's maps and limits
+        # apply; separable maps can reuse the contiguous component buffers.
+        real = self._real._core.evaluate(
+            values, self._real._delay_tick, self._real._scale,
+            minimum if real_map is None else -inf,
+            maximum if real_map is None else inf,
+        )
+        imag = self._imag._core.evaluate(
+            values, self._imag._delay_tick, self._imag._scale,
+            minimum if imag_map is None else -inf,
+            maximum if imag_map is None else inf,
+        )
+        if real_map is not None:
+            real = _clip_samples(_apply_nonlinear(real, real_map), minimum, maximum)
+        if imag_map is not None:
+            imag = _clip_samples(_apply_nonlinear(imag, imag_map), minimum, maximum)
+        if out is None:
+            out = np.empty(values.shape, dtype=np.complex128)
+            accumulate = False
+        if accumulate:
+            out.real[...] += real
+            out.imag[...] += imag
         else:
-            self._real(values, out=out.real, accumulate=True, _clip=_clip)
-            self._imag(values, out=out.imag, accumulate=True, _clip=_clip)
+            out.real[...] = real
+            out.imag[...] = imag
         return out[0] if scalar else out
 
     def __eq__(self, other):
@@ -1074,28 +1072,49 @@ class ComplexWaveVStack(WaveVStack):
         return value if self.stop is None else min(self.stop, value)
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None, *, _clip=True):
+                 function_lib=None, *, _raw=False):
         if frag:
             raise AssertionError("ComplexWaveVStack does not support frag mode")
         if function_lib is not None or self.function_lib is not None:
             raise NotImplementedError("custom waveform functions are not supported")
         scalar = isinstance(x, (int, float, np.number))
         values = np.asarray([x]) if scalar else np.asarray(x)
-        minimum, maximum = _amplitude_limits(self) if _clip else (-inf, inf)
-        limited = minimum != -inf or maximum != inf
-        target = out
+        minimum, maximum = (-inf, inf) if _raw else _amplitude_limits(self)
         if out is not None and not np.iscomplexobj(out):
             raise TypeError("complex waveform output must have a complex dtype")
-        if out is None or (limited and accumulate):
-            out = np.zeros(values.shape, dtype=np.complex128)
-        elif not accumulate:
-            out[...] = 0
-        self.real(values, out=out.real, accumulate=True, _clip=False)
-        self.imag(values, out=out.imag, accumulate=True, _clip=False)
-        _clip_samples(out, minimum, maximum)
-        if target is not None and target is not out:
-            target[...] += out
-            out = target
+        nonlinear = None if _raw else self.nonlinear
+        if nonlinear is None:
+            # Preserve the unprocessed fast path: release each child buffer
+            # after writing it, rather than retaining both component arrays.
+            target = out
+            limited = minimum != -inf or maximum != inf
+            if out is None or (limited and accumulate):
+                out = np.zeros(values.shape, dtype=np.complex128)
+            elif not accumulate:
+                out[...] = 0
+            self.real(values, out=out.real, accumulate=True, _raw=True)
+            self.imag(values, out=out.imag, accumulate=True, _raw=True)
+            _clip_samples(out, minimum, maximum)
+            if target is not None and target is not out:
+                target[...] += out
+                out = target
+            return out[0] if scalar else out
+        real_map, imag_map = _complex_nonlinear_maps(nonlinear)
+        real = _clip_samples(
+            _apply_nonlinear(self.real(values, _raw=True), real_map),
+            minimum, maximum)
+        imag = _clip_samples(
+            _apply_nonlinear(self.imag(values, _raw=True), imag_map),
+            minimum, maximum)
+        if out is None:
+            out = np.empty(values.shape, dtype=np.complex128)
+            accumulate = False
+        if accumulate:
+            out.real[...] += real
+            out.imag[...] += imag
+        else:
+            out.real[...] = real
+            out.imag[...] = imag
         return out[0] if scalar else out
 
     def to_bytes(self):
@@ -1363,9 +1382,9 @@ class RealWaveform(_RealWaveformBase):
         return value if self.stop is None else min(self.stop, value)
 
     def __call__(self, x, frag=False, out=None, accumulate=False,
-                 function_lib=None, *, _clip=True):
+                 function_lib=None, *, _raw=False):
         if frag:
-            values = self(x, frag=False, _clip=_clip)
+            values = self(x, frag=False, _raw=_raw)
             values = np.asarray([values]) if np.isscalar(values) else values
             parts = [] if not np.any(values) else [(0, len(values), values)]
             if out is None:
@@ -1381,10 +1400,16 @@ class RealWaveform(_RealWaveformBase):
         if np.iscomplexobj(raw_positions):
             raise TypeError("waveform positions must be real")
         positions = np.asarray(raw_positions, dtype=np.float64)
+        minimum, maximum = (-inf, inf) if _raw else _amplitude_limits(self)
+        nonlinear = None if _raw else self.nonlinear
         values = self._core.evaluate(
             positions, self._delay_tick, self._scale,
-            self.min if _clip else -inf, self.max if _clip else inf,
+            minimum if nonlinear is None else -inf,
+            maximum if nonlinear is None else inf,
         )
+        if nonlinear is not None:
+            values = _clip_samples(
+                _apply_nonlinear(values, nonlinear), minimum, maximum)
         if out is not None:
             if accumulate:
                 out[...] += values
@@ -1737,7 +1762,7 @@ class RealWaveVStack(_RealWaveVStackBase):
     def __len__(self):
         return self._core.event_count
 
-    def __call__(self, x, out=None, accumulate=False, *, _clip=True, **kwargs):
+    def __call__(self, x, out=None, accumulate=False, *, _raw=False, **kwargs):
         scalar = isinstance(x, (int, float, np.number))
         raw_positions = np.asarray([x] if scalar else x)
         if np.iscomplexobj(raw_positions):
@@ -1767,7 +1792,9 @@ class RealWaveVStack(_RealWaveVStackBase):
                     self._shift_tick, self.offset
                 )
             values = self._eval_core_cache.evaluate(positions)
-        if _clip:
+        if not _raw:
+            if self.nonlinear is not None:
+                values = _apply_nonlinear(values, self.nonlinear)
             values = _clip_samples(values, *_amplitude_limits(self))
         if out is not None:
             if accumulate:
