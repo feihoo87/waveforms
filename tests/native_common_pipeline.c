@@ -59,6 +59,51 @@ static void check_bounds(void) {
     }
 }
 
+static void check_drag_plan_allocations(void) {
+    double parameters[] = {0., 5e9, 1e-6, -200e6, 80e6, .371};
+    cwaveform_wave *raw = cwaveform_wave_builtin(CWAVEFORM_DRAG, parameters, 6, 0);
+    cwaveform_wave *wave = cwaveform_wave_window(raw, 0, 120000);
+    uint32_t id = 0;
+    int64_t delay = 0;
+    double scale = .4;
+    double reference[2400], output[2400];
+    int16_t integers[2400];
+    cwaveform_stack *stack = cwaveform_stack_create(&wave, &id, &delay, &scale, 1, 1);
+    long budget;
+    int succeeded = 0;
+    assert(raw != NULL && wave != NULL && stack != NULL);
+    assert(cwaveform_stack_sample(stack, 0, 2400, 50, 1, 0, 0., 0, 1., reference) == 0);
+    /* Vector scratch failure may succeed via scalar fallback. Continue past
+     * the first success to cover failures after a completed vector chunk. */
+    for (budget = 0; budget < 64; ++budget) {
+        cwaveform_sample_plan *plan;
+        allocation_budget = budget;
+        plan = cwaveform_sample_plan_create(stack, 0, 2400, 50, 1, 0);
+        allocation_budget = -1;
+        if (plan != NULL) {
+            size_t index;
+            long sample_budget;
+            assert(cwaveform_sample_plan_sample(plan, 0., 0, 1., output) == 0);
+            for (index = 0; index < 2400; ++index)
+                assert(fabs(output[index] - reference[index]) < 2e-14);
+            for (sample_budget = 0; sample_budget < 4; ++sample_budget) {
+                int status;
+                allocation_budget = sample_budget;
+                status = cwaveform_sample_plan_sample_clipped(
+                    plan, .03, 16, 1., integers, -.3, .4);
+                allocation_budget = -1;
+                assert(status == 0 || status == -2);
+            }
+            succeeded = 1;
+        }
+        cwaveform_sample_plan_release(plan);
+    }
+    assert(succeeded);
+    cwaveform_stack_release(stack);
+    cwaveform_wave_release(wave);
+    cwaveform_wave_release(raw);
+}
+
 int main(void) {
     cwaveform_wave *templates[40];
     uint32_t ids[200];
@@ -72,6 +117,7 @@ int main(void) {
     long budget;
     int succeeded = 0;
     check_bounds();
+    check_drag_plan_allocations();
     for (index = 0; index < 40; ++index) {
         templates[index] = cwaveform_wave_square((100.0 + index) / 120e9);
         assert(templates[index] != NULL);

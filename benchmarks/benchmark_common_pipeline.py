@@ -43,7 +43,11 @@ def main():
     parser.add_argument('--source-root', type=Path,
                         default=Path(__file__).resolve().parents[1])
     parser.add_argument('--repeats', type=int, default=9)
+    parser.add_argument('--samples-dir', type=Path,
+                        help='Optionally save sample arrays for cross-build error checks')
     args = parser.parse_args()
+    if args.samples_dir is not None:
+        args.samples_dir.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(args.source_root.resolve()))
     import numpy as np
     from scipy.signal import butter
@@ -89,6 +93,8 @@ def main():
         block = stack.to_bytes()
         shifted = pickle.loads(payload) >> 2e-9
         result = {'pickle_bytes': len(payload), 'core_bytes': len(block),
+                  'pickle_sha256': hashlib.sha256(payload).hexdigest(),
+                  'core_sha256': hashlib.sha256(block).hexdigest(),
                   'ms': {}, 'sha256': {}}
         timings = result['ms']
         timings['construct_events'] = construction[name]
@@ -117,6 +123,8 @@ def main():
             output = np.empty_like(values)
             result['samples'] = len(values)
             result['sha256'][label] = hashlib.sha256(values.tobytes()).hexdigest()
+            if args.samples_dir is not None:
+                np.save(args.samples_dir / f'{name}-{label}.npy', values)
             timings['cold_' + label] = measure(
                 lambda: (pickle.loads(payload) >> 2e-9).sample(dtype=dtype),
                 args.repeats)
@@ -128,11 +136,29 @@ def main():
         shifted.nonlinear = wf.NonlinearMap.from_samples(
             np.linspace(-2, 2, 1025), np.linspace(-2, 2, 1025) ** 3 / 4,
         )
+        stack.nonlinear = shifted.nonlinear
+        nonlinear_payload = pickle.dumps(stack, protocol=5)
+        nonlinear_values = shifted.sample(dtype=np.int16)
+        result['sha256']['nonlinear_int16'] = hashlib.sha256(
+            nonlinear_values.tobytes()).hexdigest()
+        timings['nonlinear_int16'] = measure(
+            lambda: shifted.sample(dtype=np.int16), args.repeats)
+        timings['cold_nonlinear_int16'] = measure(
+            lambda: (pickle.loads(nonlinear_payload) >> 2e-9).sample(dtype=np.int16),
+            args.repeats)
         shifted.filters = butter(4, .2, output='sos'), .03
+        stack.filters = shifted.filters
+        processed_payload = pickle.dumps(stack, protocol=5)
         values = shifted.sample(dtype=np.int16)
         result['sha256']['processed_int16'] = hashlib.sha256(values.tobytes()).hexdigest()
+        if args.samples_dir is not None:
+            np.save(args.samples_dir / f'{name}-nonlinear_int16.npy', nonlinear_values)
+            np.save(args.samples_dir / f'{name}-processed_int16.npy', values)
         timings['processed_int16'] = measure(
             lambda: shifted.sample(dtype=np.int16), args.repeats)
+        timings['cold_processed_int16'] = measure(
+            lambda: (pickle.loads(processed_payload) >> 2e-9).sample(dtype=np.int16),
+            args.repeats)
         report['cases'][name] = result
     print(json.dumps(report, indent=2))
 

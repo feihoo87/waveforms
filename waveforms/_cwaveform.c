@@ -33,6 +33,14 @@
 #define WF_TARGET_AVX512
 #endif
 
+#if defined(_MSC_VER)
+#define WF_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define WF_NOINLINE __attribute__((noinline))
+#else
+#define WF_NOINLINE
+#endif
+
 #if defined(__APPLE__)
 #include <Accelerate/Accelerate.h>
 #endif
@@ -2857,6 +2865,62 @@ static void wf_vector_power_scalar(double *output, const double *input,
 
 /* Evaluate one node at a time so platform vector-math libraries can process
  * transcendental functions in wide batches. */
+static void wf_vector_drag(const cwaveform_wave *wave, const wf_node *node,
+                            const double *positions, size_t count,
+                            double delay, double *output) {
+    const double t0 = node->p0;
+    const double frequency = wf_node_parameter(wave, node, 1);
+    const double width = wf_node_parameter(wave, node, 2);
+    const double delta = wf_node_parameter(wave, node, 3);
+    const double block = wf_node_parameter(wave, node, 4);
+    const double phase = wf_node_parameter(wave, node, 5);
+    const double omega = 3.14159265358979323846 / width;
+    const double carrier_frequency = 2.0 * 3.14159265358979323846
+        * (frequency + delta);
+    const double carrier_phase = 2.0 * 3.14159265358979323846 * delta * t0 + phase;
+    const double shift = (double)node->shift / (double)wf_ticks_per_second;
+    const double lower = node->lower == INT64_MIN ? -DBL_MAX
+        : (double)node->lower / (double)wf_ticks_per_second;
+    const double upper = node->upper == INT64_MAX ? DBL_MAX
+        : (double)node->upper / (double)wf_ticks_per_second;
+    const int corrected = !isnan(block) && block - delta != 0.0;
+    const double quadrature_scale = corrected
+        ? -1.0 / (2.0 * 3.14159265358979323846 * (block - delta)) * omega
+        : 0.0;
+    double envelope[256], carrier[256], scratch[256];
+    size_t cursor = 0;
+    while (cursor < count) {
+        size_t batch = count - cursor;
+        size_t index;
+        if (batch > 256) batch = 256;
+        for (index = 0; index < batch; ++index) {
+            double t = positions[cursor + index] - delay - shift;
+            scratch[index] = omega * (t - t0);
+            carrier[index] = carrier_frequency * t - carrier_phase;
+        }
+        wf_vector_sin(envelope, scratch, batch);
+        wf_vector_cos(scratch, carrier, batch);
+        for (index = 0; index < batch; ++index)
+            envelope[index] = envelope[index] * envelope[index] * scratch[index];
+        if (corrected) {
+            wf_vector_sin(scratch, carrier, batch);
+            for (index = 0; index < batch; ++index) {
+                double t = positions[cursor + index] - delay - shift;
+                carrier[index] = 2.0 * omega * (t - t0);
+            }
+            wf_vector_sin(carrier, carrier, batch);
+            for (index = 0; index < batch; ++index)
+                envelope[index] += (quadrature_scale * carrier[index]) * scratch[index];
+        }
+        for (index = 0; index < batch; ++index) {
+            double position = positions[cursor + index] - delay;
+            output[cursor + index] = position >= lower && position < upper
+                ? envelope[index] : 0.0;
+        }
+        cursor += batch;
+    }
+}
+
 static int wf_evaluate_chunk_vector(
     const cwaveform_wave *wave, const double *positions, size_t count,
     double delay, double scale, double lower_clip, double upper_clip,
@@ -2961,6 +3025,9 @@ static int wf_evaluate_chunk_vector(
                     wf_vector_cosh(row, scratch, count);
                 else
                     wf_vector_sinh(row, scratch, count);
+                break;
+            case WF_OP_DRAG:
+                wf_vector_drag(wave, node, positions, count, delay, row);
                 break;
             case WF_OP_SQUARE:
                 for (index = 0; index < count; ++index) {
@@ -3206,7 +3273,10 @@ WF_TARGET_AVX2
 static int wf_quantize_array_avx2(const double *values, size_t count, int dtype,
                                   double full_scale, void *output) {
     const __m256d sign_mask = _mm256_set1_pd(-0.0);
-    const __m256d half = _mm256_set1_pd(0.5);
+    /* The predecessor of 0.5 avoids rounding nextafter(0.5, 0) up to 1
+     * during the addition itself, while exact half-LSB ties still round away
+     * from zero. Values have been bounded to the int32 range below. */
+    const __m256d half = _mm256_set1_pd(0.49999999999999994);
     const __m256d finite_limit = _mm256_set1_pd(DBL_MAX);
     const __m256d multiplier = _mm256_set1_pd(
         dtype == CWAVEFORM_INT16
@@ -3252,7 +3322,7 @@ static int wf_quantize_array_avx512(
     const double *values, size_t count, int dtype,
     double full_scale, void *output) {
     const __m512d sign_mask = _mm512_set1_pd(-0.0);
-    const __m512d half = _mm512_set1_pd(0.5);
+    const __m512d half = _mm512_set1_pd(0.49999999999999994);
     const __m512d finite_limit = _mm512_set1_pd(DBL_MAX);
     const __m512d multiplier = _mm512_set1_pd(
         dtype == CWAVEFORM_INT16
@@ -3261,20 +3331,22 @@ static int wf_quantize_array_avx512(
         dtype == CWAVEFORM_INT16 ? -32768.0 : -2147483648.0);
     const __m512d maximum = _mm512_set1_pd(
         dtype == CWAVEFORM_INT16 ? 32767.0 : 2147483647.0);
-    __mmask8 finite = (__mmask8)0xff;
     size_t index = 0;
     for (; index + 8 <= count; index += 8) {
         __m512d value = _mm512_loadu_pd(values + index);
         __m512d absolute = _mm512_andnot_pd(sign_mask, value);
         __m512d adjustment = _mm512_or_pd(
             half, _mm512_and_pd(sign_mask, value));
-        __m512i integer;
         __m256i packed32;
-        finite &= _mm512_cmp_pd_mask(absolute, finite_limit, _CMP_LE_OQ);
+        /* Do not carry a mask reduction across iterations: older GCC emits
+         * a serial mask -> GPR -> mask chain, expensive on Zen 4. */
+        if (_mm512_cmp_pd_mask(absolute, finite_limit, _CMP_LE_OQ) != 0xff)
+            return -3;
         value = _mm512_mul_pd(value, multiplier);
         value = _mm512_min_pd(_mm512_max_pd(value, minimum), maximum);
-        integer = _mm512_cvttpd_epi64(_mm512_add_pd(value, adjustment));
-        packed32 = _mm512_cvtepi64_epi32(integer);
+        /* Clipping already bounds the truncated result to int32. Avoid the
+         * much more expensive double -> int64 -> int32 conversion chain. */
+        packed32 = _mm512_cvttpd_epi32(_mm512_add_pd(value, adjustment));
         if (dtype == CWAVEFORM_INT16) {
             __m128i packed16 = _mm256_cvtepi32_epi16(packed32);
             _mm_storeu_si128(
@@ -3291,7 +3363,7 @@ static int wf_quantize_array_avx512(
         else
             ((int32_t *)output)[index] = wf_quantize32(values[index], full_scale);
     }
-    return finite == (__mmask8)0xff ? 0 : -3;
+    return 0;
 }
 #endif
 #endif
@@ -3884,15 +3956,21 @@ static int wf_nonlinear_apply_avx2(
             value = _mm256_add_pd(
                 left, _mm256_mul_pd(fraction, _mm256_sub_pd(right, left)));
         } else {
-            __m128i coefficient_indices = _mm_slli_epi32(indices, 2);
-            __m256d coefficient0 = _mm256_i32gather_pd(
-                map->coefficients, coefficient_indices, 8);
-            __m256d coefficient1 = _mm256_i32gather_pd(
-                map->coefficients + 1, coefficient_indices, 8);
-            __m256d coefficient2 = _mm256_i32gather_pd(
-                map->coefficients + 2, coefficient_indices, 8);
-            __m256d coefficient3 = _mm256_i32gather_pd(
-                map->coefficients + 3, coefficient_indices, 8);
+            /* Cubic coefficients are four adjacent doubles per interval.
+             * Load complete rows and transpose instead of gathering the same
+             * cache lines four times. Keep Horner's arithmetic unchanged. */
+            __m256d row0 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)index_values[0]);
+            __m256d row1 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)index_values[1]);
+            __m256d row2 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)index_values[2]);
+            __m256d row3 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)index_values[3]);
+            __m256d lo01 = _mm256_unpacklo_pd(row0, row1);
+            __m256d hi01 = _mm256_unpackhi_pd(row0, row1);
+            __m256d lo23 = _mm256_unpacklo_pd(row2, row3);
+            __m256d hi23 = _mm256_unpackhi_pd(row2, row3);
+            __m256d coefficient0 = _mm256_permute2f128_pd(lo01, lo23, 0x20);
+            __m256d coefficient1 = _mm256_permute2f128_pd(hi01, hi23, 0x20);
+            __m256d coefficient2 = _mm256_permute2f128_pd(lo01, lo23, 0x31);
+            __m256d coefficient3 = _mm256_permute2f128_pd(hi01, hi23, 0x31);
             value = _mm256_add_pd(
                 coefficient2, _mm256_mul_pd(fraction, coefficient3));
             value = _mm256_add_pd(
@@ -4002,15 +4080,30 @@ static int wf_nonlinear_apply_avx512(
             value = _mm512_add_pd(
                 left, _mm512_mul_pd(fraction, _mm512_sub_pd(right, left)));
         } else {
-            __m512i coefficient_indices = _mm512_slli_epi64(indices, 2);
-            __m512d coefficient0 = _mm512_i64gather_pd(
-                coefficient_indices, map->coefficients, 8);
-            __m512d coefficient1 = _mm512_i64gather_pd(
-                coefficient_indices, map->coefficients + 1, 8);
-            __m512d coefficient2 = _mm512_i64gather_pd(
-                coefficient_indices, map->coefficients + 2, 8);
-            __m512d coefficient3 = _mm512_i64gather_pd(
-                coefficient_indices, map->coefficients + 3, 8);
+            int64_t index_values[8];
+            __m256d columns[8];
+            int half;
+            __m512d coefficient0, coefficient1, coefficient2, coefficient3;
+            _mm512_storeu_si512((void *)index_values, indices);
+            for (half = 0; half < 2; ++half) {
+                const int64_t *ix = index_values + 4 * half;
+                __m256d row0 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)ix[0]);
+                __m256d row1 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)ix[1]);
+                __m256d row2 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)ix[2]);
+                __m256d row3 = _mm256_loadu_pd(map->coefficients + 4 * (size_t)ix[3]);
+                __m256d lo01 = _mm256_unpacklo_pd(row0, row1);
+                __m256d hi01 = _mm256_unpackhi_pd(row0, row1);
+                __m256d lo23 = _mm256_unpacklo_pd(row2, row3);
+                __m256d hi23 = _mm256_unpackhi_pd(row2, row3);
+                columns[4 * half] = _mm256_permute2f128_pd(lo01, lo23, 0x20);
+                columns[4 * half + 1] = _mm256_permute2f128_pd(hi01, hi23, 0x20);
+                columns[4 * half + 2] = _mm256_permute2f128_pd(lo01, lo23, 0x31);
+                columns[4 * half + 3] = _mm256_permute2f128_pd(hi01, hi23, 0x31);
+            }
+            coefficient0 = _mm512_insertf64x4(_mm512_castpd256_pd512(columns[0]), columns[4], 1);
+            coefficient1 = _mm512_insertf64x4(_mm512_castpd256_pd512(columns[1]), columns[5], 1);
+            coefficient2 = _mm512_insertf64x4(_mm512_castpd256_pd512(columns[2]), columns[6], 1);
+            coefficient3 = _mm512_insertf64x4(_mm512_castpd256_pd512(columns[3]), columns[7], 1);
             value = _mm512_add_pd(
                 coefficient2, _mm512_mul_pd(fraction, coefficient3));
             value = _mm512_add_pd(
@@ -4953,6 +5046,48 @@ static int wf_plan_lookup_grow(wf_plan_lookup *lookup,
     return 0;
 }
 
+/* Keep template evaluation out of the per-event plan-building loop. Inlining
+ * the vector/scalar alternatives there increases register pressure even when
+ * all events reuse one already-sampled template (GCC 9 / Zen 4). */
+WF_NOINLINE
+static void wf_plan_fill_template(const cwaveform_wave *wave,
+                                  wf_plan_group *group, int64_t step_numerator,
+                                  double *values) {
+    size_t index;
+#if (defined(__APPLE__) || (defined(__GLIBC__) && defined(__x86_64__) \
+        && defined(WF_HAVE_X86_SIMD) && !defined(WF_DISABLE_X86_SIMD))) \
+        && !defined(WF_DISABLE_BATCH_EVALUATOR)
+    /* Reuse the sample buffer for positions: each vector chunk consumes all
+     * positions before publishing its output. Small/non-DRAG templates keep
+     * their scalar preparation path. */
+    if (group->sample_count >= 32) {
+        uint32_t node_index;
+        int has_drag = 0;
+        for (node_index = 0; node_index < wave->node_count; ++node_index)
+            if (wave->nodes[node_index].op == WF_OP_DRAG) has_drag = 1;
+        if (has_drag) {
+            for (index = 0; index < group->sample_count; ++index) {
+                long double tick = (long double)group->first_tick
+                    + (long double)index * (long double)step_numerator;
+                group->samples[index] =
+                    (double)(tick / (long double)wf_ticks_per_second);
+            }
+            if (wf_evaluate_many_vector(wave, group->samples,
+                    group->sample_count, 0.0, 1.0, -HUGE_VAL, HUGE_VAL,
+                    group->samples) == 0) return;
+            /* Unsupported nodes/allocation failure: recompute every sample,
+             * including any vector chunks which were already written. */
+        }
+    }
+#endif
+    for (index = 0; index < group->sample_count; ++index) {
+        long double tick = (long double)group->first_tick
+            + (long double)index * (long double)step_numerator;
+        group->samples[index] = wf_evaluate_one(
+            wave, (double)(tick / (long double)wf_ticks_per_second), values);
+    }
+}
+
 static wf_plan_group *wf_plan_get_group(
     cwaveform_sample_plan *plan, const cwaveform_stack *stack,
     uint32_t template_id, uint64_t phase, int64_t step_numerator,
@@ -5030,14 +5165,7 @@ static wf_plan_group *wf_plan_get_group(
             wf_plan_group_clear(group);
             return NULL;
         }
-        for (index = 0; index < group->sample_count; ++index) {
-            long double tick = (long double)group->first_tick
-                + (long double)index * (long double)step_numerator;
-            group->samples[index] = wf_evaluate_one(
-                wave,
-                (double)(tick / (long double)wf_ticks_per_second),
-                values);
-        }
+        wf_plan_fill_template(wave, group, step_numerator, values);
         free(values);
     }
     ++plan->group_count;
@@ -5368,17 +5496,28 @@ static int wf_plan_sample_integer_grouped(
         const wf_plan_scale_group *scale_group
             = group->scale_groups + scale_index;
         size_t index;
-        for (index = 0; index < group->sample_count; ++index) {
-            double value = wf_clip_amplitude(
-                offset + scale_group->samples[index], lower, upper);
-            if (!isfinite(value)) {
-                free(quantized);
-                return -3;
+        int status = 0;
+        if (offset == 0.0 && lower == -HUGE_VAL && upper == HUGE_VAL) {
+            status = wf_quantize_array(scale_group->samples,
+                group->sample_count, dtype, full_scale, quantized);
+        } else {
+            double values[256];
+            size_t cursor = 0;
+            while (cursor < group->sample_count) {
+                size_t count = group->sample_count - cursor;
+                if (count > 256) count = 256;
+                for (index = 0; index < count; ++index)
+                    values[index] = wf_clip_amplitude(offset
+                        + scale_group->samples[cursor + index], lower, upper);
+                status = wf_quantize_array(values, count, dtype, full_scale,
+                    (uint8_t *)quantized + cursor * item_size);
+                if (status != 0) break;
+                cursor += count;
             }
-            if (dtype == CWAVEFORM_INT16)
-                ((int16_t *)quantized)[index] = wf_quantize16(value, full_scale);
-            else
-                ((int32_t *)quantized)[index] = wf_quantize32(value, full_scale);
+        }
+        if (status != 0) {
+            free(quantized);
+            return status;
         }
         for (index = 0; index < scale_group->destination_count; ++index) {
             size_t source_start;
@@ -5396,13 +5535,14 @@ static int wf_plan_sample_integer_grouped(
     return 0;
 }
 
-static int wf_plan_sample_integer_limited_scales(
+static int wf_plan_sample_integer_varied_scales(
     const cwaveform_sample_plan *plan, const wf_plan_group *group,
     double offset, int dtype, double full_scale, void *output,
     double lower, double upper) {
     /* Many distinct scales cannot reuse prequantized templates. Small scratch
      * blocks still allow SIMD clipping/conversion without a full float output. */
     double values[256];
+    int limited = lower != -HUGE_VAL || upper != HUGE_VAL;
     size_t item_size = dtype == CWAVEFORM_INT16
         ? sizeof(int16_t) : sizeof(int32_t);
     size_t placement_index;
@@ -5421,9 +5561,15 @@ static int wf_plan_sample_integer_limited_scales(
             size_t index;
             int status;
             if (count > 256) count = 256;
-            for (index = 0; index < count; ++index)
-                values[index] = wf_clip_amplitude(offset + scale
-                    * group->samples[source_start + cursor + index], lower, upper);
+            if (limited) {
+                for (index = 0; index < count; ++index)
+                    values[index] = wf_clip_amplitude(offset + scale
+                        * group->samples[source_start + cursor + index], lower, upper);
+            } else {
+                for (index = 0; index < count; ++index)
+                    values[index] = offset + scale
+                        * group->samples[source_start + cursor + index];
+            }
             status = wf_quantize_array(values, count, dtype, full_scale,
                 (uint8_t *)output + (output_start + cursor) * item_size);
             if (status != 0) return status;
@@ -5444,7 +5590,6 @@ int cwaveform_sample_plan_sample_clipped(
     const cwaveform_sample_plan *plan, double offset, int dtype,
     double full_scale, void *output, double lower, double upper) {
     size_t index;
-    int limited = lower != -HUGE_VAL || upper != HUGE_VAL;
     if (plan == NULL || output == NULL || !isfinite(offset)
             || !(lower <= upper) || lower == HUGE_VAL || upper == -HUGE_VAL
             || !isfinite(full_scale) || full_scale <= 0.0) return -1;
@@ -5481,34 +5626,10 @@ int cwaveform_sample_plan_sample_clipped(
             int status = wf_plan_sample_integer_grouped(
                 plan, group, offset, dtype, full_scale, output, lower, upper);
             if (status != 0) return status;
-        } else if (limited) {
-            int status = wf_plan_sample_integer_limited_scales(
+        } else {
+            int status = wf_plan_sample_integer_varied_scales(
                 plan, group, offset, dtype, full_scale, output, lower, upper);
             if (status != 0) return status;
-        } else {
-            size_t placement_index;
-            for (placement_index = 0;
-                    placement_index < group->placement_count;
-                    ++placement_index) {
-                size_t source_start;
-                size_t output_start;
-                size_t copy_count;
-                size_t sample_index;
-                if (!wf_plan_placement_bounds(
-                        group->destinations[placement_index],
-                        group->sample_count, plan->count,
-                        &source_start, &output_start, &copy_count)) continue;
-                for (sample_index = 0; sample_index < copy_count; ++sample_index) {
-                    double value = offset + group->scales[placement_index]
-                        * group->samples[source_start + sample_index];
-                    if (dtype == CWAVEFORM_INT16)
-                        ((int16_t *)output)[output_start + sample_index]
-                            = wf_quantize16(value, full_scale);
-                    else
-                        ((int32_t *)output)[output_start + sample_index]
-                            = wf_quantize32(value, full_scale);
-                }
-            }
         }
     }
     return 0;
