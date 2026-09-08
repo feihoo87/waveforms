@@ -84,6 +84,18 @@ sampling plans, evaluation, quantization, and serialization all operate on this
 single C representation. Complex Python objects contain two independent real C
 blocks.
 
+WNS4 loading decodes events directly into their final owned arrays and retains
+an exact owned copy of the input block, without reconstructing or re-encoding
+it. Stack hashes are computed on first explicit `cwaveform_stack_hash()` use
+and atomically cached; sampling and support-bound queries do not need a hash.
+The hash value and binary format are unchanged. Concurrent read-only callers
+must keep the handle alive; retain/release still require external coordination.
+
+Sample-plan construction uses a temporary `(template ID, tick phase)` lookup
+table when there are more than eight groups, instead of repeatedly scanning
+all groups. Group insertion and event accumulation order remain unchanged.
+The lookup is discarded after plan construction and is never serialized.
+
 The additive `cwaveform_sample_plan_sample_clipped()` API accepts final
 amplitude bounds without changing the serialized formats or the original
 `cwaveform_sample_plan_sample()` ABI. Limits are applied after all event

@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 #if defined(__aarch64__) && defined(__ARM_NEON)
 #include <arm_neon.h>
 #define WF_HAVE_ARM64_NEON 1
@@ -16,9 +20,6 @@
         && (defined(__GNUC__) || defined(__clang__))) \
         || (defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86)))
 #include <immintrin.h>
-#if defined(_MSC_VER)
-#include <intrin.h>
-#endif
 #define WF_HAVE_X86_SIMD 1
 #endif
 
@@ -4277,21 +4278,17 @@ static int wf_stack_encode(cwaveform_stack *stack) {
         wf_put_f64(stack->data + event_offset + 12 * stack->event_count
                    + 8 * index, stack->scales[index]);
     }
-    stack->hash = wf_hash_bytes(stack->data, total);
     return 0;
 }
 
-cwaveform_stack *cwaveform_stack_create(
-    cwaveform_wave *const *templates, const uint32_t *template_ids,
-    const int64_t *delay_ticks, const double *scales,
-    size_t template_count, size_t event_count) {
+static cwaveform_stack *wf_stack_allocate(size_t template_count,
+                                         size_t event_count) {
     cwaveform_stack *stack;
-    size_t index;
-    if ((template_count != 0 && templates == NULL)
-            || (event_count != 0 && (template_ids == NULL
-                || delay_ticks == NULL || scales == NULL))) {
-        return NULL;
-    }
+    if (template_count > UINT32_MAX || event_count > UINT32_MAX
+            || template_count > SIZE_MAX / sizeof(cwaveform_wave *)
+            || event_count > SIZE_MAX / sizeof(double)
+            || event_count > SIZE_MAX / sizeof(int64_t)
+            || event_count > SIZE_MAX / sizeof(uint32_t)) return NULL;
     stack = (cwaveform_stack *)calloc(1, sizeof(*stack));
     if (stack == NULL) return NULL;
     stack->references = 1;
@@ -4310,6 +4307,32 @@ cwaveform_stack *cwaveform_stack_create(
         cwaveform_stack_release(stack);
         return NULL;
     }
+    return stack;
+}
+
+static void wf_stack_include_support(cwaveform_stack *stack,
+                                      const cwaveform_wave *wave,
+                                      int64_t delay, int *have_support) {
+    int64_t lower = wf_add_tick(wave->nodes[wave->root].lower, delay);
+    int64_t upper = wf_add_tick(wave->nodes[wave->root].upper, delay);
+    if (lower >= upper) return;
+    if (!*have_support || lower < stack->lower_tick) stack->lower_tick = lower;
+    if (!*have_support || upper > stack->upper_tick) stack->upper_tick = upper;
+    *have_support = 1;
+}
+
+cwaveform_stack *cwaveform_stack_create(
+    cwaveform_wave *const *templates, const uint32_t *template_ids,
+    const int64_t *delay_ticks, const double *scales,
+    size_t template_count, size_t event_count) {
+    cwaveform_stack *stack;
+    size_t index;
+    int have_support = 0;
+    if ((template_count != 0 && templates == NULL)
+            || (event_count != 0 && (template_ids == NULL
+                || delay_ticks == NULL || scales == NULL))) return NULL;
+    stack = wf_stack_allocate(template_count, event_count);
+    if (stack == NULL) return NULL;
     for (index = 0; index < template_count; ++index) {
         if (templates[index] == NULL) {
             cwaveform_stack_release(stack);
@@ -4326,26 +4349,8 @@ cwaveform_stack *cwaveform_stack_create(
         stack->template_ids[index] = template_ids[index];
         stack->delays[index] = delay_ticks[index];
         stack->scales[index] = scales[index];
-    }
-    if (event_count != 0) {
-        int have_support = 0;
-        int64_t lower_tick = INT64_MAX;
-        int64_t upper_tick = INT64_MIN;
-        for (index = 0; index < event_count; ++index) {
-            cwaveform_wave *wave = stack->templates[stack->template_ids[index]];
-            int64_t lower = wf_add_tick(
-                wave->nodes[wave->root].lower, stack->delays[index]);
-            int64_t upper = wf_add_tick(
-                wave->nodes[wave->root].upper, stack->delays[index]);
-            if (lower >= upper) continue;
-            if (!have_support || lower < lower_tick) lower_tick = lower;
-            if (!have_support || upper > upper_tick) upper_tick = upper;
-            have_support = 1;
-        }
-        if (have_support) {
-            stack->lower_tick = lower_tick;
-            stack->upper_tick = upper_tick;
-        }
+        wf_stack_include_support(stack, stack->templates[template_ids[index]],
+                                  delay_ticks[index], &have_support);
     }
     if (wf_stack_encode(stack) != 0) {
         cwaveform_stack_release(stack);
@@ -4533,12 +4538,9 @@ cwaveform_stack *cwaveform_stack_from_bytes(const uint8_t *data, size_t size) {
     uint32_t event_count;
     size_t event_offset;
     size_t cursor;
-    cwaveform_wave **templates = NULL;
-    uint32_t *ids = NULL;
-    int64_t *delays = NULL;
-    double *scales = NULL;
     cwaveform_stack *stack = NULL;
-    uint32_t index;
+    size_t index;
+    int have_support = 0;
     if (data == NULL || size < WF_STACK_HEADER_SIZE
             || memcmp(data, "WNS4", 4) != 0
             || wf_get_u16(data + 4) != WF_VERSION
@@ -4556,44 +4558,41 @@ cwaveform_stack *cwaveform_stack_from_bytes(const uint8_t *data, size_t size) {
     event_offset = size - 20 * (size_t)event_count;
     cursor = WF_STACK_HEADER_SIZE + 4 * (size_t)template_count;
     if (cursor > event_offset) return NULL;
-    templates = (cwaveform_wave **)calloc(template_count, sizeof(*templates));
-    ids = (uint32_t *)malloc((size_t)event_count * sizeof(*ids));
-    delays = (int64_t *)malloc((size_t)event_count * sizeof(*delays));
-    scales = (double *)malloc((size_t)event_count * sizeof(*scales));
-    if ((template_count && templates == NULL)
-            || (event_count && (ids == NULL || delays == NULL || scales == NULL))) {
-        goto done;
-    }
+    stack = wf_stack_allocate(template_count, event_count);
+    if (stack == NULL) return NULL;
     for (index = 0; index < template_count; ++index) {
         size_t template_size = wf_get_u32(
             data + WF_STACK_HEADER_SIZE + 4 * index);
-        if (template_size > event_offset - cursor) goto done;
-        templates[index] = cwaveform_wave_from_bytes(data + cursor,
-                                                      template_size);
-        if (templates[index] == NULL) goto done;
+        if (template_size > event_offset - cursor) goto invalid;
+        stack->templates[index] = cwaveform_wave_from_bytes(data + cursor,
+                                                           template_size);
+        if (stack->templates[index] == NULL) goto invalid;
         cursor += template_size;
     }
-    if (cursor != event_offset) goto done;
+    if (cursor != event_offset) goto invalid;
     for (index = 0; index < event_count; ++index) {
-        ids[index] = wf_get_u32(data + event_offset + 4 * index);
-        delays[index] = wf_get_i64(data + event_offset + 4 * event_count
-                                   + 8 * index);
-        scales[index] = wf_get_f64(data + event_offset + 12 * event_count
-                                   + 8 * index);
+        uint32_t id = wf_get_u32(data + event_offset + 4 * index);
+        int64_t delay = wf_get_i64(data + event_offset
+                                   + 4 * (size_t)event_count + 8 * index);
+        double scale = wf_get_f64(data + event_offset
+                                  + 12 * (size_t)event_count + 8 * index);
+        if (id >= template_count || !isfinite(scale)) goto invalid;
+        stack->template_ids[index] = id;
+        stack->delays[index] = delay;
+        stack->scales[index] = scale;
+        wf_stack_include_support(stack, stack->templates[id], delay,
+                                  &have_support);
     }
-    stack = cwaveform_stack_create(templates, ids, delays, scales,
-                                   template_count, event_count);
-done:
-    if (templates != NULL) {
-        for (index = 0; index < template_count; ++index) {
-            cwaveform_wave_release(templates[index]);
-        }
-    }
-    free(templates);
-    free(ids);
-    free(delays);
-    free(scales);
+    /* The input is already a validated WNS4 block. Own a stable copy, without
+     * routing through construction and re-encoding the entire event table. */
+    stack->data = (uint8_t *)malloc(size);
+    if (stack->data == NULL) goto invalid;
+    memcpy(stack->data, data, size);
+    stack->data_size = size;
     return stack;
+invalid:
+    cwaveform_stack_release(stack);
+    return NULL;
 }
 
 void cwaveform_stack_retain(cwaveform_stack *stack) {
@@ -4628,7 +4627,27 @@ const uint8_t *cwaveform_stack_bytes(const cwaveform_stack *stack,
 }
 
 uint64_t cwaveform_stack_hash(const cwaveform_stack *stack) {
-    return stack == NULL ? 0 : stack->hash;
+    uint64_t hash;
+    if (stack == NULL) return 0;
+    /* Sampling never needs a stack hash. Compute it only for explicit hash
+     * requests; atomic publication preserves concurrent read-only C use.
+     * Zero is a cache-miss sentinel, not a substituted hash: an actual zero
+     * hash remains correct and will simply be recomputed on its next use. */
+#if defined(_MSC_VER)
+    hash = (uint64_t)_InterlockedCompareExchange64(
+        (volatile __int64 *)&stack->hash, 0, 0);
+#else
+    hash = __atomic_load_n(&stack->hash, __ATOMIC_RELAXED);
+#endif
+    if (hash == 0) {
+        hash = wf_hash_bytes(stack->data, stack->data_size);
+#if defined(_MSC_VER)
+        _InterlockedExchange64((volatile __int64 *)&stack->hash, (__int64)hash);
+#else
+        __atomic_store_n((uint64_t *)&stack->hash, hash, __ATOMIC_RELAXED);
+#endif
+    }
+    return hash;
 }
 
 size_t cwaveform_stack_event_count(const cwaveform_stack *stack) {
@@ -4880,26 +4899,66 @@ static int wf_plan_group_add_placement(wf_plan_group *group,
 static int wf_plan_placement_bounds(
     int64_t destination, size_t template_count, size_t output_count,
     size_t *source_start, size_t *output_start, size_t *copy_count) {
-    long double start = (long double)destination;
-    long double stop = start + (long double)template_count;
-    long double clipped_start = start < 0.0L ? 0.0L : start;
-    long double clipped_stop = stop > (long double)output_count
-        ? (long double)output_count : stop;
-    if (clipped_start >= clipped_stop || clipped_stop <= 0.0L
-            || clipped_start >= (long double)output_count) {
-        *copy_count = 0;
-        return 0;
+    size_t available;
+    *copy_count = 0;
+    if (destination < 0) {
+        /* Negating INT64_MIN, or adding length to a signed destination, can
+         * overflow. Clip using unsigned distances before converting to size_t. */
+        uint64_t skipped = (uint64_t)(-(destination + 1)) + 1;
+        if (skipped >= template_count) return 0;
+        *source_start = (size_t)skipped;
+        *output_start = 0;
+    } else {
+        if ((uint64_t)destination >= output_count) return 0;
+        *source_start = 0;
+        *output_start = (size_t)destination;
     }
-    *source_start = (size_t)(clipped_start - start);
-    *output_start = (size_t)clipped_start;
-    *copy_count = (size_t)(clipped_stop - clipped_start);
-    return 1;
+    available = output_count - *output_start;
+    *copy_count = template_count - *source_start;
+    if (*copy_count > available) *copy_count = available;
+    return *copy_count != 0;
+}
+
+typedef struct wf_plan_lookup {
+    size_t capacity;
+    size_t *slots;
+} wf_plan_lookup;
+
+static size_t wf_plan_group_hash(uint32_t template_id, uint64_t phase) {
+    uint64_t value = phase ^ ((uint64_t)template_id * UINT64_C(0x9e3779b97f4a7c15));
+    value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    value = (value ^ (value >> 27)) * UINT64_C(0x94d049bb133111eb);
+    return (size_t)(value ^ (value >> 31));
+}
+
+static int wf_plan_lookup_grow(wf_plan_lookup *lookup,
+                                const cwaveform_sample_plan *plan) {
+    size_t capacity = lookup->capacity == 0 ? 32 : lookup->capacity * 2;
+    size_t *slots;
+    size_t index;
+    if (capacity < lookup->capacity || capacity > SIZE_MAX / sizeof(*slots))
+        return -1;
+    slots = (size_t *)calloc(capacity, sizeof(*slots));
+    if (slots == NULL) return -2;
+    for (index = 0; index < plan->group_count; ++index) {
+        const wf_plan_group *group = plan->groups + index;
+        size_t slot = wf_plan_group_hash(group->template_id, group->phase)
+            & (capacity - 1);
+        while (slots[slot] != 0) slot = (slot + 1) & (capacity - 1);
+        slots[slot] = index + 1;
+    }
+    free(lookup->slots);
+    lookup->slots = slots;
+    lookup->capacity = capacity;
+    return 0;
 }
 
 static wf_plan_group *wf_plan_get_group(
     cwaveform_sample_plan *plan, const cwaveform_stack *stack,
-    uint32_t template_id, uint64_t phase, int64_t step_numerator) {
+    uint32_t template_id, uint64_t phase, int64_t step_numerator,
+    wf_plan_lookup *lookup) {
     size_t index;
+    size_t slot = 0;
     wf_plan_group *group;
     cwaveform_wave *wave;
     int64_t lower;
@@ -4908,10 +4967,30 @@ static wf_plan_group *wf_plan_get_group(
     uint64_t delta;
     long double sample_count;
     double *values;
-    for (index = 0; index < plan->group_count; ++index) {
-        group = plan->groups + index;
+    if (plan->group_count != 0) {
+        /* Consecutive events very often reuse one template and tick phase.
+         * Keep that case independent of the lookup-table bookkeeping. */
+        group = plan->groups + plan->group_count - 1;
         if (group->template_id == template_id && group->phase == phase)
             return group;
+    }
+    if (lookup->capacity == 0 && plan->group_count <= 8) {
+        /* Avoid a hash table for the usual one/few-template pulse train. */
+        for (index = 0; index < plan->group_count; ++index) {
+            group = plan->groups + index;
+            if (group->template_id == template_id && group->phase == phase)
+                return group;
+        }
+    } else {
+        if ((lookup->capacity == 0 || plan->group_count >= lookup->capacity / 2)
+                && wf_plan_lookup_grow(lookup, plan) != 0) return NULL;
+        slot = wf_plan_group_hash(template_id, phase) & (lookup->capacity - 1);
+        while (lookup->slots[slot] != 0) {
+            group = plan->groups + lookup->slots[slot] - 1;
+            if (group->template_id == template_id && group->phase == phase)
+                return group;
+            slot = (slot + 1) & (lookup->capacity - 1);
+        }
     }
     if (plan->group_count == plan->group_capacity
             && wf_plan_grow_groups(plan) != 0) return NULL;
@@ -4962,6 +5041,7 @@ static wf_plan_group *wf_plan_get_group(
         free(values);
     }
     ++plan->group_count;
+    if (lookup->capacity != 0) lookup->slots[slot] = plan->group_count;
     return group;
 }
 
@@ -4974,6 +5054,7 @@ cwaveform_sample_plan *cwaveform_sample_plan_create(
     size_t previous_start = 0;
     size_t previous_stop = 0;
     int have_previous = 0;
+    wf_plan_lookup lookup = {0, NULL};
     if (stack == NULL || step_numerator <= 0 || step_denominator != 1)
         return NULL;
     plan = (cwaveform_sample_plan *)calloc(1, sizeof(*plan));
@@ -5000,8 +5081,7 @@ cwaveform_sample_plan *cwaveform_sample_plan_create(
                    >= wave->nodes[wave->root].upper) continue;
         if (wave->nodes[wave->root].lower == INT64_MIN
                 || wave->nodes[wave->root].upper == INT64_MAX) {
-            cwaveform_sample_plan_release(plan);
-            return NULL;
+            goto failed;
         }
         delay = wf_add_tick(stack->delays[event_index], global_shift);
         start_phase = wf_tick_mod(start_tick, (uint64_t)step_numerator);
@@ -5010,26 +5090,19 @@ cwaveform_sample_plan *cwaveform_sample_plan_create(
             ? start_phase - delay_phase
             : (uint64_t)step_numerator - (delay_phase - start_phase);
         group = wf_plan_get_group(plan, stack, template_id, phase,
-                                  step_numerator);
-        if (group == NULL) {
-            cwaveform_sample_plan_release(plan);
-            return NULL;
-        }
+                                  step_numerator, &lookup);
+        if (group == NULL) goto failed;
         destination_value = (
             (long double)delay + (long double)group->first_tick
             - (long double)start_tick) / (long double)step_numerator;
         if (destination_value < (long double)INT64_MIN
                 || destination_value > (long double)INT64_MAX) {
-            cwaveform_sample_plan_release(plan);
-            return NULL;
+            goto failed;
         }
         destination = (int64_t)llroundl(destination_value);
         status = wf_plan_group_add_placement(
             group, destination, stack->scales[event_index]);
-        if (status != 0) {
-            cwaveform_sample_plan_release(plan);
-            return NULL;
-        }
+        if (status != 0) goto failed;
         if (wf_plan_placement_bounds(
                 destination, group->sample_count, count,
                 &source_start, &output_start, &copy_count)) {
@@ -5043,7 +5116,12 @@ cwaveform_sample_plan *cwaveform_sample_plan_create(
             have_previous = 1;
         }
     }
+    free(lookup.slots);
     return plan;
+failed:
+    free(lookup.slots);
+    cwaveform_sample_plan_release(plan);
+    return NULL;
 }
 
 void cwaveform_sample_plan_retain(cwaveform_sample_plan *plan) {

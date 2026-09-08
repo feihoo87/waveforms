@@ -211,6 +211,8 @@ CWAVEFORM_API void cwaveform_stack_retain(cwaveform_stack *stack);
 CWAVEFORM_API void cwaveform_stack_release(cwaveform_stack *stack);
 CWAVEFORM_API const uint8_t *cwaveform_stack_bytes(const cwaveform_stack *stack,
                                              size_t *size);
+/* Computed on first request and atomically cached. The value and serialized
+ * format are unchanged; sampling alone does not compute a stack hash. */
 CWAVEFORM_API uint64_t cwaveform_stack_hash(const cwaveform_stack *stack);
 CWAVEFORM_API size_t cwaveform_stack_event_count(const cwaveform_stack *stack);
 CWAVEFORM_API size_t cwaveform_stack_template_count(const cwaveform_stack *stack);

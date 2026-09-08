@@ -314,8 +314,22 @@ def _finish_samples(sig, dtype, full_scale, out, minimum=-inf, maximum=inf):
         raise ValueError("out has the wrong shape")
     if not output.flags.writeable:
         raise ValueError("out must be writable")
+    if output is result:
+        return output
     output[...] = result
     return output
+
+
+def _real_sampling_output(dtype, bits, out):
+    """Use native output buffers without changing casting/strided semantics."""
+    if bits is not None or out is None:
+        return out
+    if dtype is None or dtype == np.dtype(np.float64):
+        output = np.asarray(out)
+        if (output.dtype == np.dtype(np.float64)
+                and output.flags.c_contiguous and output.flags.aligned):
+            return output
+    return None
 
 
 def _filter_samples(sig, filters, zi=None):
@@ -1449,7 +1463,7 @@ class RealWaveform(_RealWaveformBase):
                 values = self._core.sample(
                     start_tick, count, step_numerator, step_denominator,
                     self._delay_tick, self._scale, minimum, maximum,
-                    bits or 0, full_scale, out if bits is not None else None,
+                    bits or 0, full_scale, _real_sampling_output(dtype, bits, out),
                 )
                 return (values if bits is not None else
                         _finish_samples(values, dtype, full_scale, out))
@@ -1845,20 +1859,23 @@ class RealWaveVStack(_RealWaveVStackBase):
                 if filters is None and nonlinear is None:
                     values = sample_plan.sample(
                         self.offset, bits or 0, full_scale,
-                        out if bits is not None else None, minimum, maximum,
+                        _real_sampling_output(dtype, bits, out), minimum, maximum,
                     )
                     return (values if bits is not None else
                             _finish_samples(values, dtype, full_scale, out))
                 values = sample_plan.sample(self.offset)
             else:
-                if (bits is not None and filters is None
-                        and nonlinear is None):
+                if filters is None and nonlinear is None:
                     values = self._core.sample(
                         start_tick, count, step_numerator, step_denominator,
-                        self._shift_tick, self.offset, bits, full_scale, out,
+                        self._shift_tick, self.offset, bits or 0, full_scale,
+                        _real_sampling_output(dtype, bits, out),
                     )
-                    return _clip_quantized(
-                        values, bits, full_scale, minimum, maximum)
+                    if bits is not None:
+                        return _clip_quantized(
+                            values, bits, full_scale, minimum, maximum)
+                    return _finish_samples(
+                        values, dtype, full_scale, out, minimum, maximum)
                 values = self._core.sample(
                     start_tick, count, step_numerator, step_denominator,
                     self._shift_tick, self.offset,
