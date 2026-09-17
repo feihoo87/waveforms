@@ -49,14 +49,13 @@ def _clip(values, lower, upper):
 
 @pytest.mark.parametrize("kind", ["real", "stack", "complex", "complex_stack"])
 @pytest.mark.parametrize("rate", [128, 127.5])
-@pytest.mark.parametrize("gain", [0.25, 2.0])
-def test_output_limits_follow_mapping_and_filter_with_chunk_state(kind, rate, gain):
+@pytest.mark.parametrize("amp", [0.25, -0.5])
+def test_output_limits_follow_mapping_and_filter_with_chunk_state(kind, rate, amp):
     wave = _configure(_signal(kind), rate)
     wave.min, wave.max = -0.22, 0.27
     # Stateful filter exercises overshoot and continuing with the unclipped zf.
-    sos = np.array([[gain * 0.5, 0., 0., 1., -0.5, 0.]])
-    initial = 0.03
-    wave.filters = (sos, initial)
+    sos = wf.exp_decay_filter(amp, .04, rate, inv=True, output="sos")
+    wave.filters = {.04: amp}
     mapping = wf.NonlinearMap.from_samples(
         [-3., 3.], [-6., 6.], method="linear", table_size=2)
     wave.nonlinear = (mapping, mapping) if "complex" in kind else mapping
@@ -65,6 +64,7 @@ def test_output_limits_follow_mapping_and_filter_with_chunk_state(kind, rate, ga
     raw = 0.45 + 0.35 * np.cos(6 * np.pi * positions)
     if "complex" in kind:
         raw = raw + 1j * (-0.3 + 0.2 * np.sin(4 * np.pi * positions))
+    initial = 2 * raw[0]
     filtered = sosfilt(sos, 2 * raw - initial) + initial
     expected = _clip(filtered, wave.min, wave.max)
 
@@ -103,11 +103,17 @@ def test_output_limits_follow_mapping_and_filter_with_chunk_state(kind, rate, ga
             np.testing.assert_array_equal(np.concatenate(list(chunks)), expected_integer)
 
 
-@pytest.mark.parametrize("gain,expected", [(2., .2), (.25, .1)])
-def test_filter_gain_never_sees_prematurely_limited_input(gain, expected):
-    wave = _configure(wf.const(.4))
+@pytest.mark.parametrize("amp", [.5, -.5])
+def test_filter_never_sees_prematurely_limited_input(amp):
+    wave = _configure(.4 - .35 * (wf.step(0) >> .25))
     wave.min, wave.max = -.2, .2
-    wave.filters = (np.array([[gain, 0., 0., 1., 0., 0.]]), 0.)
+    wave.filters = {.03: amp}
+    sos = wf.exp_decay_filter(amp, .03, wave.sample_rate, inv=True, output="sos")
+    raw = np.where(np.arange(128) < 32, .4, .05)
+    expected = np.clip(sosfilt(sos, raw - raw[0]) + raw[0], -.2, .2)
+    limited = np.clip(raw, -.2, .2)
+    premature = np.clip(sosfilt(sos, limited - limited[0]) + limited[0], -.2, .2)
+    assert not np.allclose(expected, premature)
     np.testing.assert_allclose(wave.sample(), expected)
     np.testing.assert_allclose(np.concatenate(list(wave.sample(chunk_size=7))), expected)
 

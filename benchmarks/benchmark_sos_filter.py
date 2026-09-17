@@ -1,10 +1,12 @@
 """Measure the complete filtered sampling pipeline, including limits and DAC output.
 
-Use --source-root with a pre-change package to compare the same public API.
+Use --source-root with a pre-change package to compare equivalent inverse
+filters and baselines across the old SOS and new parameter-mapping APIs.
 Every timed configuration is checked against a SciPy reference first.
 """
 
 import argparse
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import platform
@@ -24,7 +26,7 @@ def main():
 
     import numpy as np
     import scipy
-    from scipy.signal import butter, sosfilt
+    from scipy.signal import sosfilt
 
     import waveforms as wf
     from waveforms._waveform import quantize_samples
@@ -61,9 +63,15 @@ def main():
               "unfiltered_int16_ms": measure(lambda: raw.sample(dtype=np.int16)),
               "warm_median_ms": {}}
     for sections in (1, 4, 8):
-        sos = butter(sections * 2, .15, output="sos")
-        wave.filters = sos, .05
-        expected = np.clip(sosfilt(sos, raw_values - .05) + .05, -.17, .23)
+        params = dict(zip(np.geomspace(1e-9, 1e-5, sections * 2),
+                          np.resize([.02, -.01], sections * 2)))
+        amp, tau = wf.exp_decay_filter_from_cascade(
+            [(amp, tau) for tau, amp in params.items()])
+        sos = wf.exp_decay_filter(amp, tau, raw.sample_rate, inv=True, output="sos")
+        initial = raw_values[0]
+        # Keep cross-version comparisons on identical coefficients/baselines.
+        wave.filters = params if isinstance(wave.filters, Mapping) else (sos, initial)
+        expected = np.clip(sosfilt(sos, raw_values - initial) + initial, -.17, .23)
         expected16 = quantize_samples(expected, 16)
 
         def chunks():

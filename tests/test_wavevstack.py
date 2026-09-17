@@ -1,10 +1,10 @@
 import pickle
 
 import numpy as np
-from scipy.signal import butter, lfilter, lfiltic, tf2sos
+from scipy.signal import sosfilt
 
 from waveforms import (
-    Waveform, WaveVStack, cos, gaussian, pi, poly, sin, step,
+    Waveform, WaveVStack, cos, exp_decay_filter, gaussian, pi, poly, sin, step,
     time_to_tick, zero,
 )
 
@@ -35,18 +35,15 @@ def test_wavevstack_sampling_algebra_and_shifts():
 
 def test_wavevstack_filtering_and_chunked_sampling():
     sample_rate = 1000
-    b, a = butter(3, 4.0, "lowpass", fs=sample_rate)
-    zi = lfiltic(b, a, [0])
+    sos = exp_decay_filter(.2, .04, sample_rate, inv=True, output="sos")
     x = np.linspace(-1, 1, 2000, endpoint=False)
 
     stack = WaveVStack([step(0) << 0.5, -step(0)])
     stack.sample_rate = sample_rate
     stack.start = -1
     stack.stop = 1
-    stack.filters = (tf2sos(b, a), 0)
-    expected = lfilter(
-        b, a, np.heaviside(x + 0.5, 1) - np.heaviside(x, 1), zi=zi
-    )[0]
+    stack.filters = {.04: .2}
+    expected = sosfilt(sos, np.heaviside(x + 0.5, 1) - np.heaviside(x, 1))
 
     assert np.allclose(stack.sample(), expected, atol=1e-6)
     chunks = np.concatenate(list(stack.sample(chunk_size=137)))

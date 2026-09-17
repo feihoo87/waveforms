@@ -158,14 +158,37 @@ uses the same final limits. The filter state continues from the unclipped
 filtered signal across chunks. DAC `full_scale` controls integer conversion
 and saturation separately from these amplitude limits.
 
-Real-coefficient SOS filters (`filters=(sos, initial)`) run in the C core for
-float64 and complex128 signals. This stage subtracts the baseline `initial`,
-applies the cascade, restores the baseline, and applies the final limits.
+`filters` is a `defaultdict(float)` mapping exponential cascade time constants
+`tau` (in seconds) to amplitudes `amp`, independent of the sampling clock:
+
+```python
+stack.filters[100e-9] += 0.12
+stack.filters[2e-6] += -0.04
+samples = stack.sample(sample_rate=2_400_000_000)
+unfiltered = stack.sample(filters={})  # bypass predistortion for this call
+```
+
+The parameters describe cascade stages, not a parallel sum of exponential
+terms. Sampling uses `exp_decay_filter_from_cascade` followed by
+`exp_decay_filter(..., inv=True, output="sos")` at the actual sample rate:
+filtering defaults to **predistortion**. Coefficients are cached by parameter
+values and sample rate; changing an amplitude or the clock takes effect on the
+next sampling call. Only the parameters are saved by pickle, not cached SOS
+coefficients. Assign a mapping to replace them, or `None` to clear them. The old
+`(sos, initial)` representation is no longer accepted.
+
+The initial level is the first sample **after nonlinear mapping**, before
+output limiting: the system is assumed to have held that level indefinitely
+before playback. This stage subtracts that baseline, applies the inverse
+filter, restores the baseline, and applies the final limits. Chunked sampling
+retains both the initial level and the unclipped filter state across chunks;
+complex signals use the first I and Q values independently.
+
+SOS filtering runs in the C core for float64 and complex128 signals.
 Real int16/int32 output is quantized in the same stage, without allocating a
 full filtered floating-point buffer. Float output can reuse the sampled
 buffer. A small fixed scratch buffer keeps filtering and conversion local;
-waveform evaluation and nonlinear mapping still precede this stage. Complex
-coefficients and extended precision retain the SciPy implementation.
+waveform evaluation and nonlinear mapping still precede this stage.
 `sample_iq()` still converts the filtered complex result into separate I/Q
 output arrays. See [the SOS benchmark](benchmarks/sos_filter.md).
 

@@ -6,6 +6,7 @@ from scipy.signal import butter, sosfilt
 
 import waveforms as wf
 from waveforms._waveform import quantize_samples, sosfilt_samples
+from waveforms.waveform import _filter_and_finish
 
 
 def _clip(values, lower, upper):
@@ -148,17 +149,24 @@ def test_scipy_fallback(coefficient_dtype):
     sos = butter(4, .3, output="sos").astype(coefficient_dtype)
     if coefficient_dtype == np.complex128:
         sos[0, 0] += .1j
-    wave.filters = sos, .03
     raw = .4 + .5 * np.cos(6 * np.pi * np.arange(1024) / 1024)
     expected = _clip(sosfilt(sos, raw - .03) + .03, wave.min, wave.max)
-    np.testing.assert_allclose(wave.sample(), expected, rtol=3e-13, atol=3e-14)
-    np.testing.assert_allclose(np.concatenate(list(wave.sample(chunk_size=73))),
-                               expected, rtol=3e-13, atol=3e-14)
+    result, _ = _filter_and_finish(
+        raw.copy(), sos, None, 1., None, wave.min, wave.max, initial=.03)
+    np.testing.assert_allclose(result, expected, rtol=3e-13, atol=3e-14)
+    chunks, state = [], None
+    for start in range(0, len(raw), 73):
+        result, state = _filter_and_finish(
+            raw[start:start + 73].copy(), sos, None, 1., None,
+            wave.min, wave.max, state, initial=.03)
+        chunks.append(result)
+    np.testing.assert_allclose(np.concatenate(chunks), expected,
+                               rtol=3e-13, atol=3e-14)
 
 
-def test_pipeline_output_casting_and_single_section_vector():
+def test_pipeline_output_casting_and_single_section():
     wave = _wave()
-    wave.filters = butter(2, .3, output="sos")[0], .03
+    wave.filters = {.04: .2}
     expected = wave.sample()
     for dtype in (None, np.float32, np.float64):
         for stride in (1, 2):

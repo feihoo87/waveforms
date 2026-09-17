@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import scipy.special as special
-from scipy.signal import butter, lfilter, lfiltic, tf2sos
+from scipy.signal import sosfilt
 
 import waveforms as wf
 from waveforms._waveform import (
@@ -252,16 +252,15 @@ def test_multi_frequency_drag_matches_120ghz_tick_behavior():
 
 def test_filters_and_chunked_sampling():
     sample_rate = 1000
-    b, a = butter(3, 4.0, "lowpass", fs=sample_rate)
-    zi = lfiltic(b, a, [0])
+    sos = wf.exp_decay_filter(.2, .04, sample_rate, inv=True, output="sos")
     x = np.linspace(-1, 1, 2000, endpoint=False)
 
     wav = wf.step(0)
     wav.start = -1
     wav.stop = 1
     wav.sample_rate = sample_rate
-    wav.filters = (tf2sos(b, a), 0)
-    expected = lfilter(b, a, np.heaviside(x, 1), zi=zi)[0]
+    wav.filters = {.04: .2}
+    expected = sosfilt(sos, np.heaviside(x, 1))
     assert np.allclose(wav.sample(), expected)
     assert np.allclose(np.concatenate(list(wav.sample(chunk_size=137))), expected)
 
@@ -575,8 +574,7 @@ def test_integer_sampling_filtered_and_overlapping_fallbacks_are_exact():
         quantize_samples(overlapping.sample(rate), 16),
     )
 
-    b, a = butter(3, 50e6, "lowpass", fs=rate)
-    overlapping.filters = (tf2sos(b, a), 0)
+    overlapping.filters = {20e-9: .2}
     assert np.array_equal(
         overlapping.sample(rate, dtype=np.int16),
         quantize_samples(overlapping.sample(rate), 16),

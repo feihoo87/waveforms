@@ -3,7 +3,7 @@ import pickle
 import numpy as np
 import pytest
 from scipy.interpolate import PchipInterpolator
-from scipy.signal import butter, sosfilt, tf2sos
+from scipy.signal import sosfilt
 
 import waveforms as wf
 from waveforms._waveform import quantize_samples
@@ -129,14 +129,13 @@ def test_waveform_sampling_order_chunking_quantization_and_pickle():
         [0.0, 0.0625, 0.25, 0.5625, 1.0],
         table_size=257,
     )
-    b, a = butter(3, 40.0, "lowpass", fs=sample_rate)
-    sos = tf2sos(b, a)
+    sos = wf.exp_decay_filter(.2, .04, sample_rate, inv=True, output="sos")
     waveform = wf.t()
     waveform.start = 0.0
     waveform.stop = 1.0
     waveform.sample_rate = sample_rate
     waveform.nonlinear = mapping
-    waveform.filters = (sos, 0.0)
+    waveform.filters = {.04: .2}
 
     raw = np.arange(sample_rate, dtype=np.float64) / sample_rate
     expected = sosfilt(sos, mapping(raw))

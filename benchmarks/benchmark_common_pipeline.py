@@ -6,6 +6,7 @@ JSON output includes sample digests to compare numerics across builds.
 """
 
 import argparse
+from collections.abc import Mapping
 import gc
 import hashlib
 import json
@@ -50,7 +51,6 @@ def main():
         args.samples_dir.mkdir(parents=True, exist_ok=True)
     sys.path.insert(0, str(args.source_root.resolve()))
     import numpy as np
-    from scipy.signal import butter
     import waveforms as wf
     from waveforms._waveform import CWaveformStackCore
 
@@ -146,7 +146,14 @@ def main():
         timings['cold_nonlinear_int16'] = measure(
             lambda: (pickle.loads(nonlinear_payload) >> 2e-9).sample(dtype=np.int16),
             args.repeats)
-        shifted.filters = butter(4, .2, output='sos'), .03
+        params = {20e-9: .12, 200e-9: -.04, 2e-6: .08, 10e-6: -.02}
+        if isinstance(shifted.filters, Mapping):
+            shifted.filters = params
+        else:
+            amp, tau = wf.exp_decay_filter_from_cascade(
+                [(amp, tau) for tau, amp in params.items()])
+            sos = wf.exp_decay_filter(amp, tau, rate, inv=True, output='sos')
+            shifted.filters = sos, shifted.sample()[0]
         stack.filters = shifted.filters
         processed_payload = pickle.dumps(stack, protocol=5)
         values = shifted.sample(dtype=np.int16)
